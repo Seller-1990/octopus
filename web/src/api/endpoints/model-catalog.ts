@@ -6,6 +6,7 @@ export type ProtocolName =
     | 'openai_responses'
     | 'anthropic'
     | 'gemini'
+    | 'volcengine'
     | 'openai_embedding'
     | 'unknown';
 
@@ -83,6 +84,16 @@ export type CanonicalModel = {
     aliases: ModelAlias[];
     route_candidates: RouteCandidate[];
 };
+
+export type CanonicalModelUpdate = Pick<
+    CanonicalModel,
+    'id' | 'routing_strategy' | 'protocol_policy' | 'allow_lossy' | 'enabled'
+>;
+
+export type RouteCandidateUpdate = Pick<
+    RouteCandidate,
+    'id' | 'status' | 'priority' | 'weight' | 'protocol_policy' | 'allow_lossy'
+>;
 
 type CanonicalModelServer = Omit<CanonicalModel, 'aliases' | 'route_candidates'> & {
     aliases?: ModelAlias[] | null;
@@ -198,7 +209,7 @@ export function useDeleteModelAlias() {
 export function useUpdateCanonicalModel() {
     const queryClient = useQueryClient();
     return useMutation({
-        mutationFn: (payload: CanonicalModel) =>
+        mutationFn: (payload: CanonicalModelUpdate) =>
             apiClient.post<CanonicalModelServer>('/api/v1/model/catalog/canonical', payload),
         onSuccess: () => invalidateCatalog(queryClient),
     });
@@ -207,7 +218,7 @@ export function useUpdateCanonicalModel() {
 export function useUpdateRouteCandidate() {
     const queryClient = useQueryClient();
     return useMutation({
-        mutationFn: (payload: RouteCandidate) =>
+        mutationFn: (payload: RouteCandidateUpdate) =>
             apiClient.post<RouteCandidate>('/api/v1/model/catalog/candidate', payload),
         onSuccess: () => invalidateCatalog(queryClient),
     });

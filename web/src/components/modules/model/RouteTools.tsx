@@ -275,6 +275,10 @@ function CapabilityMatrixDialog({
                                 ))}
                             </div>
                         </div>
+                    ) : capabilities.error ? (
+                        <div role="alert" className="grid min-h-40 place-items-center p-4 text-center text-sm text-destructive">
+                            {errorMessage(capabilities.error)}
+                        </div>
                     ) : (
                         <div className="grid min-h-40 place-items-center text-sm text-muted-foreground">
                             {capabilities.isLoading ? t('loading') : t('unsupportedRoute')}

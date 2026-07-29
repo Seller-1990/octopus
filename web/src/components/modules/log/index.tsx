@@ -6,6 +6,7 @@ import { useLogs, useLogSiteActionTargets, type LogKeywordMode, type LogKeywordS
 import type { UsageAnalyticsFilters, UsageBreakdownItem } from '@/api/endpoints/log-analytics';
 import { LogCard, type LogSiteActionTargets } from './Item';
 import { Loader2 } from 'lucide-react';
+import { Button } from '@/components/ui/button';
 import { useTranslations } from 'next-intl';
 import dayjs from 'dayjs';
 import { VirtualizedGrid } from '@/components/common/VirtualizedGrid';
@@ -130,6 +131,7 @@ function LogDetailList() {
     const isLoadingMore = liveLogsQuery.isLoadingMore;
     const loadMore = liveLogsQuery.loadMore;
     const warning = liveLogsQuery.warning;
+    const logsError = liveLogsQuery.error;
 
     const logIDs = useMemo(() => logs.map((log) => log.id), [logs]);
     const siteActionTargetsQuery = useLogSiteActionTargets(logIDs, logs.length > 0);
@@ -194,6 +196,17 @@ function LogDetailList() {
             {warning ? (
                 <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-300">
                     {warning}
+                </div>
+            ) : null}
+            {logsError ? (
+                <div
+                    role="alert"
+                    className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive"
+                >
+                    <span>{t('list.loadFailed', { message: logsError.message })}</span>
+                    <Button type="button" variant="outline" size="sm" onClick={() => void liveLogsQuery.refetch()}>
+                        {t('list.retry')}
+                    </Button>
                 </div>
             ) : null}
             <div className="relative min-h-0 flex-1">

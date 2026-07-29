@@ -348,7 +348,7 @@ export function ClashControllerPanel({ enabled }: ClashControllerPanelProps) {
                                 onValueChange={setSelectedNode}
                                 disabled={!stateQuery.data?.all.length}
                             >
-                                <SelectTrigger className="min-w-0 flex-1 rounded-xl">
+                                <SelectTrigger className="min-w-0 flex-1 rounded-xl" aria-label={t('selectNode')}>
                                     <SelectValue placeholder={t('selectNode')} />
                                 </SelectTrigger>
                                 <SelectContent>

@@ -34,7 +34,31 @@ export function Model() {
                             key={item.id}
                             type="button"
                             role="tab"
+                            id={`model-tab-${item.id}`}
+                            aria-controls={`model-panel-${item.id}`}
                             aria-selected={active}
+                            tabIndex={active ? 0 : -1}
+                            onKeyDown={(event) => {
+                                const index = VIEWS.findIndex((candidate) => candidate.id === item.id);
+                                let nextIndex = index;
+                                if (event.key === 'ArrowRight' || event.key === 'ArrowDown') {
+                                    nextIndex = (index + 1) % VIEWS.length;
+                                } else if (event.key === 'ArrowLeft' || event.key === 'ArrowUp') {
+                                    nextIndex = (index - 1 + VIEWS.length) % VIEWS.length;
+                                } else if (event.key === 'Home') {
+                                    nextIndex = 0;
+                                } else if (event.key === 'End') {
+                                    nextIndex = VIEWS.length - 1;
+                                } else {
+                                    return;
+                                }
+                                event.preventDefault();
+                                const next = VIEWS[nextIndex].id;
+                                setView(next);
+                                requestAnimationFrame(() => {
+                                    document.getElementById(`model-tab-${next}`)?.focus();
+                                });
+                            }}
                             onClick={() => setView(item.id)}
                             className={cn(
                                 'inline-flex min-h-10 min-w-fit flex-1 items-center justify-center gap-2 rounded-md px-3 text-sm font-medium transition-colors',
@@ -51,6 +75,8 @@ export function Model() {
             </div>
             <div
                 role="tabpanel"
+                id={`model-panel-${view}`}
+                aria-labelledby={`model-tab-${view}`}
                 className="min-h-0 flex-1 overflow-hidden pb-24 md:pb-0"
             >
                 {view === 'catalog' ? <ModelCatalog /> : null}

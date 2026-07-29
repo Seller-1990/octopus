@@ -7,7 +7,7 @@ Manifest V3 browser extension for completing paired Site verification tasks.
 1. Open the browser extension management page.
 2. Enable developer mode.
 3. Load this directory as an unpacked extension.
-4. Create a pairing in Octopus and enter the returned one-time pairing token in the extension popup.
+4. Create an account-scoped pairing in Octopus and enter the returned pairing token in the extension popup. The token is shown once, remains valid until expiry/revocation, and can only claim tasks for that Site Account.
 
 ## Flow
 

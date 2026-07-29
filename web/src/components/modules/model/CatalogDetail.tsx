@@ -1,13 +1,15 @@
 'use client';
 
 import { useState } from 'react';
-import { Plus, Save, Trash2 } from 'lucide-react';
+import { AlertCircle, Plus, RefreshCw, Save, Trash2 } from 'lucide-react';
 import { useTranslations } from 'next-intl';
 import {
     type CanonicalModel,
+    type CanonicalModelUpdate,
     type ProtocolPolicy,
     type RouteCandidate,
     type RouteCandidateStatus,
+    type RouteCandidateUpdate,
     type RoutingStrategy,
     useDeleteModelAlias,
     useUpdateCanonicalModel,
@@ -38,6 +40,27 @@ import { RouteTools } from './RouteTools';
 
 type NameMap = Map<number, string>;
 
+function canonicalDraft(canonical: CanonicalModel): CanonicalModelUpdate {
+    return {
+        id: canonical.id,
+        routing_strategy: canonical.routing_strategy,
+        protocol_policy: canonical.protocol_policy,
+        allow_lossy: canonical.allow_lossy,
+        enabled: canonical.enabled,
+    };
+}
+
+function candidateDraft(candidate: RouteCandidate): RouteCandidateUpdate {
+    return {
+        id: candidate.id,
+        status: candidate.status,
+        priority: candidate.priority,
+        weight: candidate.weight,
+        protocol_policy: candidate.protocol_policy,
+        allow_lossy: candidate.allow_lossy,
+    };
+}
+
 function errorMessage(error: unknown) {
     return error instanceof Error ? error.message : String(error);
 }
@@ -57,7 +80,8 @@ export function CatalogDetail({
     const updateCanonical = useUpdateCanonicalModel();
     const upsertAlias = useUpsertModelAlias();
     const deleteAlias = useDeleteModelAlias();
-    const [draft, setDraft] = useState(canonical);
+    const [draftUpdates, setDraftUpdates] = useState<Partial<CanonicalModelUpdate>>({});
+    const [editBaseUpdatedAt, setEditBaseUpdatedAt] = useState<string | null>(null);
     const [alias, setAlias] = useState('');
     const [selectedCandidateId, setSelectedCandidateId] = useState<number | null>(
         canonical.route_candidates[0]?.id ?? null,
@@ -70,10 +94,30 @@ export function CatalogDetail({
         : canonical.route_candidates[0]?.id ?? null;
     const selectedCandidate =
         canonical.route_candidates.find((candidate) => candidate.id === effectiveCandidateId) ?? null;
+    const draft = { ...canonicalDraft(canonical), ...draftUpdates };
+    const draftDirty = Object.keys(draftUpdates).length > 0;
+    const serverChanged =
+        draftDirty &&
+        editBaseUpdatedAt !== null &&
+        editBaseUpdatedAt !== canonical.updated_at;
+
+    const updateDraft = (updates: Partial<CanonicalModelUpdate>) => {
+        setEditBaseUpdatedAt((current) => current ?? canonical.updated_at);
+        setDraftUpdates((current) => ({ ...current, ...updates }));
+    };
+
+    const reloadCanonical = () => {
+        setDraftUpdates({});
+        setEditBaseUpdatedAt(null);
+    };
 
     const saveCanonical = () => {
         updateCanonical.mutate(draft, {
-            onSuccess: () => toast.success(t('canonicalSaved')),
+            onSuccess: () => {
+                setDraftUpdates({});
+                setEditBaseUpdatedAt(null);
+                toast.success(t('canonicalSaved'));
+            },
             onError: (error) => toast.error(t('canonicalSaveFailed'), { description: errorMessage(error) }),
         });
     };
@@ -105,7 +149,7 @@ export function CatalogDetail({
                     <label className="grid gap-1 text-xs text-muted-foreground">
                         {t('name')}
                         <Input
-                            value={draft.name}
+                            value={canonical.name}
                             readOnly
                             aria-readonly="true"
                             className="cursor-default bg-muted/30"
@@ -116,7 +160,7 @@ export function CatalogDetail({
                         <Select
                             value={draft.routing_strategy}
                             onValueChange={(value) =>
-                                setDraft({ ...draft, routing_strategy: value as RoutingStrategy })
+                                updateDraft({ routing_strategy: value as RoutingStrategy })
                             }
                         >
                             <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
@@ -132,8 +176,7 @@ export function CatalogDetail({
                         <Select
                             value={draft.protocol_policy}
                             onValueChange={(value) =>
-                                setDraft({
-                                    ...draft,
+                                updateDraft({
                                     protocol_policy: value as CanonicalModel['protocol_policy'],
                                 })
                             }
@@ -150,22 +193,30 @@ export function CatalogDetail({
                         <ToggleField
                             label={t('enabled')}
                             checked={draft.enabled}
-                            onCheckedChange={(enabled) => setDraft({ ...draft, enabled })}
+                            onCheckedChange={(enabled) => updateDraft({ enabled })}
                         />
                         <ToggleField
                             label={t('allowLossy')}
                             checked={draft.allow_lossy}
-                            onCheckedChange={(allow_lossy) => setDraft({ ...draft, allow_lossy })}
+                            onCheckedChange={(allow_lossy) => updateDraft({ allow_lossy })}
                         />
                     </div>
                 </div>
                 <div className="flex flex-wrap items-center gap-2">
-                    <Button type="button" size="sm" onClick={saveCanonical} disabled={updateCanonical.isPending}>
+                    <Button
+                        type="button"
+                        size="sm"
+                        onClick={saveCanonical}
+                        disabled={updateCanonical.isPending || !draftDirty || serverChanged}
+                    >
                         <Save />
                         {updateCanonical.isPending ? t('saving') : t('saveCanonical')}
                     </Button>
                     {canonical.manual ? <Badge variant="outline">{t('manual')}</Badge> : null}
                 </div>
+                {serverChanged ? (
+                    <DraftConflict onReload={reloadCanonical} />
+                ) : null}
             </section>
 
             <section className="space-y-3 border-t pt-4">
@@ -314,12 +365,33 @@ function CandidateEditor({
 }) {
     const t = useTranslations('model.catalog');
     const updateCandidate = useUpdateRouteCandidate();
-    const [draft, setDraft] = useState(candidate);
+    const [draftUpdates, setDraftUpdates] = useState<Partial<RouteCandidateUpdate>>({});
+    const [editBaseUpdatedAt, setEditBaseUpdatedAt] = useState<string | null>(null);
+    const draft = { ...candidateDraft(candidate), ...draftUpdates };
+    const draftDirty = Object.keys(draftUpdates).length > 0;
+    const serverChanged =
+        draftDirty &&
+        editBaseUpdatedAt !== null &&
+        editBaseUpdatedAt !== candidate.updated_at;
     const lossyMode = draft.allow_lossy == null ? 'inherit' : draft.allow_lossy ? 'allow' : 'deny';
+
+    const updateDraft = (updates: Partial<RouteCandidateUpdate>) => {
+        setEditBaseUpdatedAt((current) => current ?? candidate.updated_at);
+        setDraftUpdates((current) => ({ ...current, ...updates }));
+    };
+
+    const reloadCandidate = () => {
+        setDraftUpdates({});
+        setEditBaseUpdatedAt(null);
+    };
 
     const save = () => {
         updateCandidate.mutate(draft, {
-            onSuccess: () => toast.success(t('candidateSaved')),
+            onSuccess: () => {
+                setDraftUpdates({});
+                setEditBaseUpdatedAt(null);
+                toast.success(t('candidateSaved'));
+            },
             onError: (error) => toast.error(t('candidateSaveFailed'), { description: errorMessage(error) }),
         });
     };
@@ -340,7 +412,7 @@ function CandidateEditor({
                     {t('statusLabel')}
                     <Select
                         value={draft.status}
-                        onValueChange={(value) => setDraft({ ...draft, status: value as RouteCandidateStatus })}
+                        onValueChange={(value) => updateDraft({ status: value as RouteCandidateStatus })}
                     >
                         <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
                         <SelectContent>
@@ -354,7 +426,7 @@ function CandidateEditor({
                     {t('protocolPolicyLabel')}
                     <Select
                         value={draft.protocol_policy}
-                        onValueChange={(value) => setDraft({ ...draft, protocol_policy: value as ProtocolPolicy })}
+                        onValueChange={(value) => updateDraft({ protocol_policy: value as ProtocolPolicy })}
                     >
                         <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
                         <SelectContent>
@@ -369,7 +441,7 @@ function CandidateEditor({
                     <Input
                         type="number"
                         value={draft.priority}
-                        onChange={(event) => setDraft({ ...draft, priority: Number(event.target.value) || 0 })}
+                        onChange={(event) => updateDraft({ priority: Number(event.target.value) || 0 })}
                     />
                 </label>
                 <label className="grid gap-1 text-xs text-muted-foreground">
@@ -378,7 +450,7 @@ function CandidateEditor({
                         type="number"
                         min="0"
                         value={draft.weight}
-                        onChange={(event) => setDraft({ ...draft, weight: Math.max(0, Number(event.target.value) || 0) })}
+                        onChange={(event) => updateDraft({ weight: Math.max(0, Number(event.target.value) || 0) })}
                     />
                 </label>
                 <label className="grid gap-1 text-xs text-muted-foreground sm:col-span-2">
@@ -386,8 +458,7 @@ function CandidateEditor({
                     <Select
                         value={lossyMode}
                         onValueChange={(value) =>
-                            setDraft({
-                                ...draft,
+                            updateDraft({
                                 allow_lossy: value === 'inherit' ? null : value === 'allow',
                             })
                         }
@@ -402,13 +473,33 @@ function CandidateEditor({
                 </label>
             </div>
             <div className="flex flex-wrap items-center gap-2">
-                <Button type="button" size="sm" onClick={save} disabled={updateCandidate.isPending}>
+                <Button
+                    type="button"
+                    size="sm"
+                    onClick={save}
+                    disabled={updateCandidate.isPending || !draftDirty || serverChanged}
+                >
                     <Save />
                     {updateCandidate.isPending ? t('saving') : t('saveCandidate')}
                 </Button>
                 {candidate.manual ? <Badge variant="outline">{t('manual')}</Badge> : null}
                 <Badge variant="outline">#{candidate.id}</Badge>
             </div>
+            {serverChanged ? <DraftConflict onReload={reloadCandidate} /> : null}
+        </div>
+    );
+}
+
+function DraftConflict({ onReload }: { onReload: () => void }) {
+    const t = useTranslations('model.catalog');
+    return (
+        <div role="alert" className="flex flex-wrap items-center gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-sm">
+            <AlertCircle className="size-4 shrink-0 text-amber-600" />
+            <span className="min-w-48 flex-1">{t('serverChanged')}</span>
+            <Button type="button" size="sm" variant="outline" onClick={onReload}>
+                <RefreshCw className="size-4" />
+                {t('reloadServerVersion')}
+            </Button>
         </div>
     );
 }

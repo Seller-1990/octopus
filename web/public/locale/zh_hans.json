@@ -494,9 +494,11 @@
                 "label": "用户名",
                 "placeholder": "用户名"
             },
-            "password": {
-                "label": "密码",
-                "placeholder": "密码"
+    "password": {
+      "label": "密码",
+      "placeholder": "密码",
+      "show": "显示密码",
+      "hide": "隐藏密码"
             },
             "backupPath": {
                 "label": "远程目录",
@@ -529,6 +531,12 @@
             "restoreSuccess": "恢复成功",
             "restoreFailed": "恢复失败",
             "restoreConfirm": "确认从此备份恢复？已有数据将被增量覆盖。",
+			"restoreResult": "恢复结果",
+			"restoreNoChanges": "没有数据发生变化。",
+			"reload": "重新加载应用",
+			"cancel": "取消",
+			"retry": "重试",
+			"unknownError": "未知错误",
             "fileName": "文件名",
             "fileSize": "大小",
             "modifiedAt": "修改时间",
@@ -772,6 +780,8 @@
             "syncComplete": "目录同步完成",
             "syncResult": "变更 {canonical} 个 Canonical Model、{candidates} 个候选",
             "syncFailed": "目录同步失败",
+            "loadFailed": "目录加载失败：{message}",
+            "retry": "重试",
             "empty": "没有匹配的 Canonical Model",
             "loading": "加载中...",
             "routePreview": "路由预览",
@@ -813,6 +823,8 @@
             "saveCandidate": "保存候选",
             "candidateSaved": "路由候选已保存",
             "candidateSaveFailed": "保存路由候选失败",
+            "serverChanged": "编辑期间服务端版本已变化，请重新载入后再保存。",
+            "reloadServerVersion": "重新载入服务端版本",
             "strategy": {
                 "balanced": "均衡",
                 "reliability": "可靠性优先",
@@ -839,6 +851,7 @@
                 "openai_responses": "OpenAI Responses",
                 "anthropic": "Anthropic Messages",
                 "gemini": "Gemini",
+                "volcengine": "火山引擎",
                 "openai_embedding": "OpenAI Embeddings",
                 "unknown": "未知"
             },
@@ -908,6 +921,8 @@
         "headerPolicy": {
             "title": "Header 策略",
             "policyCount": "{count} 条策略",
+            "loadFailed": "请求头策略数据加载失败：{message}",
+            "retry": "重试",
             "newPolicy": "新建策略",
             "disabled": "已禁用",
             "empty": "暂无 Header 策略",
@@ -968,8 +983,10 @@
         }
     },
     "log": {
-        "list": {
-            "noMore": "没有更多日志了"
+    "list": {
+      "noMore": "没有更多日志了",
+      "loadFailed": "日志加载失败：{message}",
+      "retry": "重试"
         },
         "card": {
             "error": "错误",
@@ -1568,15 +1585,20 @@
             "expiresAt": "过期：{value}",
             "lastSeenAt": "最近连接：{value}",
             "revoke": "撤销配对",
-            "createTitle": "创建配对",
-            "name": "设备名称",
-            "ttlDays": "有效天数",
-            "create": "创建配对",
-            "nameRequired": "请输入设备名称",
-            "created": "配对已创建",
-            "revoked": "配对已撤销",
-            "tokenTitle": "一次性配对令牌",
-            "tokenDescription": "关闭后令牌不会再次显示。",
+      "createTitle": "创建配对",
+      "name": "设备名称",
+      "accountScope": "站点账号",
+      "accountScopeValue": "账号：{value}",
+      "accountPlaceholder": "选择站点账号",
+      "accountLoading": "正在加载站点账号...",
+      "ttlDays": "有效天数",
+      "create": "创建配对",
+      "nameRequired": "请输入设备名称",
+      "accountRequired": "请选择站点账号",
+      "created": "配对已创建",
+      "revoked": "配对已撤销",
+      "tokenTitle": "仅显示一次的配对令牌",
+      "tokenDescription": "此令牌只显示一次，在过期或撤销前持续有效。",
             "done": "完成",
             "revokeConfirmTitle": "撤销配对？",
             "revokeConfirmDescription": "“{name}”将无法再领取验证任务，已领取的任务会被释放。",
@@ -1620,7 +1642,8 @@
             "pending": "待验证",
             "completed": "已完成",
             "expired": "已过期",
-            "revoked": "已撤销"
+            "revoked": "已撤销",
+            "superseded": "已被新会话取代"
         },
         "taskStatus": {
             "pending": "待领取",

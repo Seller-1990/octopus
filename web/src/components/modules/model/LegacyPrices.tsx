@@ -1,13 +1,17 @@
 'use client';
 
 import { useMemo } from 'react';
+import { useTranslations } from 'next-intl';
 import { useModelList } from '@/api/endpoints/model';
+import { Button } from '@/components/ui/button';
 import { VirtualizedGrid } from '@/components/common/VirtualizedGrid';
 import { useSearchStore, useToolbarViewOptionsStore } from '@/components/modules/toolbar';
 import { ModelItem } from './Item';
 
 export function LegacyPrices() {
-    const { data: models } = useModelList();
+    const t = useTranslations('model.catalog');
+    const modelsQuery = useModelList();
+    const { data: models } = modelsQuery;
     const pageKey = 'model' as const;
     const searchTerm = useSearchStore((state) => state.getSearchTerm(pageKey));
     const layout = useToolbarViewOptionsStore((state) => state.getLayout(pageKey));
@@ -23,6 +27,19 @@ export function LegacyPrices() {
             )
             .filter((model) => !term || model.name.toLowerCase().includes(term));
     }, [models, searchTerm, sortOrder]);
+
+    if (modelsQuery.error) {
+        return (
+            <div role="alert" className="grid h-full min-h-40 place-items-center p-4 text-center text-sm text-destructive">
+                <div>
+                    <p>{modelsQuery.error instanceof Error ? modelsQuery.error.message : String(modelsQuery.error)}</p>
+                    <Button type="button" variant="outline" size="sm" className="mt-3" onClick={() => void modelsQuery.refetch()}>
+                        {t('retry')}
+                    </Button>
+                </div>
+            </div>
+        );
+    }
 
     return (
         <VirtualizedGrid

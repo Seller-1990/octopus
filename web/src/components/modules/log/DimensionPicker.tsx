@@ -99,7 +99,11 @@ export function DimensionPicker({
                             <span className="min-w-0 flex-1 truncate">{option.name}</span>
                         </button>
                     ))}
-                    {!query.isLoading && (query.data?.items ?? []).length === 0 ? (
+                    {query.error ? (
+                        <div role="alert" className="px-2 py-8 text-center text-xs text-destructive">
+                            {query.error instanceof Error ? query.error.message : String(query.error)}
+                        </div>
+                    ) : !query.isLoading && (query.data?.items ?? []).length === 0 ? (
                         <div className="px-2 py-8 text-center text-xs text-muted-foreground">{t('filters.noOptions')}</div>
                     ) : null}
                 </div>

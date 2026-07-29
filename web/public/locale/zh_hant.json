@@ -494,9 +494,11 @@
                 "label": "使用者名稱",
                 "placeholder": "使用者名稱"
             },
-            "password": {
-                "label": "密碼",
-                "placeholder": "密碼"
+    "password": {
+      "label": "密碼",
+      "placeholder": "密碼",
+      "show": "顯示密碼",
+      "hide": "隱藏密碼"
             },
             "backupPath": {
                 "label": "遠端目錄",
@@ -529,6 +531,12 @@
             "restoreSuccess": "恢復成功",
             "restoreFailed": "恢復失敗",
             "restoreConfirm": "確認從此備份恢復？已有資料將被增量覆蓋。",
+			"restoreResult": "恢復結果",
+			"restoreNoChanges": "沒有資料發生變化。",
+			"reload": "重新載入應用",
+			"cancel": "取消",
+			"retry": "重試",
+			"unknownError": "未知錯誤",
             "fileName": "檔案名稱",
             "fileSize": "大小",
             "modifiedAt": "修改時間",
@@ -772,6 +780,8 @@
             "syncComplete": "目錄同步完成",
             "syncResult": "變更 {canonical} 個 Canonical Model、{candidates} 個候選",
             "syncFailed": "目錄同步失敗",
+            "loadFailed": "目錄載入失敗：{message}",
+            "retry": "重試",
             "empty": "沒有匹配的 Canonical Model",
             "loading": "載入中...",
             "routePreview": "路由預覽",
@@ -813,6 +823,8 @@
             "saveCandidate": "儲存候選",
             "candidateSaved": "路由候選已儲存",
             "candidateSaveFailed": "儲存路由候選失敗",
+            "serverChanged": "編輯期間服務端版本已變更，請重新載入後再儲存。",
+            "reloadServerVersion": "重新載入服務端版本",
             "strategy": {
                 "balanced": "均衡",
                 "reliability": "可靠性優先",
@@ -839,6 +851,7 @@
                 "openai_responses": "OpenAI Responses",
                 "anthropic": "Anthropic Messages",
                 "gemini": "Gemini",
+                "volcengine": "火山引擎",
                 "openai_embedding": "OpenAI Embeddings",
                 "unknown": "未知"
             },
@@ -908,6 +921,8 @@
         "headerPolicy": {
             "title": "Header 策略",
             "policyCount": "{count} 條策略",
+            "loadFailed": "請求標頭策略資料載入失敗：{message}",
+            "retry": "重試",
             "newPolicy": "新增策略",
             "disabled": "已停用",
             "empty": "暫無 Header 策略",
@@ -968,8 +983,10 @@
         }
     },
     "log": {
-        "list": {
-            "noMore": "沒有更多日誌了"
+    "list": {
+      "noMore": "沒有更多日誌了",
+      "loadFailed": "日誌載入失敗：{message}",
+      "retry": "重試"
         },
         "card": {
             "error": "錯誤",
@@ -1568,15 +1585,20 @@
             "expiresAt": "過期：{value}",
             "lastSeenAt": "最近連線：{value}",
             "revoke": "撤銷配對",
-            "createTitle": "建立配對",
-            "name": "裝置名稱",
-            "ttlDays": "有效天數",
-            "create": "建立配對",
-            "nameRequired": "請輸入裝置名稱",
-            "created": "配對已建立",
-            "revoked": "配對已撤銷",
-            "tokenTitle": "一次性配對權杖",
-            "tokenDescription": "關閉後權杖不會再次顯示。",
+      "createTitle": "建立配對",
+      "name": "裝置名稱",
+      "accountScope": "站點帳號",
+      "accountScopeValue": "帳號：{value}",
+      "accountPlaceholder": "選擇站點帳號",
+      "accountLoading": "正在載入站點帳號...",
+      "ttlDays": "有效天數",
+      "create": "建立配對",
+      "nameRequired": "請輸入裝置名稱",
+      "accountRequired": "請選擇站點帳號",
+      "created": "配對已建立",
+      "revoked": "配對已撤銷",
+      "tokenTitle": "僅顯示一次的配對權杖",
+      "tokenDescription": "此權杖只顯示一次，在過期或撤銷前持續有效。",
             "done": "完成",
             "revokeConfirmTitle": "撤銷配對？",
             "revokeConfirmDescription": "「{name}」將無法再領取驗證任務，已領取的任務會被釋放。",
@@ -1620,7 +1642,8 @@
             "pending": "待驗證",
             "completed": "已完成",
             "expired": "已過期",
-            "revoked": "已撤銷"
+            "revoked": "已撤銷",
+            "superseded": "已被新工作階段取代"
         },
         "taskStatus": {
             "pending": "待領取",

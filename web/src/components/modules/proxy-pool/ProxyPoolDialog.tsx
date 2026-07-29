@@ -23,7 +23,7 @@ import { toast } from '@/components/common/Toast';
 import { cn } from '@/lib/utils';
 import { useJumpStore } from '@/stores/jump';
 import { useProxyPoolDialogStore } from './dialog-store';
-import { Tabs, TabsList, TabsTrigger } from '@/components/animate-ui/components/animate/tabs';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/animate-ui/components/animate/tabs';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { ClashControllerPanel } from './ClashControllerPanel';
 import { VerificationPairingPanel } from './VerificationPairingPanel';
@@ -56,6 +56,17 @@ const emptyForm: FormState = {
 const DEFAULT_TEST_URL = 'https://api.openai.com/v1/models';
 const NO_CLASH_CONTROLLER = '__none__';
 type ProxyPoolView = 'proxies' | 'clash' | 'verification';
+
+function stableReturnFocusTarget(activeElement: Element | null) {
+    if (!(activeElement instanceof HTMLElement)) return null;
+    const popover = activeElement.closest<HTMLElement>('[data-slot="popover-content"]');
+    if (!popover?.id) return activeElement;
+    const triggers = document.querySelectorAll<HTMLElement>('[data-slot="popover-trigger"]');
+    for (const trigger of triggers) {
+        if (trigger.getAttribute('aria-controls') === popover.id) return trigger;
+    }
+    return activeElement;
+}
 
 function maskProxyURL(value: string) {
     try {
@@ -198,6 +209,7 @@ export function ProxyPoolDialog() {
     const [referencesProxy, setReferencesProxy] = useState<ProxyConfiguration | null>(null);
     const [expandedReferenceKeys, setExpandedReferenceKeys] = useState<Set<string>>(() => new Set());
     const focusedProxyRefs = useRef<Map<number, HTMLElement>>(new Map());
+    const returnFocusRef = useRef<HTMLElement | null>(null);
     const { data: references = [], isLoading: referencesLoading, error: referencesError } = useProxyConfigurationReferences(
         referencesProxy?.id ?? null,
         isOpen && !!referencesProxy,
@@ -361,6 +373,16 @@ export function ProxyPoolDialog() {
             <DialogContent
                 className="h-[min(90dvh,52rem)] overflow-hidden rounded-2xl p-0 sm:max-w-5xl"
                 showCloseButton={false}
+                onOpenAutoFocus={() => {
+                    returnFocusRef.current = stableReturnFocusTarget(document.activeElement);
+                }}
+                onCloseAutoFocus={(event) => {
+                    const target = returnFocusRef.current;
+                    returnFocusRef.current = null;
+                    if (!target?.isConnected) return;
+                    event.preventDefault();
+                    target.focus();
+                }}
             >
                 <DialogTitle className="sr-only">{t('title')}</DialogTitle>
                 <DialogDescription className="sr-only">{t('description')}</DialogDescription>
@@ -400,7 +422,10 @@ export function ProxyPoolDialog() {
                         </DialogClose>
                     </div>
 
-                    <div className="min-h-0 flex-1 overflow-hidden">
+                    <TabsContent
+                        value="proxies"
+                        className="min-h-0 flex-1 overflow-hidden"
+                    >
                     {activeView === 'proxies' ? (
                 <div className="grid h-full min-h-0 grid-cols-1 grid-rows-[minmax(0,1fr)_minmax(0,1fr)] overflow-hidden md:grid-cols-[1.1fr_0.9fr] md:grid-rows-1">
                     <section className="flex min-h-0 flex-col border-b md:border-b-0 md:border-r">
@@ -413,6 +438,7 @@ export function ProxyPoolDialog() {
                         </DialogHeader>
                         <div className="shrink-0 px-6 pb-3">
                             <Input
+                                aria-label={t('searchPlaceholder')}
                                 value={query}
                                 onChange={(event) => setQuery(event.target.value)}
                                 placeholder={t('searchPlaceholder')}
@@ -442,7 +468,7 @@ export function ProxyPoolDialog() {
                                                 <Badge variant={proxy.enabled ? 'default' : 'secondary'}>
                                                     {proxy.enabled ? t('enabled') : t('disabled')}
                                                 </Badge>
-                                                <button type="button" onClick={() => openReferences(proxy)} className="rounded-full" title={t('referencesTitle')}>
+                                                <button type="button" onClick={() => openReferences(proxy)} className="rounded-full" title={t('referencesTitle')} aria-label={t('referencesTitle')}>
                                                     <Badge variant="outline" className="cursor-pointer hover:bg-accent hover:text-accent-foreground">
                                                         <ExternalLink className="size-3" />
                                                         {t('references', { count: proxy.reference_count })}
@@ -468,13 +494,13 @@ export function ProxyPoolDialog() {
                                             {proxy.remark ? <p className="mt-2 text-xs text-muted-foreground">{proxy.remark}</p> : null}
                                         </div>
                                         <div className="flex shrink-0 items-center gap-1">
-                                            <Button type="button" variant="ghost" size="icon-sm" className="rounded-xl" onClick={() => handleTest(proxy)} disabled={testingKey === `saved-${proxy.id}` || !proxy.enabled} title={proxy.enabled ? t('test') : t('disabled')}>
+                                            <Button type="button" variant="ghost" size="icon-sm" className="rounded-xl" onClick={() => handleTest(proxy)} disabled={testingKey === `saved-${proxy.id}` || !proxy.enabled} title={proxy.enabled ? t('test') : t('disabled')} aria-label={proxy.enabled ? t('test') : t('disabled')}>
                                                 <FlaskConical className={cn('size-4', testingKey === `saved-${proxy.id}` && 'animate-pulse')} />
                                             </Button>
-                                            <Button type="button" variant="ghost" size="icon-sm" className="rounded-xl" onClick={() => setForm(createFormFromProxy(proxy))} title={t('edit')}>
+                                            <Button type="button" variant="ghost" size="icon-sm" className="rounded-xl" onClick={() => setForm(createFormFromProxy(proxy))} title={t('edit')} aria-label={t('edit')}>
                                                 <Pencil className="size-4" />
                                             </Button>
-                                            <Button type="button" variant="ghost" size="icon-sm" className="rounded-xl text-destructive hover:text-destructive" onClick={() => handleDelete(proxy)} disabled={deleteProxy.isPending || proxy.reference_count > 0} title={proxy.reference_count > 0 ? t('deleteBlocked') : t('delete')}>
+                                            <Button type="button" variant="ghost" size="icon-sm" className="rounded-xl text-destructive hover:text-destructive" onClick={() => handleDelete(proxy)} disabled={deleteProxy.isPending || proxy.reference_count > 0} title={proxy.reference_count > 0 ? t('deleteBlocked') : t('delete')} aria-label={proxy.reference_count > 0 ? t('deleteBlocked') : t('delete')}>
                                                 <Trash2 className="size-4" />
                                             </Button>
                                         </div>
@@ -498,12 +524,12 @@ export function ProxyPoolDialog() {
 
                         <form onSubmit={submitForm} className="space-y-4">
                             <div className="space-y-2">
-                                <label className="text-sm font-medium">{t('name')}</label>
-                                <Input value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} className="rounded-xl" required />
+                                <label htmlFor="proxy-pool-name" className="text-sm font-medium">{t('name')}</label>
+                                <Input id="proxy-pool-name" value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} className="rounded-xl" required />
                             </div>
                             <div className="space-y-2">
-                                <label className="text-sm font-medium">{t('url')}</label>
-                                <Input value={form.url} onChange={(event) => setForm({ ...form, url: event.target.value })} placeholder="socks5://127.0.0.1:1080" className="rounded-xl" required />
+                                <label htmlFor="proxy-pool-url" className="text-sm font-medium">{t('url')}</label>
+                                <Input id="proxy-pool-url" value={form.url} onChange={(event) => setForm({ ...form, url: event.target.value })} placeholder="socks5://127.0.0.1:1080" className="rounded-xl" required />
                             </div>
                             <div className="space-y-2">
                                 <label className="text-sm font-medium">{t('clashLinkLabel')}</label>
@@ -531,7 +557,7 @@ export function ProxyPoolDialog() {
                                         });
                                     }}
                                 >
-                                    <SelectTrigger className="w-full rounded-xl">
+                                    <SelectTrigger className="w-full rounded-xl" aria-label={t('clashLinkLabel')}>
                                         <SelectValue />
                                     </SelectTrigger>
                                     <SelectContent>
@@ -554,8 +580,8 @@ export function ProxyPoolDialog() {
                                 </p>
                             </div>
                             <div className="space-y-2">
-                                <label className="text-sm font-medium">{t('remark')}</label>
-                                <Input value={form.remark} onChange={(event) => setForm({ ...form, remark: event.target.value })} className="rounded-xl" />
+                                <label htmlFor="proxy-pool-remark" className="text-sm font-medium">{t('remark')}</label>
+                                <Input id="proxy-pool-remark" value={form.remark} onChange={(event) => setForm({ ...form, remark: event.target.value })} className="rounded-xl" />
                             </div>
                             <label className="flex items-center justify-between rounded-xl border bg-muted/20 px-4 py-3">
                                 <span className="text-sm font-medium">{t('enabled')}</span>
@@ -563,8 +589,8 @@ export function ProxyPoolDialog() {
                             </label>
 
                             <div className="space-y-2 rounded-2xl border bg-muted/20 p-4">
-                                <label className="text-sm font-medium">{t('testUrl')}</label>
-                                <Input value={testURL} onChange={(event) => setTestURL(event.target.value)} className="rounded-xl" />
+                                <label htmlFor="proxy-pool-test-url" className="text-sm font-medium">{t('testUrl')}</label>
+                                <Input id="proxy-pool-test-url" value={testURL} onChange={(event) => setTestURL(event.target.value)} className="rounded-xl" />
                                 <Button type="button" variant="outline" className="w-full rounded-xl" onClick={() => handleTest()} disabled={!form.url.trim() || testingKey === 'draft'}>
                                     <FlaskConical className={cn('size-4', testingKey === 'draft' && 'animate-pulse')} />
                                     {t('testDraft')}
@@ -577,14 +603,26 @@ export function ProxyPoolDialog() {
                         </form>
                     </section>
                 </div>
-                    ) : activeView === 'clash' ? (
+                    ) : null}
+                    </TabsContent>
+                    <TabsContent
+                        value="clash"
+                        className="min-h-0 flex-1 overflow-hidden"
+                    >
+                    {activeView === 'clash' ? (
                         <ClashControllerPanel enabled={isOpen && activeView === 'clash'} />
-                    ) : (
+                    ) : null}
+                    </TabsContent>
+                    <TabsContent
+                        value="verification"
+                        className="min-h-0 flex-1 overflow-hidden"
+                    >
+                    {activeView === 'verification' ? (
                         <VerificationPairingPanel
                             enabled={isOpen && activeView === 'verification'}
                         />
-                    )}
-                    </div>
+                    ) : null}
+                    </TabsContent>
                 </Tabs>
             </DialogContent>
             <Dialog open={!!referencesProxy} onOpenChange={(open) => !open && setReferencesProxy(null)}>

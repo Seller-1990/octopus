@@ -1,7 +1,7 @@
 'use client';
 
 import { useMemo, useState } from 'react';
-import { Plus, ShieldCheck } from 'lucide-react';
+import { AlertCircle, Plus, ShieldCheck } from 'lucide-react';
 import { useTranslations } from 'next-intl';
 import { useChannelList } from '@/api/endpoints/channel';
 import {
@@ -24,6 +24,7 @@ export function HeaderPolicies() {
     const sites = useSiteList();
     const catalog = useModelCatalog();
     const [selectedId, setSelectedId] = useState<number | 'new' | null>(null);
+    const loadError = policies.error ?? channels.error ?? sites.error ?? catalog.error;
 
     const targets = useMemo<ScopeTargets>(() => {
         const channelTargets = (channels.data ?? []).map((item) => ({
@@ -89,6 +90,26 @@ export function HeaderPolicies() {
                     </Button>
                 </div>
                 <div className="min-h-0 flex-1 overflow-y-auto p-1.5">
+                    {loadError ? (
+                        <div role="alert" className="m-2 rounded-md border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">
+                            <AlertCircle className="mb-2 size-4" />
+                            <p>{t('loadFailed', { message: loadError instanceof Error ? loadError.message : String(loadError) })}</p>
+                            <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                className="mt-3"
+                                onClick={() => void Promise.all([
+                                    policies.refetch(),
+                                    channels.refetch(),
+                                    sites.refetch(),
+                                    catalog.refetch(),
+                                ])}
+                            >
+                                {t('retry')}
+                            </Button>
+                        </div>
+                    ) : null}
                     {(policies.data ?? []).map((policy) => (
                         <PolicyListItem
                             key={policy.id}
@@ -103,7 +124,7 @@ export function HeaderPolicies() {
                             <span className="block text-sm font-medium">{t('newPolicy')}</span>
                         </div>
                     ) : null}
-                    {!policies.isLoading && (policies.data ?? []).length === 0 && !editingNew ? (
+                    {!policies.isLoading && !policies.error && (policies.data ?? []).length === 0 && !editingNew ? (
                         <div className="grid min-h-40 place-items-center px-4 text-center text-sm text-muted-foreground">
                             <div>
                                 <ShieldCheck className="mx-auto mb-2 size-5" />

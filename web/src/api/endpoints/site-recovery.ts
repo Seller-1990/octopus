@@ -4,7 +4,12 @@ import type { ProxyMode } from './proxy-pool';
 
 export type SiteRecoveryOperation = 'sync' | 'checkin';
 export type SiteProxyPreferenceStatus = 'healthy' | 'cooling' | 'stale' | 'disabled';
-export type VerificationSessionStatus = 'pending' | 'completed' | 'expired' | 'revoked';
+export type VerificationSessionStatus =
+    | 'pending'
+    | 'completed'
+    | 'expired'
+    | 'revoked'
+    | 'superseded';
 export type VerificationTaskStatus = 'pending' | 'claimed' | 'completed' | 'expired' | 'canceled';
 export type VerificationRetryStatus =
     | 'none'
@@ -121,6 +126,7 @@ export type VerificationTask = {
 export type VerificationBridgePairing = {
     id: number;
     name: string;
+    site_account_id: number;
     expires_at: string;
     last_seen_at?: string | null;
     revoked_at?: string | null;
@@ -365,7 +371,7 @@ export function useVerificationPairings(enabled = true) {
 export function useCreateVerificationPairing() {
     const queryClient = useQueryClient();
     return useMutation({
-        mutationFn: async (data: { name: string; ttl_days?: number }) =>
+        mutationFn: async (data: { name: string; site_account_id: number; ttl_days?: number }) =>
             apiClient.post<VerificationBridgePairingCreated>(
                 '/api/v1/site/recovery/verification/pairings',
                 data,

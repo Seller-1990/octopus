@@ -1,7 +1,7 @@
 'use client';
 
 import { useMemo, useState } from 'react';
-import { RefreshCw, SearchX } from 'lucide-react';
+import { AlertCircle, RefreshCw, SearchX } from 'lucide-react';
 import { useTranslations } from 'next-intl';
 import { useChannelList } from '@/api/endpoints/channel';
 import { type CanonicalModel, useModelCatalog, useSyncModelCatalog } from '@/api/endpoints/model-catalog';
@@ -94,6 +94,15 @@ export function ModelCatalog() {
                     </Button>
                 </div>
                 <div className="min-h-0 flex-1 overflow-y-auto p-1.5">
+                    {catalog.error && !catalog.data ? (
+                        <div role="alert" className="m-2 rounded-md border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">
+                            <AlertCircle className="mb-2 size-4" />
+                            <p>{t('loadFailed', { message: errorMessage(catalog.error) })}</p>
+                            <Button type="button" variant="outline" size="sm" className="mt-3" onClick={() => void catalog.refetch()}>
+                                {t('retry')}
+                            </Button>
+                        </div>
+                    ) : null}
                     {filtered.map((model) => (
                         <CatalogListItem
                             key={model.id}
@@ -102,7 +111,7 @@ export function ModelCatalog() {
                             onSelect={() => setSelectedId(model.id)}
                         />
                     ))}
-                    {!catalog.isLoading && filtered.length === 0 ? (
+                    {!catalog.isLoading && !catalog.error && filtered.length === 0 ? (
                         <div className="grid min-h-40 place-items-center px-4 text-center text-sm text-muted-foreground">
                             <div>
                                 <SearchX className="mx-auto mb-2 size-5" />
@@ -125,6 +134,15 @@ export function ModelCatalog() {
                         siteNameById={siteNameById}
                         accountNameById={accountNameById}
                     />
+                ) : catalog.error && !catalog.data ? (
+                    <div role="alert" className="grid min-h-64 place-items-center p-4 text-center text-sm text-destructive">
+                        <div>
+                            <p>{t('loadFailed', { message: errorMessage(catalog.error) })}</p>
+                            <Button type="button" variant="outline" size="sm" className="mt-3" onClick={() => void catalog.refetch()}>
+                                {t('retry')}
+                            </Button>
+                        </div>
+                    </div>
                 ) : (
                     <div className="grid min-h-64 place-items-center text-sm text-muted-foreground">
                         {catalog.isLoading ? t('loading') : t('empty')}

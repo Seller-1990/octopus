@@ -174,6 +174,10 @@ export function PricingPanel({ candidate }: { candidate: RouteCandidate }) {
                         {effective.data.match_reason ? <span className="break-words">{effective.data.match_reason}</span> : null}
                     </div>
                 </div>
+            ) : effective.error ? (
+                <div role="alert" className="rounded-md border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">
+                    {errorMessage(effective.error)}
+                </div>
             ) : (
                 <p className="text-sm text-muted-foreground">{effective.isLoading ? t('loading') : t('unknown')}</p>
             )}
@@ -183,7 +187,11 @@ export function PricingPanel({ candidate }: { candidate: RouteCandidate }) {
                     <h4 className="text-sm font-medium">{t('quotes')}</h4>
                     <Badge variant="outline">{quotes.data?.length ?? 0}</Badge>
                 </div>
-                {(quotes.data ?? []).length > 0 ? (
+                {quotes.error ? (
+                    <div role="alert" className="rounded-md border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">
+                        {errorMessage(quotes.error)}
+                    </div>
+                ) : (quotes.data ?? []).length > 0 ? (
                     <div className="divide-y rounded-md border">
                         {(quotes.data ?? []).map((quote) => (
                             <div key={quote.id} className="flex min-w-0 items-start gap-3 px-3 py-2 text-sm">
@@ -267,8 +275,11 @@ export function PricingPanel({ candidate }: { candidate: RouteCandidate }) {
             ) : null}
 
             <div className="space-y-3 border-t pt-4">
-                <div className="flex items-center justify-between">
+                    <div className="flex items-center justify-between">
                     <h4 className="text-sm font-medium">{t('currencyRates')}</h4>
+                    {rates.error ? (
+                        <span role="alert" className="text-xs text-destructive">{errorMessage(rates.error)}</span>
+                    ) : (
                     <div className="flex flex-wrap gap-1">
                         {(rates.data ?? []).map((rate) => (
                             <Badge key={rate.currency} variant="outline">
@@ -276,6 +287,7 @@ export function PricingPanel({ candidate }: { candidate: RouteCandidate }) {
                             </Badge>
                         ))}
                     </div>
+                    )}
                 </div>
                 <div className="grid gap-2 sm:grid-cols-[8rem_10rem_auto]">
                     <Input

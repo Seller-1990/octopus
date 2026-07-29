@@ -12,7 +12,7 @@ import {
     useSiteProxyPreferences,
 } from '@/api/endpoints/site-recovery';
 import { toast } from '@/components/common/Toast';
-import { Tabs, TabsList, TabsTrigger } from '@/components/animate-ui/components/animate/tabs';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/animate-ui/components/animate/tabs';
 import {
     AlertDialog,
     AlertDialogAction,
@@ -163,10 +163,8 @@ export function RecoveryDialog({
                             </TabsList>
                         </div>
 
-                        <div
-                            role="tabpanel"
-                            aria-label={t(`tabs.${tab}`)}
-                            tabIndex={0}
+                        <TabsContent
+                            value="overview"
                             className="min-h-0 flex-1 overflow-y-auto px-5 py-5 sm:px-6"
                         >
                             {tab === 'overview' ? (
@@ -191,6 +189,11 @@ export function RecoveryDialog({
                                     clearingSite={clearSitePreference.isPending}
                                 />
                             ) : null}
+                        </TabsContent>
+                        <TabsContent
+                            value="attempts"
+                            className="min-h-0 flex-1 overflow-y-auto px-5 py-5 sm:px-6"
+                        >
                             {tab === 'attempts' ? (
                                 <RecoveryAttempts
                                     attempts={attemptsQuery.data ?? []}
@@ -198,13 +201,18 @@ export function RecoveryDialog({
                                     error={attemptsQuery.error}
                                 />
                             ) : null}
+                        </TabsContent>
+                        <TabsContent
+                            value="verification"
+                            className="min-h-0 flex-1 overflow-y-auto px-5 py-5 sm:px-6"
+                        >
                             {tab === 'verification' ? (
                                 <VerificationPanel
                                     open={open}
                                     account={currentAccount}
                                 />
                             ) : null}
-                        </div>
+                        </TabsContent>
                     </Tabs>
                 </DialogContent>
             </Dialog>

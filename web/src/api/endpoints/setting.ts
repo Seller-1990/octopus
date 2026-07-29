@@ -107,7 +107,7 @@ export function useSetSetting() {
             return apiClient.post<Setting>('/api/v1/setting/set', data);
         },
         onSuccess: (data) => {
-            logger.log('Setting 设置成功:', data);
+            logger.log('Setting 设置成功:', data.key);
             queryClient.invalidateQueries({ queryKey: ['settings', 'list'] });
         },
         onError: (error) => {
@@ -121,6 +121,12 @@ export function useSetSetting() {
  */
 export interface DBImportResult {
     rows_affected: Record<string, number>;
+    warnings?: Array<{
+        code: string;
+        resource_type: string;
+        resource_name: string;
+        message: string;
+    }>;
 }
 
 export interface DBExportOptions {

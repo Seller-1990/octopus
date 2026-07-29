@@ -22,6 +22,7 @@ let state = {
   claim: null,
   verificationWindowID: null,
 };
+let claimExpiryTimer = null;
 
 document.addEventListener("DOMContentLoaded", initialize);
 elements.showToken.addEventListener("change", () => {
@@ -38,7 +39,13 @@ async function initialize() {
   state = {...state, ...(stored[STORAGE_KEY] || {})};
   elements.baseURL.value = state.baseURL || "";
   elements.pairingToken.value = state.pairingToken || "";
+  if (activeClaimExpired()) {
+    await clearActiveTask(true);
+    setStatus("The saved verification claim expired.", "error");
+    return;
+  }
   renderTask();
+  scheduleClaimExpiry();
 }
 
 async function saveConnection() {
@@ -47,6 +54,12 @@ async function saveConnection() {
     const pairingToken = elements.pairingToken.value.trim();
     if (!pairingToken) {
       throw new Error("Pairing token is required.");
+    }
+    if (
+      state.claim &&
+      (state.baseURL !== baseURL || state.pairingToken !== pairingToken)
+    ) {
+      throw new Error("Release the active verification task before changing the connection.");
     }
     await ensureOriginPermission(baseURL);
     state.baseURL = baseURL;
@@ -58,6 +71,27 @@ async function saveConnection() {
 
 async function claimTask() {
   await runBusy(elements.claim, async () => {
+    if (state.claim) {
+      const previousClaim = state.claim;
+      const previousBaseURL = state.baseURL;
+      const previousPairingToken = state.pairingToken;
+      try {
+        await callBridgeAt(
+          previousBaseURL,
+          previousPairingToken,
+          "/release",
+          {
+            pairing_token: previousPairingToken,
+            task_token: previousClaim.task_token,
+          },
+        );
+      } catch (error) {
+        if (!error?.terminal) {
+          throw error;
+        }
+      }
+      await clearActiveTask(true);
+    }
     await syncConnectionFromInputs();
     const data = await callBridge("/claim", {
       pairing_token: state.pairingToken,
@@ -66,13 +100,14 @@ async function claimTask() {
     state.verificationWindowID = null;
     await persistState();
     renderTask();
+    scheduleClaimExpiry();
     setStatus("Verification task claimed.", "success");
   });
 }
 
 async function openVerification() {
   await runBusy(elements.open, async () => {
-    const task = requireActiveTask();
+    const task = await requireActiveTask();
     await ensureOriginPermission(task.target_url);
     const created = await chrome.windows.create({
       url: task.target_url,
@@ -89,9 +124,11 @@ async function openVerification() {
 
 async function submitSession() {
   await runBusy(elements.submit, async () => {
-    const task = requireActiveTask();
+    const task = await requireActiveTask();
     await ensureOriginPermission(task.target_url);
-    const cookies = await chrome.cookies.getAll({url: task.target_url});
+    const cookies = (await chrome.cookies.getAll({url: task.target_url})).filter(
+      (cookie) => isVerificationCookie(cookie.name),
+    );
     if (!cookies.length) {
       throw new Error("No cookies are available for the verification target.");
     }
@@ -115,7 +152,7 @@ async function submitSession() {
 
 async function releaseTask() {
   await runBusy(elements.release, async () => {
-    requireActiveTask();
+    await requireActiveTask();
     await callBridge("/release", {
       pairing_token: state.pairingToken,
       task_token: state.claim.task_token,
@@ -123,6 +160,13 @@ async function releaseTask() {
     await clearActiveTask(true);
     setStatus("Verification task released.", "success");
   });
+}
+
+function isVerificationCookie(name) {
+  const value = String(name || "").trim();
+  return value === "cf_clearance"
+    || value === "__cf_bm"
+    || value.startsWith("cf_chl_");
 }
 
 async function syncConnectionFromInputs() {
@@ -141,8 +185,12 @@ async function callBridge(path, body) {
   if (!state.baseURL || !state.pairingToken) {
     throw new Error("Save the Octopus connection first.");
   }
+  return callBridgeAt(state.baseURL, state.pairingToken, path, body);
+}
+
+async function callBridgeAt(baseURL, pairingToken, path, body) {
   const response = await fetch(
-    `${state.baseURL}/api/v1/site/recovery/verification/bridge${path}`,
+    `${baseURL}/api/v1/site/recovery/verification/bridge${path}`,
     {
       method: "POST",
       headers: {"Content-Type": "application/json"},
@@ -156,15 +204,25 @@ async function callBridge(path, body) {
     throw new Error(`Octopus returned HTTP ${response.status}.`);
   }
   if (!response.ok || payload.code !== 200) {
-    throw new Error(payload.message || `Octopus returned HTTP ${response.status}.`);
+    const error = new Error(
+      payload.message || `Octopus returned HTTP ${response.status}.`,
+    );
+    error.terminal = /expired|revoked|already consumed|not claimed|not found|superseded/i.test(
+      error.message,
+    );
+    throw error;
   }
   return payload.data;
 }
 
-function requireActiveTask() {
+async function requireActiveTask() {
   const task = state.claim?.task;
   if (!task || !state.claim?.task_token) {
     throw new Error("No active verification task.");
+  }
+  if (activeClaimExpired()) {
+    await clearActiveTask(true);
+    throw new Error("The verification claim expired. Claim the task again.");
   }
   return task;
 }
@@ -178,17 +236,23 @@ async function clearActiveTask(removeTargetPermission) {
       // The administrator may have already closed the temporary window.
     }
   }
-  state.claim = null;
-  state.verificationWindowID = null;
-  await persistState();
-  renderTask();
+  clearClaimExpiryTimer();
   if (removeTargetPermission && targetURL) {
     const targetOrigin = originPattern(targetURL);
     const baseOrigin = state.baseURL ? originPattern(state.baseURL) : "";
     if (targetOrigin !== baseOrigin) {
-      await chrome.permissions.remove({origins: [targetOrigin]});
+      try {
+        await chrome.permissions.remove({origins: [targetOrigin]});
+      } catch {
+        // State cleanup must not be blocked by a stale or already-removed
+        // permission. The browser will reconcile the permission on its own.
+      }
     }
   }
+  state.claim = null;
+  state.verificationWindowID = null;
+  await persistState();
+  renderTask();
 }
 
 async function ensureOriginPermission(value) {
@@ -232,7 +296,42 @@ function renderTask() {
   }
   elements.taskHost.textContent = task.target_host || new URL(task.target_url).hostname;
   elements.taskOperation.textContent = task.operation || "manual";
-  elements.taskExpires.textContent = new Date(task.expires_at).toLocaleString();
+  const expiresAt = state.claim?.claim_expires_at || task.expires_at;
+  elements.taskExpires.textContent = new Date(expiresAt).toLocaleString();
+}
+
+function activeClaimExpired() {
+  const expiresAt = state.claim?.claim_expires_at || state.claim?.task?.expires_at;
+  if (!expiresAt) {
+    return false;
+  }
+  const deadline = new Date(expiresAt).getTime();
+  return !Number.isFinite(deadline) || deadline <= Date.now();
+}
+
+function clearClaimExpiryTimer() {
+  if (claimExpiryTimer !== null) {
+    window.clearTimeout(claimExpiryTimer);
+    claimExpiryTimer = null;
+  }
+}
+
+function scheduleClaimExpiry() {
+  clearClaimExpiryTimer();
+  const expiresAt = state.claim?.claim_expires_at || state.claim?.task?.expires_at;
+  if (!expiresAt) {
+    return;
+  }
+  const delay = new Date(expiresAt).getTime() - Date.now();
+  if (!Number.isFinite(delay) || delay <= 0) {
+    void clearActiveTask(true);
+    return;
+  }
+  claimExpiryTimer = window.setTimeout(async () => {
+    claimExpiryTimer = null;
+    await clearActiveTask(true);
+    setStatus("The verification claim expired. Claim the task again.", "error");
+  }, Math.min(delay, 2_147_000_000));
 }
 
 async function runBusy(button, action) {
@@ -241,6 +340,9 @@ async function runBusy(button, action) {
   try {
     await action();
   } catch (error) {
+    if (error?.terminal && state.claim) {
+      await clearActiveTask(true);
+    }
     setStatus(error instanceof Error ? error.message : String(error), "error");
   } finally {
     button.disabled = false;

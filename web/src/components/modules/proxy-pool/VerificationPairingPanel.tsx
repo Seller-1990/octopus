@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState, type FormEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import { useTranslations } from 'next-intl';
 import { KeyRound, Plus, Trash2 } from 'lucide-react';
 import {
@@ -10,6 +10,7 @@ import {
     type VerificationBridgePairing,
     type VerificationBridgePairingCreated,
 } from '@/api/endpoints/site-recovery';
+import { useSiteList } from '@/api/endpoints/site';
 import { CopyIconButton } from '@/components/common/CopyButton';
 import { toast } from '@/components/common/Toast';
 import {
@@ -32,6 +33,13 @@ import {
     DialogTitle,
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
+import {
+    Select,
+    SelectContent,
+    SelectItem,
+    SelectTrigger,
+    SelectValue,
+} from '@/components/ui/select';
 import { cn } from '@/lib/utils';
 
 type VerificationPairingPanelProps = {
@@ -60,17 +68,42 @@ export function VerificationPairingPanel({
     const pairingsQuery = useVerificationPairings(enabled);
     const createPairing = useCreateVerificationPairing();
     const revokePairing = useRevokeVerificationPairing();
+    const sitesQuery = useSiteList();
     const [name, setName] = useState('');
     const [ttlDays, setTTLDays] = useState(30);
+    const [siteAccountID, setSiteAccountID] = useState<number | null>(null);
     const [createdPairing, setCreatedPairing] =
         useState<VerificationBridgePairingCreated | null>(null);
     const [revokeTarget, setRevokeTarget] =
         useState<VerificationBridgePairing | null>(null);
+    const [now, setNow] = useState(() => Date.now());
+    const createButtonRef = useRef<HTMLButtonElement>(null);
     const pairings = useMemo(
         () => pairingsQuery.data ?? [],
         [pairingsQuery.data],
     );
-    const now = pairingsQuery.dataUpdatedAt;
+    const accountOptions = useMemo(
+        () =>
+            (sitesQuery.data ?? []).flatMap((site) =>
+                site.accounts.map((account) => ({
+                    id: account.id,
+                    label: `${site.name} / ${account.name}`,
+                })),
+            ),
+        [sitesQuery.data],
+    );
+    const accountNameByID = useMemo(
+        () => new Map(accountOptions.map((account) => [account.id, account.label])),
+        [accountOptions],
+    );
+    const selectedSiteAccountID =
+        siteAccountID ??
+        (accountOptions.length === 1 ? accountOptions[0].id : null);
+    useEffect(() => {
+        if (!enabled) return;
+        const timer = window.setInterval(() => setNow(Date.now()), 30_000);
+        return () => window.clearInterval(timer);
+    }, [enabled]);
     const activeCount = useMemo(
         () =>
             pairings.filter(
@@ -87,9 +120,14 @@ export function VerificationPairingPanel({
             toast.error(t('nameRequired'));
             return;
         }
+        if (!selectedSiteAccountID) {
+            toast.error(t('accountRequired'));
+            return;
+        }
         try {
             const result = await createPairing.mutateAsync({
                 name: name.trim(),
+                site_account_id: selectedSiteAccountID,
                 ttl_days: Math.min(365, Math.max(1, Math.trunc(ttlDays))),
             });
             setName('');
@@ -177,6 +215,15 @@ export function VerificationPairingPanel({
                                                     </Badge>
                                                 </div>
                                                 <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
+                                                    <span>
+                                                        {t('accountScopeValue', {
+                                                            value:
+                                                                accountNameByID.get(
+                                                                    pairing.site_account_id,
+                                                                ) ??
+                                                                `#${pairing.site_account_id}`,
+                                                        })}
+                                                    </span>
                                                     {expiresAt ? (
                                                         <span>
                                                             {t('expiresAt', {
@@ -228,6 +275,43 @@ export function VerificationPairingPanel({
                             />
                         </label>
                         <label className="grid gap-1.5 text-sm">
+                            <span className="font-medium">{t('accountScope')}</span>
+                            <Select
+                                value={
+                                    selectedSiteAccountID
+                                        ? String(selectedSiteAccountID)
+                                        : undefined
+                                }
+                                onValueChange={(value) =>
+                                    setSiteAccountID(Number(value))
+                                }
+                                disabled={
+                                    sitesQuery.isLoading ||
+                                    accountOptions.length === 0
+                                }
+                            >
+                                <SelectTrigger className="w-full rounded-xl">
+                                    <SelectValue
+                                        placeholder={
+                                            sitesQuery.isLoading
+                                                ? t('accountLoading')
+                                                : t('accountPlaceholder')
+                                        }
+                                    />
+                                </SelectTrigger>
+                                <SelectContent>
+                                    {accountOptions.map((account) => (
+                                        <SelectItem
+                                            key={account.id}
+                                            value={String(account.id)}
+                                        >
+                                            {account.label}
+                                        </SelectItem>
+                                    ))}
+                                </SelectContent>
+                            </Select>
+                        </label>
+                        <label className="grid gap-1.5 text-sm">
                             <span className="font-medium">{t('ttlDays')}</span>
                             <Input
                                 type="number"
@@ -241,9 +325,14 @@ export function VerificationPairingPanel({
                             />
                         </label>
                         <Button
+                            ref={createButtonRef}
                             type="submit"
                             className="h-11 w-full rounded-xl"
-                            disabled={createPairing.isPending}
+                            disabled={
+                                createPairing.isPending ||
+                                sitesQuery.isLoading ||
+                                accountOptions.length === 0
+                            }
                         >
                             <Plus className="size-4" />
                             {t('create')}
@@ -256,7 +345,15 @@ export function VerificationPairingPanel({
                 open={createdPairing !== null}
                 onOpenChange={(open) => !open && setCreatedPairing(null)}
             >
-                <DialogContent className="rounded-2xl sm:max-w-xl">
+                <DialogContent
+                    className="rounded-2xl sm:max-w-xl"
+                    onCloseAutoFocus={(event) => {
+                        const target = createButtonRef.current;
+                        if (!target?.isConnected) return;
+                        event.preventDefault();
+                        target.focus();
+                    }}
+                >
                     <DialogHeader>
                         <DialogTitle>{t('tokenTitle')}</DialogTitle>
                         <DialogDescription>

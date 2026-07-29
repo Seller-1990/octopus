@@ -494,9 +494,11 @@
                 "label": "Username",
                 "placeholder": "Username"
             },
-            "password": {
-                "label": "Password",
-                "placeholder": "Password"
+    "password": {
+      "label": "Password",
+      "placeholder": "Password",
+      "show": "Show password",
+      "hide": "Hide password"
             },
             "backupPath": {
                 "label": "Remote Path",
@@ -529,6 +531,12 @@
             "restoreSuccess": "Restore successful",
             "restoreFailed": "Restore failed",
             "restoreConfirm": "Restore from this backup? Existing data will be incrementally overwritten.",
+			"restoreResult": "Restore result",
+			"restoreNoChanges": "No rows changed.",
+			"reload": "Reload application",
+			"cancel": "Cancel",
+			"retry": "Retry",
+			"unknownError": "Unknown error",
             "fileName": "File Name",
             "fileSize": "Size",
             "modifiedAt": "Modified",
@@ -772,6 +780,8 @@
             "syncComplete": "Catalog synced",
             "syncResult": "{canonical} canonical models and {candidates} candidates changed",
             "syncFailed": "Catalog sync failed",
+            "loadFailed": "Catalog load failed: {message}",
+            "retry": "Retry",
             "empty": "No matching canonical models",
             "loading": "Loading...",
             "routePreview": "Route preview",
@@ -813,6 +823,8 @@
             "saveCandidate": "Save candidate",
             "candidateSaved": "Route candidate saved",
             "candidateSaveFailed": "Failed to save route candidate",
+            "serverChanged": "The server version changed while you were editing. Reload it before saving.",
+            "reloadServerVersion": "Reload server version",
             "strategy": {
                 "balanced": "Balanced",
                 "reliability": "Reliability",
@@ -839,6 +851,7 @@
                 "openai_responses": "OpenAI Responses",
                 "anthropic": "Anthropic Messages",
                 "gemini": "Gemini",
+                "volcengine": "Volcengine",
                 "openai_embedding": "OpenAI Embeddings",
                 "unknown": "Unknown"
             },
@@ -908,6 +921,8 @@
         "headerPolicy": {
             "title": "Header policies",
             "policyCount": "{count} policies",
+            "loadFailed": "Header policy data failed to load: {message}",
+            "retry": "Retry",
             "newPolicy": "New policy",
             "disabled": "Disabled",
             "empty": "No header policies",
@@ -968,8 +983,10 @@
         }
     },
     "log": {
-        "list": {
-            "noMore": "No more logs"
+    "list": {
+      "noMore": "No more logs",
+      "loadFailed": "Failed to load logs: {message}",
+      "retry": "Retry"
         },
         "card": {
             "error": "Error",
@@ -1568,15 +1585,20 @@
             "expiresAt": "Expires: {value}",
             "lastSeenAt": "Last seen: {value}",
             "revoke": "Revoke pairing",
-            "createTitle": "Create pairing",
-            "name": "Device name",
-            "ttlDays": "Valid days",
-            "create": "Create pairing",
-            "nameRequired": "Enter a device name",
-            "created": "Pairing created",
-            "revoked": "Pairing revoked",
-            "tokenTitle": "One-time pairing token",
-            "tokenDescription": "The token will not be shown again after this dialog closes.",
+      "createTitle": "Create pairing",
+      "name": "Device name",
+      "accountScope": "Site account",
+      "accountScopeValue": "Account: {value}",
+      "accountPlaceholder": "Select a site account",
+      "accountLoading": "Loading site accounts...",
+      "ttlDays": "Valid days",
+      "create": "Create pairing",
+      "nameRequired": "Enter a device name",
+      "accountRequired": "Select a site account",
+      "created": "Pairing created",
+      "revoked": "Pairing revoked",
+      "tokenTitle": "Pairing token shown once",
+      "tokenDescription": "This token is shown only once and remains valid until it expires or is revoked.",
             "done": "Done",
             "revokeConfirmTitle": "Revoke pairing?",
             "revokeConfirmDescription": "\"{name}\" will no longer claim verification tasks. Its claimed tasks will be released.",
@@ -1620,7 +1642,8 @@
             "pending": "Pending",
             "completed": "Completed",
             "expired": "Expired",
-            "revoked": "Revoked"
+            "revoked": "Revoked",
+            "superseded": "Superseded"
         },
         "taskStatus": {
             "pending": "Pending",
