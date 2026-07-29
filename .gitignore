@@ -8,6 +8,9 @@ static/out/
 .serena/
 .workflow/
 .tmp/
-docs/
-CONTEXT.md
+.playwright-mcp/
+docs/*
+!docs/adr/
+docs/adr/*
+!docs/adr/*.md
 .impeccable.md
