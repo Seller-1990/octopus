@@ -76,6 +76,9 @@ func ProtocolRequirementsFromRequest(request *transformermodel.InternalLLMReques
 	if len(request.Prediction) > 0 {
 		add(dbmodel.ProtocolFeatureProviderExtensions)
 	}
+	if len(request.Metadata) > 0 {
+		add(dbmodel.ProtocolFeatureProviderExtensions)
+	}
 	if len(request.WebSearchOptions) > 0 {
 		add(dbmodel.ProtocolFeatureBuiltInTools)
 	}
@@ -183,9 +186,25 @@ func AssessProtocolRoute(
 	policy dbmodel.ProtocolPolicy,
 	allowLossy bool,
 ) protocolRouteAssessment {
+	return assessProtocolRouteWithMode(
+		requirements,
+		outboundProtocol,
+		policy,
+		allowLossy,
+		protocolExecutionMode(requirements, outboundProtocol),
+	)
+}
+
+func assessProtocolRouteWithMode(
+	requirements dbmodel.ProtocolRouteRequirements,
+	outboundProtocol dbmodel.ProtocolName,
+	policy dbmodel.ProtocolPolicy,
+	allowLossy bool,
+	mode dbmodel.ProtocolExecutionMode,
+) protocolRouteAssessment {
 	policy = policy.Normalize(dbmodel.ProtocolPolicyAuto)
 	assessment := protocolRouteAssessment{
-		Mode:          protocolExecutionMode(requirements, outboundProtocol),
+		Mode:          mode,
 		Compatibility: dbmodel.ProtocolCompatibilityExact,
 		Capabilities:  make([]dbmodel.ProtocolFeatureDecision, 0, len(requirements.Features)),
 	}
@@ -195,7 +214,8 @@ func AssessProtocolRoute(
 		assessment.Reason = "protocol conversion unsupported"
 		return assessment
 	}
-	if policy == dbmodel.ProtocolPolicyPassthroughOnly && assessment.Mode != dbmodel.ProtocolExecutionModePassthrough {
+	if policy == dbmodel.ProtocolPolicyPassthroughOnly &&
+		assessment.Mode != dbmodel.ProtocolExecutionModePassthrough {
 		assessment.Compatibility = dbmodel.ProtocolCompatibilityUnsupported
 		assessment.Reason = "passthrough-only policy"
 		return assessment
@@ -270,6 +290,7 @@ func ProtocolCapabilityMatrix() []dbmodel.ProtocolCapabilityDescriptor {
 		dbmodel.ProtocolOpenAIResponses,
 		dbmodel.ProtocolAnthropic,
 		dbmodel.ProtocolGemini,
+		dbmodel.ProtocolVolcengine,
 		dbmodel.ProtocolOpenAIEmbedding,
 	}
 
@@ -285,7 +306,8 @@ func ProtocolCapabilityMatrix() []dbmodel.ProtocolCapabilityDescriptor {
 				Mode: protocolExecutionMode(dbmodel.ProtocolRouteRequirements{
 					InboundProtocol: inboundProtocol,
 				}, outboundProtocol),
-				Limited:  outboundProtocol == dbmodel.ProtocolGemini,
+				Limited: outboundProtocol == dbmodel.ProtocolGemini ||
+					outboundProtocol == dbmodel.ProtocolVolcengine,
 				Features: make([]dbmodel.ProtocolFeatureDecision, 0, len(features)),
 			}
 			for _, feature := range features {
@@ -310,8 +332,21 @@ func protocolFeatureCapability(
 		switch feature {
 		case dbmodel.ProtocolFeatureContinuation, dbmodel.ProtocolFeatureWebSocket:
 			if inboundProtocol == dbmodel.ProtocolOpenAIResponses {
-				return dbmodel.FeatureCapabilityTransformed, "stateful Responses path preserves protocol but requires session-aware execution"
+				if protocolExecutionMode(dbmodel.ProtocolRouteRequirements{
+					InboundProtocol: inboundProtocol,
+					Features:        []dbmodel.ProtocolFeature{feature},
+				}, outboundProtocol) == dbmodel.ProtocolExecutionModeTransform {
+					return dbmodel.FeatureCapabilityTransformed, "stateful Responses execution requires a verified raw WebSocket path"
+				}
+				return dbmodel.FeatureCapabilityNative, "stateful Responses execution preserves the same wire protocol"
 			}
+			return dbmodel.FeatureCapabilityUnsupported, "stateful execution is only verified for OpenAI Responses"
+		}
+		if protocolExecutionMode(dbmodel.ProtocolRouteRequirements{
+			InboundProtocol: inboundProtocol,
+			Features:        []dbmodel.ProtocolFeature{feature},
+		}, outboundProtocol) == dbmodel.ProtocolExecutionModeTransform {
+			return dbmodel.FeatureCapabilityTransformed, "same-protocol request uses the registered transformer"
 		}
 		return dbmodel.FeatureCapabilityNative, "preserved by same-protocol passthrough"
 	}
@@ -322,10 +357,7 @@ func protocolFeatureCapability(
 	case dbmodel.ProtocolFeatureBuiltInTools:
 		return dbmodel.FeatureCapabilityDegraded, "provider-native tools have no guaranteed cross-provider equivalent"
 	case dbmodel.ProtocolFeatureStructuredOutput:
-		if outboundProtocol == dbmodel.ProtocolGemini {
-			return dbmodel.FeatureCapabilityDegraded, "Gemini schema conversion cannot preserve every JSON Schema keyword"
-		}
-		return dbmodel.FeatureCapabilityTransformed, "structured output is mapped to the target protocol"
+		return dbmodel.FeatureCapabilityDegraded, "cross-protocol schema conversion cannot preserve every structured-output constraint"
 	case dbmodel.ProtocolFeatureImages:
 		if outboundProtocol == dbmodel.ProtocolGemini {
 			return dbmodel.FeatureCapabilityDegraded, "Gemini conversion only preserves supported inline image representations"
@@ -355,6 +387,9 @@ func protocolFeatureCapability(
 			return dbmodel.FeatureCapabilityDegraded, "document metadata is flattened to text on this protocol"
 		}
 	case dbmodel.ProtocolFeatureReasoning:
+		if outboundProtocol == dbmodel.ProtocolVolcengine {
+			return dbmodel.FeatureCapabilityDegraded, "Volcengine reasoning controls are model-dependent and unsupported fields are omitted"
+		}
 		return dbmodel.FeatureCapabilityTransformed, "reasoning controls and blocks use the shared reasoning model"
 	case dbmodel.ProtocolFeatureCacheControl:
 		if outboundProtocol == dbmodel.ProtocolAnthropic {
@@ -407,7 +442,8 @@ func protocolExecutionMode(
 		}
 	}
 	switch outboundProtocol {
-	case dbmodel.ProtocolOpenAIChat, dbmodel.ProtocolOpenAIResponses, dbmodel.ProtocolAnthropic:
+	case dbmodel.ProtocolOpenAIChat, dbmodel.ProtocolOpenAIResponses,
+		dbmodel.ProtocolAnthropic, dbmodel.ProtocolOpenAIEmbedding:
 		return dbmodel.ProtocolExecutionModePassthrough
 	default:
 		return dbmodel.ProtocolExecutionModeTransform

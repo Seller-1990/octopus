@@ -259,15 +259,28 @@ func (p *StreamProcessor) processEvent(data []byte) error {
 		output = data // Passthrough
 	}
 
+	// Record protocol terminal evidence before writing. A downstream write can
+	// fail immediately after the upstream emitted its terminal frame; losing
+	// the evidence would incorrectly turn a completed response into a generic
+	// transport failure.
+	if p.terminalEvent == "" {
+		p.terminalEvent = terminalEventFromSSE(output, p.config.TerminalEvents)
+		if p.terminalEvent == "" && p.config.BufferRawStream {
+			p.terminalEvent = p.streamTerminalEvent()
+		}
+	}
 	if _, err := p.config.Writer.Write(output); err != nil {
 		p.termination = TerminationWriteError
+		if p.terminalEvent != "" && p.config.OnFinish != nil && p.config.BufferRawStream {
+			// The normal finalize path is skipped on a write error, but the
+			// already observed terminal frame still carries usage/response
+			// metadata needed for accounting.
+			_ = p.config.OnFinish(context.Background(), p.rawBuffer.Bytes())
+		}
 		return fmt.Errorf("write error: %w", err)
 	}
 
 	p.payloadWritten = true
-	if p.terminalEvent == "" {
-		p.terminalEvent = terminalEventFromSSE(output, p.config.TerminalEvents)
-	}
 	p.config.Writer.Flush()
 	return nil
 }
@@ -353,6 +366,9 @@ func (p *StreamProcessor) Result() Result {
 }
 
 func (p *StreamProcessor) successfulTermination() Termination {
+	if p.terminalEvent == "" && p.config.BufferRawStream {
+		p.terminalEvent = p.streamTerminalEvent()
+	}
 	if p.terminalEvent != "" {
 		return TerminationProtocolTerminal
 	}

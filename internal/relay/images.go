@@ -98,7 +98,11 @@ func ImagesHandler(endpoint string, c *gin.Context) {
 	// supported_models 校验（复用 APIKeyAuth 注入）
 	routingModel := requestModel
 	var canonicalModel *model.CanonicalModel
-	if canonical, ok := op.CatalogResolveRequest(requestModel); ok {
+	if canonical, ok := op.CatalogResolveIdentity(requestModel); ok {
+		if !canonical.Enabled {
+			resp.ErrorWithCode(c, http.StatusServiceUnavailable, CodeRelayNoAvailableChannel, "model disabled")
+			return
+		}
 		routingModel = canonical.Name
 		canonicalModel = &canonical
 	}
@@ -178,7 +182,9 @@ func ImagesHandler(endpoint string, c *gin.Context) {
 			continue
 		}
 		candidateID := 0
+		canonicalModelID := 0
 		if canonicalModel != nil {
+			canonicalModelID = canonicalModel.ID
 			if candidate, candidateErr := op.CatalogCandidateFor(
 				ctx,
 				canonicalModel.ID,
@@ -218,7 +224,24 @@ func ImagesHandler(endpoint string, c *gin.Context) {
 		span.SetRouteCandidateID(candidateID)
 
 		// 尝试一次转发
-		statusCode, written, usage, upstreamCT, fwdErr := imagesAttempt(ctx, endpoint, c, bc, isMultipart, boundary, jsonPayload, stream, channel, usedKey.ChannelKey, group.FirstTokenTimeOut, metrics, item.ModelName, hb)
+		statusCode, written, usage, upstreamCT, fwdErr := imagesAttempt(
+			ctx,
+			endpoint,
+			c,
+			bc,
+			isMultipart,
+			boundary,
+			jsonPayload,
+			stream,
+			channel,
+			usedKey.ChannelKey,
+			group.FirstTokenTimeOut,
+			metrics,
+			item.ModelName,
+			canonicalModelID,
+			candidateID,
+			hb,
+		)
 
 		// 更新 channel key 状态
 		usedKey.StatusCode = statusCode
@@ -380,8 +403,9 @@ type imagesRelayMetrics struct {
 	TransportTermination model.TransportTermination
 	CompletionEvidence   model.CompletionEvidence
 
-	RequestContent  string
-	ResponseContent string
+	RequestContent    string
+	ResponseContent   string
+	HeaderPolicyTrace string
 }
 
 func newImagesRelayMetrics(apiKeyID int, requestModel string) *imagesRelayMetrics {
@@ -592,6 +616,7 @@ func (m *imagesRelayMetrics) saveLog(
 		Outcome:              outcome,
 		TransportTermination: m.TransportTermination,
 		CompletionEvidence:   m.CompletionEvidence,
+		HeaderPolicyTrace:    m.HeaderPolicyTrace,
 	}
 	if m.EffectivePrice != nil {
 		relayLog.PriceQuoteID = m.EffectivePrice.QuoteID
@@ -790,6 +815,8 @@ func imagesAttempt(
 	firstTokenTimeOutSec int,
 	metrics *imagesRelayMetrics,
 	actualModel string,
+	canonicalModelID int,
+	routeCandidateID int,
 	hb *earlyHeartbeat,
 ) (statusCode int, written bool, usage *imagesUsage, upstreamCT string, err error) {
 	// 构建 URL（baseUrl.Path 后追加 endpoint）
@@ -851,7 +878,21 @@ func imagesAttempt(
 	req.Method = http.MethodPost
 
 	// Header 透传：复制下游 header，过滤 hop-by-hop 与鉴权相关
-	copyHeadersToUpstream(req, c, channel, channelKey, contentType, stream)
+	policy := copyHeadersToUpstream(
+		req,
+		c,
+		channel,
+		channelKey,
+		contentType,
+		stream,
+		canonicalModelID,
+		routeCandidateID,
+	)
+	if len(policy.Trace) > 0 {
+		if payload, marshalErr := json.Marshal(policy.Trace); marshalErr == nil {
+			metrics.HeaderPolicyTrace = string(payload)
+		}
+	}
 
 	// 发送请求
 	httpClient, err := helper.ChannelHTTPClientWithContext(ctx, channel)
@@ -887,8 +928,22 @@ func imagesAttempt(
 	return respUp.StatusCode, w, u, upstreamCT, err
 }
 
-func copyHeadersToUpstream(req *http.Request, c *gin.Context, channel *model.Channel, channelKey string, contentType string, stream bool) {
-	policy, err := op.ResolveHeaderPolicy(c.Request.Context(), channel.ID, 0, 0)
+func copyHeadersToUpstream(
+	req *http.Request,
+	c *gin.Context,
+	channel *model.Channel,
+	channelKey string,
+	contentType string,
+	stream bool,
+	canonicalModelID int,
+	routeCandidateID int,
+) model.ResolvedHeaderPolicy {
+	policy, err := op.ResolveHeaderPolicy(
+		c.Request.Context(),
+		channel.ID,
+		canonicalModelID,
+		routeCandidateID,
+	)
 	if err != nil {
 		log.Warnf("resolve image header policy failed (channel=%d): %v", channel.ID, err)
 		policy = op.HeaderPolicyFailureFallback()
@@ -909,6 +964,7 @@ func copyHeadersToUpstream(req *http.Request, c *gin.Context, channel *model.Cha
 		req.Header.Set("User-Agent", "")
 	}
 
+	return policy
 }
 
 func copyMultipartReplaceModel(src io.Reader, boundary string, dst *multipart.Writer, newModel string) error {

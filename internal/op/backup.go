@@ -80,6 +80,7 @@ func DBExportAll(ctx context.Context, includeLogs, includeStats bool) (*model.DB
 	if err := conn.Find(&d.Settings).Error; err != nil {
 		return nil, fmt.Errorf("export settings: %w", err)
 	}
+	d.Settings = sanitizeSettingsForBackup(d.Settings)
 	if err := exportExtendedCoreTables(conn, d); err != nil {
 		return nil, err
 	}
@@ -148,26 +149,26 @@ func exportRelayLogsPaged(ctx context.Context, conn *gorm.DB, d *model.DBDump) e
 }
 
 type dbImportState struct {
-	channelIDMap          map[int]int
-	channelKeyIDMap       map[int]int
-	clashControllerIDMap  map[int]int
-	proxyConfigIDMap      map[int]int
-	siteIDMap             map[int]int
-	accountIDMap          map[int]int
-	userGroupIDMap        map[int]int
-	groupIDMap            map[int]int
-	apiKeyIDMap           map[int]int
-	canonicalModelIDMap   map[int]int
-	canonicalGroupNameMap map[string]string
-	routeCandidateIDMap   map[int]int
-	priceQuoteIDMap       map[int]int
-	relayLogIDMap         map[int64]int64
-	legacyProxyIDByURL    map[string]int
-	nextLegacyProxyID     int
-	seenRelayLogIDs       map[int64]struct{}
-	seenUsageRequestIDs   map[int64]struct{}
-	seenUsageAttemptKeys  map[usageAttemptSourceKey]struct{}
-	hasUsageAggregateRows bool
+	channelIDMap             map[int]int
+	channelKeyIDMap          map[int]int
+	clashControllerIDMap     map[int]int
+	proxyConfigIDMap         map[int]int
+	siteIDMap                map[int]int
+	accountIDMap             map[int]int
+	userGroupIDMap           map[int]int
+	groupIDMap               map[int]int
+	apiKeyIDMap              map[int]int
+	canonicalModelIDMap      map[int]int
+	canonicalGroupNameMap    map[string]string
+	routeCandidateIDMap      map[int]int
+	priceQuoteIDMap          map[int]int
+	relayLogIDMap            map[int64]int64
+	legacyProxyIDByURL       map[string]int
+	nextLegacyProxyID        int
+	seenRelayLogIDs          map[int64]struct{}
+	seenUsageRequestIDs      map[int64]struct{}
+	seenUsageAttemptKeys     map[usageAttemptSourceKey]struct{}
+	sourceUsageAggregateKeys map[string]struct{}
 }
 
 type usageAttemptSourceKey struct {
@@ -177,25 +178,26 @@ type usageAttemptSourceKey struct {
 
 func newDBImportState() *dbImportState {
 	return &dbImportState{
-		channelIDMap:          make(map[int]int),
-		channelKeyIDMap:       make(map[int]int),
-		clashControllerIDMap:  make(map[int]int),
-		proxyConfigIDMap:      make(map[int]int),
-		siteIDMap:             make(map[int]int),
-		accountIDMap:          make(map[int]int),
-		userGroupIDMap:        make(map[int]int),
-		groupIDMap:            make(map[int]int),
-		apiKeyIDMap:           make(map[int]int),
-		canonicalModelIDMap:   make(map[int]int),
-		canonicalGroupNameMap: make(map[string]string),
-		routeCandidateIDMap:   make(map[int]int),
-		priceQuoteIDMap:       make(map[int]int),
-		relayLogIDMap:         make(map[int64]int64),
-		legacyProxyIDByURL:    make(map[string]int),
-		nextLegacyProxyID:     -1,
-		seenRelayLogIDs:       make(map[int64]struct{}),
-		seenUsageRequestIDs:   make(map[int64]struct{}),
-		seenUsageAttemptKeys:  make(map[usageAttemptSourceKey]struct{}),
+		channelIDMap:             make(map[int]int),
+		channelKeyIDMap:          make(map[int]int),
+		clashControllerIDMap:     make(map[int]int),
+		proxyConfigIDMap:         make(map[int]int),
+		siteIDMap:                make(map[int]int),
+		accountIDMap:             make(map[int]int),
+		userGroupIDMap:           make(map[int]int),
+		groupIDMap:               make(map[int]int),
+		apiKeyIDMap:              make(map[int]int),
+		canonicalModelIDMap:      make(map[int]int),
+		canonicalGroupNameMap:    make(map[string]string),
+		routeCandidateIDMap:      make(map[int]int),
+		priceQuoteIDMap:          make(map[int]int),
+		relayLogIDMap:            make(map[int64]int64),
+		legacyProxyIDByURL:       make(map[string]int),
+		nextLegacyProxyID:        -1,
+		seenRelayLogIDs:          make(map[int64]struct{}),
+		seenUsageRequestIDs:      make(map[int64]struct{}),
+		seenUsageAttemptKeys:     make(map[usageAttemptSourceKey]struct{}),
+		sourceUsageAggregateKeys: make(map[string]struct{}),
 	}
 }
 
@@ -623,6 +625,7 @@ func importDBDump(
 			return err
 		}
 		account.VerificationCookieEncrypted = ""
+		account.VerificationSessionFenceID = 0
 		account.VerificationUserAgent = ""
 		account.VerificationProxyConfigID = nil
 		account.VerificationClashNode = ""
@@ -993,13 +996,12 @@ func importDBDump(
 			res.RowsAffected["stats_hourly"] += n
 		}
 
-		// StatsModel: remap ChannelID, clear ID. Skip orphaned rows whose channel
-		// is not present in the dump, otherwise SQLite foreign keys can fail.
+		// StatsModel: every positive foreign key must resolve inside this import.
 		filteredStatsModel := make([]model.StatsModel, 0, len(dump.StatsModel))
 		for _, row := range dump.StatsModel {
-			newID, ok := channelIDMap[row.ChannelID]
-			if !ok {
-				continue
+			newID, err := requireImportID("stats_model", "channel_id", row.ChannelID, channelIDMap)
+			if err != nil {
+				return err
 			}
 			row.ID = 0
 			row.ChannelID = newID
@@ -1011,13 +1013,12 @@ func importDBDump(
 			res.RowsAffected["stats_model"] += n
 		}
 
-		// StatsChannel: remap ChannelID (which is the PK). Skip orphaned rows whose
-		// channel is not present in the dump, otherwise SQLite foreign keys can fail.
+		// StatsChannel: remap ChannelID (which is the PK).
 		filteredStatsChannel := make([]model.StatsChannel, 0, len(dump.StatsChannel))
 		for _, row := range dump.StatsChannel {
-			newID, ok := channelIDMap[row.ChannelID]
-			if !ok {
-				continue
+			newID, err := requireImportID("stats_channel", "channel_id", row.ChannelID, channelIDMap)
+			if err != nil {
+				return err
 			}
 			row.ChannelID = newID
 			filteredStatsChannel = append(filteredStatsChannel, row)
@@ -1028,13 +1029,12 @@ func importDBDump(
 			res.RowsAffected["stats_channel"] += n
 		}
 
-		// StatsAPIKey: remap APIKeyID (which is the PK). Skip orphaned rows whose
-		// API key is not present in the dump, otherwise SQLite foreign keys can fail.
+		// StatsAPIKey: remap APIKeyID (which is the PK).
 		filteredStatsAPIKey := make([]model.StatsAPIKey, 0, len(dump.StatsAPIKey))
 		for _, row := range dump.StatsAPIKey {
-			newID, ok := apiKeyIDMap[row.APIKeyID]
-			if !ok {
-				continue
+			newID, err := requireImportID("stats_api_key", "api_key_id", row.APIKeyID, apiKeyIDMap)
+			if err != nil {
+				return err
 			}
 			row.APIKeyID = newID
 			filteredStatsAPIKey = append(filteredStatsAPIKey, row)
@@ -1048,9 +1048,14 @@ func importDBDump(
 		// StatsSiteModelHourly: remap SiteAccountID (composite PK)
 		filteredSiteModelHourly := make([]model.StatsSiteModelHourly, 0, len(dump.StatsSiteModelHourly))
 		for _, row := range dump.StatsSiteModelHourly {
-			newID, ok := accountIDMap[row.SiteAccountID]
-			if !ok {
-				continue
+			newID, err := requireImportID(
+				"stats_site_model_hourly",
+				"site_account_id",
+				row.SiteAccountID,
+				accountIDMap,
+			)
+			if err != nil {
+				return err
 			}
 			row.SiteAccountID = newID
 			filteredSiteModelHourly = append(filteredSiteModelHourly, row)
@@ -1110,9 +1115,6 @@ func importDBDump(
 		if err := state.registerUsageRows(dump); err != nil {
 			return err
 		}
-		if len(dump.UsageAggregates) > 0 {
-			state.hasUsageAggregateRows = true
-		}
 		if err := importUsageTables(
 			tx,
 			dump,
@@ -1124,7 +1126,7 @@ func importDBDump(
 			routeCandidateIDMap,
 			priceQuoteIDMap,
 			relayLogIDMap,
-			!state.hasUsageAggregateRows,
+			state.sourceUsageAggregateKeys,
 		); err != nil {
 			return err
 		}
@@ -1160,6 +1162,13 @@ func migrateLegacyDumpProxyFields(dump *model.DBDump, state *dbImportState) {
 	if dump == nil || state == nil {
 		return
 	}
+	// Import normalization is internal working state. Clone every slice this
+	// migration mutates so callers can safely reuse or retry the same dump.
+	dump.ProxyConfigurations = append([]model.ProxyConfiguration(nil), dump.ProxyConfigurations...)
+	dump.Channels = append([]model.Channel(nil), dump.Channels...)
+	dump.Sites = append([]model.Site(nil), dump.Sites...)
+	dump.SiteAccounts = append([]model.SiteAccount(nil), dump.SiteAccounts...)
+
 	for _, proxyConfig := range dump.ProxyConfigurations {
 		normalized, err := model.NormalizeProxyURL(proxyConfig.URL)
 		if err != nil || proxyConfig.ID == 0 {
@@ -1316,6 +1325,11 @@ func createUpsertSettings(tx *gorm.DB, rows []model.Setting) (int64, error) {
 	if len(rows) == 0 {
 		return 0, nil
 	}
+	for _, row := range rows {
+		if err := row.Validate(); err != nil {
+			return 0, fmt.Errorf("setting %s: %w", row.Key, err)
+		}
+	}
 	result := tx.Clauses(clause.OnConflict{
 		Columns:   []clause.Column{{Name: "key"}},
 		DoUpdates: clause.AssignmentColumns([]string{"value"}),
@@ -1451,7 +1465,7 @@ func DBExportZip(ctx context.Context, w io.Writer, includeLogs, includeStats boo
 	if err := writeZipTable(ctx, zw, conn, "api_keys.json", &[]model.APIKey{}); err != nil {
 		return err
 	}
-	if err := writeZipTable(ctx, zw, conn, "settings.json", &[]model.Setting{}); err != nil {
+	if err := writeZipSettings(ctx, zw, conn); err != nil {
 		return err
 	}
 	if err := writeZipExtendedCoreTables(ctx, zw, conn); err != nil {

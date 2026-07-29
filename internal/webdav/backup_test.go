@@ -66,6 +66,35 @@ func TestRunBackupUploadsLengthBoundedZipAndRestores(t *testing.T) {
 	}
 }
 
+func TestRunBackupRejectsArchiveThatCannotBeRestored(t *testing.T) {
+	ctx := setupWebDAVBackupTest(t)
+	server := newMemoryWebDAVServer(t, nil)
+	configureWebDAVTest(t, server.URL)
+	cfg, err := LoadConfig()
+	if err != nil {
+		t.Fatalf("LoadConfig failed: %v", err)
+	}
+	client, err := NewClient(cfg)
+	if err != nil {
+		t.Fatalf("NewClient failed: %v", err)
+	}
+	if err := client.MkdirAll(cfg.BackupPath, 0755); err != nil {
+		t.Fatalf("create remote path: %v", err)
+	}
+
+	if err := runBackupWithLimit(ctx, 1); err == nil ||
+		!strings.Contains(err.Error(), "upload size limit") {
+		t.Fatalf("oversized backup was accepted: %v", err)
+	}
+	backups, err := ListBackups(ctx)
+	if err != nil {
+		t.Fatalf("ListBackups failed: %v", err)
+	}
+	if len(backups) != 0 {
+		t.Fatalf("oversized backup was uploaded: %+v", backups)
+	}
+}
+
 func TestRestoreFromLegacyJSONBackup(t *testing.T) {
 	ctx := setupWebDAVBackupTest(t)
 	server := newMemoryWebDAVServer(t, nil)
@@ -83,6 +112,7 @@ func TestRestoreFromLegacyJSONBackup(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshal legacy dump: %v", err)
 	}
+	payload = append(payload, '\n', ' ', '\t')
 	cfg, err := LoadConfig()
 	if err != nil {
 		t.Fatalf("LoadConfig failed: %v", err)
@@ -107,6 +137,59 @@ func TestRestoreFromLegacyJSONBackup(t *testing.T) {
 	var restored model.CurrencyRate
 	if err := db.GetDB().WithContext(ctx).First(&restored, "currency = ?", "JPY").Error; err != nil {
 		t.Fatalf("legacy restored currency rate missing: %v", err)
+	}
+}
+
+func TestRestoreFromLegacyJSONRejectsTrailingValueBeforeImport(t *testing.T) {
+	ctx := setupWebDAVBackupTest(t)
+	server := newMemoryWebDAVServer(t, nil)
+	configureWebDAVTest(t, server.URL)
+
+	rate := model.CurrencyRate{Currency: "TRAILING", RateToUSD: 0.25}
+	if err := db.GetDB().WithContext(ctx).Create(&rate).Error; err != nil {
+		t.Fatalf("seed currency rate: %v", err)
+	}
+	dump, err := op.DBExportAll(ctx, false, false)
+	if err != nil {
+		t.Fatalf("export legacy dump: %v", err)
+	}
+	payload, err := json.Marshal(dump)
+	if err != nil {
+		t.Fatalf("marshal legacy dump: %v", err)
+	}
+	payload = append(payload, []byte("\n{}")...)
+
+	cfg, err := LoadConfig()
+	if err != nil {
+		t.Fatalf("load WebDAV config: %v", err)
+	}
+	client, err := NewClient(cfg)
+	if err != nil {
+		t.Fatalf("create WebDAV client: %v", err)
+	}
+	if err := client.MkdirAll(cfg.BackupPath, 0755); err != nil {
+		t.Fatalf("create remote path: %v", err)
+	}
+	filename := backupPrefix + "20260728020202" + backupJSONSuffix
+	if err := client.Write(path.Join(cfg.BackupPath, filename), payload, 0644); err != nil {
+		t.Fatalf("upload malformed legacy backup: %v", err)
+	}
+	if err := db.GetDB().WithContext(ctx).Delete(&rate).Error; err != nil {
+		t.Fatalf("delete source currency rate: %v", err)
+	}
+
+	if _, err := RestoreFromBackup(ctx, filename); err == nil ||
+		!strings.Contains(err.Error(), "trailing JSON value") {
+		t.Fatalf("trailing JSON value was accepted: %v", err)
+	}
+	var count int64
+	if err := db.GetDB().WithContext(ctx).Model(&model.CurrencyRate{}).
+		Where("currency = ?", rate.Currency).
+		Count(&count).Error; err != nil {
+		t.Fatalf("count currency rates: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("malformed backup imported rows before rejection: %d", count)
 	}
 }
 

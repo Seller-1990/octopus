@@ -2,8 +2,10 @@ package op
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -52,6 +54,67 @@ func TestVerificationSessionEnsureKeepsExplicitDirectBinding(t *testing.T) {
 	}
 }
 
+func TestVerificationSessionEnsureIsSingleCreator(t *testing.T) {
+	ctx := setupBackupTestDB(t)
+	_, account := createVerificationFixture(t, ctx)
+
+	start := make(chan struct{})
+	results := make(chan *VerificationSessionCreated, 2)
+	errors := make(chan error, 2)
+	var wait sync.WaitGroup
+	for range 2 {
+		wait.Add(1)
+		go func() {
+			defer wait.Done()
+			<-start
+			created, err := VerificationSessionEnsure(ctx, VerificationSessionCreateRequest{
+				SiteAccountID: account.ID,
+			})
+			if err != nil {
+				errors <- err
+				return
+			}
+			results <- created
+		}()
+	}
+	close(start)
+	wait.Wait()
+	close(results)
+	close(errors)
+
+	for err := range errors {
+		t.Fatalf("concurrent ensure failed: %v", err)
+	}
+	var first *VerificationSessionCreated
+	for result := range results {
+		if first == nil {
+			first = result
+			continue
+		}
+		if result.Session.ID != first.Session.ID || result.Task.ID != first.Task.ID {
+			t.Fatalf("concurrent ensure created duplicate work: first=%+v second=%+v", first, result)
+		}
+	}
+	if first == nil {
+		t.Fatal("concurrent ensure returned no result")
+	}
+
+	var sessionCount, taskCount int64
+	if err := dbpkg.GetDB().WithContext(ctx).Model(&model.VerificationSession{}).
+		Where("site_account_id = ?", account.ID).
+		Count(&sessionCount).Error; err != nil {
+		t.Fatalf("count sessions: %v", err)
+	}
+	if err := dbpkg.GetDB().WithContext(ctx).Model(&model.VerificationTask{}).
+		Where("session_id = ?", first.Session.ID).
+		Count(&taskCount).Error; err != nil {
+		t.Fatalf("count tasks: %v", err)
+	}
+	if sessionCount != 1 || taskCount != 1 {
+		t.Fatalf("concurrent ensure persisted sessions=%d tasks=%d", sessionCount, taskCount)
+	}
+}
+
 func TestVerificationSessionSourceIsSetByCompletionMethod(t *testing.T) {
 	ctx := setupBackupTestDB(t)
 	_, account := createVerificationFixture(t, ctx)
@@ -87,7 +150,7 @@ func TestVerificationTaskClaimIsSingleConsumer(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("create verification session: %v", err)
 	}
-	pairing, err := VerificationBridgePairingCreate(ctx, "test bridge", 1)
+	pairing, err := VerificationBridgePairingCreate(ctx, "test bridge", 1, account.ID)
 	if err != nil {
 		t.Fatalf("create pairing: %v", err)
 	}
@@ -119,6 +182,53 @@ func TestVerificationTaskClaimIsSingleConsumer(t *testing.T) {
 	}
 }
 
+func TestVerificationTaskClaimIsScopedToPairingAccount(t *testing.T) {
+	ctx := setupBackupTestDB(t)
+	site, accountA := createVerificationFixture(t, ctx)
+	accountB := model.SiteAccount{
+		SiteID:         site.ID,
+		Name:           "verification-account-b",
+		CredentialType: model.SiteCredentialTypeAccessToken,
+		AccessToken:    "test-token-b",
+		ProxyMode:      model.ProxyUsageModeInherit,
+		Enabled:        true,
+	}
+	if err := dbpkg.GetDB().WithContext(ctx).Create(&accountB).Error; err != nil {
+		t.Fatalf("create second account: %v", err)
+	}
+	createdB, err := VerificationSessionCreate(ctx, VerificationSessionCreateRequest{
+		SiteAccountID: accountB.ID,
+	})
+	if err != nil {
+		t.Fatalf("create account B verification session: %v", err)
+	}
+	createdA, err := VerificationSessionCreate(ctx, VerificationSessionCreateRequest{
+		SiteAccountID: accountA.ID,
+	})
+	if err != nil {
+		t.Fatalf("create account A verification session: %v", err)
+	}
+	pairingA, err := VerificationBridgePairingCreate(ctx, "account A bridge", 1, accountA.ID)
+	if err != nil {
+		t.Fatalf("create account A pairing: %v", err)
+	}
+
+	claimedA, err := VerificationTaskClaim(ctx, pairingA.Token)
+	if err != nil {
+		t.Fatalf("claim account A task: %v", err)
+	}
+	if claimedA.Task.ID != createdA.Task.ID || claimedA.Task.SessionID != createdA.Session.ID {
+		t.Fatalf("account A pairing claimed cross-account task: got=%+v want=%+v", claimedA.Task, createdA.Task)
+	}
+	var untouchedB model.VerificationTask
+	if err := dbpkg.GetDB().WithContext(ctx).First(&untouchedB, createdB.Task.ID).Error; err != nil {
+		t.Fatalf("reload account B task: %v", err)
+	}
+	if untouchedB.Status != model.VerificationTaskPending || untouchedB.PairingID != nil {
+		t.Fatalf("account B task was changed by account A pairing: %+v", untouchedB)
+	}
+}
+
 func TestVerificationTaskCompleteRejectsPublicSuffixAndCrossDomainCookies(t *testing.T) {
 	for _, test := range []struct {
 		name   string
@@ -146,6 +256,44 @@ func TestVerificationTaskCompleteRejectsPublicSuffixAndCrossDomainCookies(t *tes
 	if header != "cf_clearance=value" {
 		t.Fatalf("unexpected cookie header: %q", header)
 	}
+
+	header, err = verificationCookieHeader("api.example.com", []VerificationCookieInput{
+		{Name: "session", Value: "must-not-leave-browser", Domain: ".example.com"},
+		{Name: "__cf_bm", Value: "challenge", Domain: ".example.com"},
+	})
+	if err != nil {
+		t.Fatalf("supported Cloudflare cookie was rejected: %v", err)
+	}
+	if header != "__cf_bm=challenge" || strings.Contains(header, "session") {
+		t.Fatalf("non-Cloudflare cookies were not minimized: %q", header)
+	}
+	if _, err := verificationCookieHeader("api.example.com", []VerificationCookieInput{
+		{Name: "session", Value: "browser-login", Domain: ".example.com"},
+	}); err == nil {
+		t.Fatal("session-only cookie jar should not be accepted")
+	}
+	if _, err := verificationCookieHeader("api.example.com", []VerificationCookieInput{
+		{Name: "CF_CLEARANCE", Value: "name-collision", Domain: ".example.com"},
+	}); err == nil {
+		t.Fatal("case-variant cookie name should not be accepted as a Cloudflare credential")
+	}
+
+	header, err = verificationCookieHeader("api.example.com", []VerificationCookieInput{
+		{Name: "cf_clearance", Value: "parent", Domain: ".example.com", Path: "/"},
+		{Name: "cf_clearance", Value: "host", Domain: "api.example.com", Path: "/api"},
+	})
+	if err != nil {
+		t.Fatalf("scoped duplicate Cloudflare cookies were rejected: %v", err)
+	}
+	if header != "cf_clearance=host; cf_clearance=parent" {
+		t.Fatalf("scoped cookies were not ordered most-specific first: %q", header)
+	}
+	if _, err := verificationCookieHeader("api.example.com", []VerificationCookieInput{
+		{Name: "cf_clearance", Value: "first", Domain: ".example.com", Path: "/"},
+		{Name: "cf_clearance", Value: "second", Domain: ".example.com", Path: "/"},
+	}); err == nil {
+		t.Fatal("conflicting values for the same cookie scope should be rejected")
+	}
 }
 
 func TestVerificationPairingRevokeRequeuesClaimedTask(t *testing.T) {
@@ -157,7 +305,7 @@ func TestVerificationPairingRevokeRequeuesClaimedTask(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create verification session: %v", err)
 	}
-	firstPairing, err := VerificationBridgePairingCreate(ctx, "first bridge", 1)
+	firstPairing, err := VerificationBridgePairingCreate(ctx, "first bridge", 1, account.ID)
 	if err != nil {
 		t.Fatalf("create first pairing: %v", err)
 	}
@@ -179,7 +327,7 @@ func TestVerificationPairingRevokeRequeuesClaimedTask(t *testing.T) {
 		t.Fatalf("revoked pairing did not release task for retry: %+v", released)
 	}
 
-	secondPairing, err := VerificationBridgePairingCreate(ctx, "second bridge", 1)
+	secondPairing, err := VerificationBridgePairingCreate(ctx, "second bridge", 1, account.ID)
 	if err != nil {
 		t.Fatalf("create second pairing: %v", err)
 	}
@@ -201,7 +349,7 @@ func TestVerificationTaskClaimReleasesStaleClaim(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create verification session: %v", err)
 	}
-	firstPairing, err := VerificationBridgePairingCreate(ctx, "stale bridge", 1)
+	firstPairing, err := VerificationBridgePairingCreate(ctx, "stale bridge", 1, account.ID)
 	if err != nil {
 		t.Fatalf("create first pairing: %v", err)
 	}
@@ -216,7 +364,7 @@ func TestVerificationTaskClaimReleasesStaleClaim(t *testing.T) {
 		t.Fatalf("age claimed task: %v", err)
 	}
 
-	secondPairing, err := VerificationBridgePairingCreate(ctx, "replacement bridge", 1)
+	secondPairing, err := VerificationBridgePairingCreate(ctx, "replacement bridge", 1, account.ID)
 	if err != nil {
 		t.Fatalf("create second pairing: %v", err)
 	}
@@ -238,6 +386,29 @@ func TestVerificationTaskClaimReleasesStaleClaim(t *testing.T) {
 	}
 }
 
+func TestVerificationTaskClaimReturnsLeaseDeadline(t *testing.T) {
+	ctx := setupBackupTestDB(t)
+	_, account := createVerificationFixture(t, ctx)
+	if _, err := VerificationSessionCreate(ctx, VerificationSessionCreateRequest{
+		SiteAccountID: account.ID,
+	}); err != nil {
+		t.Fatalf("create verification session: %v", err)
+	}
+	pairing, err := VerificationBridgePairingCreate(ctx, "lease bridge", 1, account.ID)
+	if err != nil {
+		t.Fatalf("create pairing: %v", err)
+	}
+	before := time.Now()
+	claimed, err := VerificationTaskClaim(ctx, pairing.Token)
+	if err != nil {
+		t.Fatalf("claim task: %v", err)
+	}
+	if claimed.ClaimExpiresAt.Before(before.Add(verificationTaskClaimTTL-time.Second)) ||
+		claimed.ClaimExpiresAt.After(claimed.Task.ExpiresAt) {
+		t.Fatalf("unexpected claim deadline: %+v", claimed)
+	}
+}
+
 func TestVerificationTaskClaimReleasesExpiredPairing(t *testing.T) {
 	ctx := setupBackupTestDB(t)
 	_, account := createVerificationFixture(t, ctx)
@@ -247,7 +418,7 @@ func TestVerificationTaskClaimReleasesExpiredPairing(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create verification session: %v", err)
 	}
-	firstPairing, err := VerificationBridgePairingCreate(ctx, "expiring bridge", 1)
+	firstPairing, err := VerificationBridgePairingCreate(ctx, "expiring bridge", 1, account.ID)
 	if err != nil {
 		t.Fatalf("create first pairing: %v", err)
 	}
@@ -261,7 +432,7 @@ func TestVerificationTaskClaimReleasesExpiredPairing(t *testing.T) {
 		t.Fatalf("expire pairing: %v", err)
 	}
 
-	secondPairing, err := VerificationBridgePairingCreate(ctx, "replacement bridge", 1)
+	secondPairing, err := VerificationBridgePairingCreate(ctx, "replacement bridge", 1, account.ID)
 	if err != nil {
 		t.Fatalf("create replacement pairing: %v", err)
 	}
@@ -284,7 +455,7 @@ func TestVerificationTaskReleaseAllowsImmediateReclaim(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create verification session: %v", err)
 	}
-	firstPairing, err := VerificationBridgePairingCreate(ctx, "first bridge", 1)
+	firstPairing, err := VerificationBridgePairingCreate(ctx, "first bridge", 1, account.ID)
 	if err != nil {
 		t.Fatalf("create first pairing: %v", err)
 	}
@@ -296,7 +467,7 @@ func TestVerificationTaskReleaseAllowsImmediateReclaim(t *testing.T) {
 		t.Fatalf("release task: %v", err)
 	}
 
-	secondPairing, err := VerificationBridgePairingCreate(ctx, "second bridge", 1)
+	secondPairing, err := VerificationBridgePairingCreate(ctx, "second bridge", 1, account.ID)
 	if err != nil {
 		t.Fatalf("create second pairing: %v", err)
 	}
@@ -318,7 +489,7 @@ func TestVerificationSessionRevokeCancelsActiveTask(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create verification session: %v", err)
 	}
-	pairing, err := VerificationBridgePairingCreate(ctx, "bridge", 1)
+	pairing, err := VerificationBridgePairingCreate(ctx, "bridge", 1, account.ID)
 	if err != nil {
 		t.Fatalf("create pairing: %v", err)
 	}
@@ -350,7 +521,7 @@ func TestVerificationSessionRevokeCancelsTaskAndClearsCredential(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create verification session: %v", err)
 	}
-	pairing, err := VerificationBridgePairingCreate(ctx, "bridge", 1)
+	pairing, err := VerificationBridgePairingCreate(ctx, "bridge", 1, account.ID)
 	if err != nil {
 		t.Fatalf("create pairing: %v", err)
 	}
@@ -410,7 +581,7 @@ func TestExpiredBridgeCompletionPersistsExpiredState(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create verification session: %v", err)
 	}
-	pairing, err := VerificationBridgePairingCreate(ctx, "bridge", 1)
+	pairing, err := VerificationBridgePairingCreate(ctx, "bridge", 1, account.ID)
 	if err != nil {
 		t.Fatalf("create pairing: %v", err)
 	}
@@ -452,6 +623,257 @@ func TestExpiredBridgeCompletionPersistsExpiredState(t *testing.T) {
 	}
 	if task.Status != model.VerificationTaskExpired {
 		t.Fatalf("expired bridge task status was not persisted: %+v", task)
+	}
+}
+
+func TestExpiredBridgeCompletionDoesNotRequeueStaleClaim(t *testing.T) {
+	ctx := setupBackupTestDB(t)
+	_, account := createVerificationFixture(t, ctx)
+	created, err := VerificationSessionCreate(ctx, VerificationSessionCreateRequest{
+		SiteAccountID: account.ID,
+	})
+	if err != nil {
+		t.Fatalf("create verification session: %v", err)
+	}
+	pairing, err := VerificationBridgePairingCreate(ctx, "bridge", 1, account.ID)
+	if err != nil {
+		t.Fatalf("create pairing: %v", err)
+	}
+	claimed, err := VerificationTaskClaim(ctx, pairing.Token)
+	if err != nil {
+		t.Fatalf("claim task: %v", err)
+	}
+	expiredAt := time.Now().Add(-time.Minute)
+	staleClaimedAt := time.Now().Add(-verificationTaskClaimTTL - time.Minute)
+	if err := dbpkg.GetDB().WithContext(ctx).Model(&model.VerificationSession{}).
+		Where("id = ?", created.Session.ID).
+		Update("expires_at", expiredAt).Error; err != nil {
+		t.Fatalf("expire session: %v", err)
+	}
+	if err := dbpkg.GetDB().WithContext(ctx).Model(&model.VerificationTask{}).
+		Where("id = ?", created.Task.ID).
+		Updates(map[string]any{
+			"expires_at": expiredAt,
+			"claimed_at": staleClaimedAt,
+		}).Error; err != nil {
+		t.Fatalf("expire claimed task: %v", err)
+	}
+
+	if _, err := VerificationTaskComplete(
+		ctx,
+		pairing.Token,
+		claimed.TaskToken,
+		[]VerificationCookieInput{{Name: "cf_clearance", Value: "late", Domain: ".example.com"}},
+		"",
+	); !errors.Is(err, errVerificationSessionExpired) {
+		t.Fatalf("completion error = %v, want expired session", err)
+	}
+	var task model.VerificationTask
+	if err := dbpkg.GetDB().WithContext(ctx).First(&task, created.Task.ID).Error; err != nil {
+		t.Fatalf("reload task: %v", err)
+	}
+	if task.Status != model.VerificationTaskExpired || task.ClaimedAt != nil {
+		t.Fatalf("expired stale claim was requeued: %+v", task)
+	}
+}
+
+func TestOlderVerificationSessionCannotReplaceNewerCredential(t *testing.T) {
+	ctx := setupBackupTestDB(t)
+	_, account := createVerificationFixture(t, ctx)
+	older, err := VerificationSessionCreate(ctx, VerificationSessionCreateRequest{
+		SiteAccountID: account.ID,
+	})
+	if err != nil {
+		t.Fatalf("create older session: %v", err)
+	}
+	newer, err := VerificationSessionCreate(ctx, VerificationSessionCreateRequest{
+		SiteAccountID: account.ID,
+	})
+	if err != nil {
+		t.Fatalf("create newer session: %v", err)
+	}
+	if _, err := VerificationSessionManualComplete(
+		ctx,
+		newer.Session.ID,
+		"cf_clearance=newer",
+		"",
+	); err != nil {
+		t.Fatalf("complete newer session: %v", err)
+	}
+	if _, err := VerificationSessionManualComplete(
+		ctx,
+		older.Session.ID,
+		"cf_clearance=older",
+		"",
+	); !errors.Is(err, errVerificationSessionSuperseded) {
+		t.Fatalf("older completion error = %v, want superseded", err)
+	}
+
+	var reloadedAccount model.SiteAccount
+	if err := dbpkg.GetDB().WithContext(ctx).First(&reloadedAccount, account.ID).Error; err != nil {
+		t.Fatalf("reload account: %v", err)
+	}
+	if reloadedAccount.VerificationSessionFenceID != newer.Session.ID {
+		t.Fatalf("credential fence = %d, want %d", reloadedAccount.VerificationSessionFenceID, newer.Session.ID)
+	}
+	cookie, err := DecryptSecret(reloadedAccount.VerificationCookieEncrypted)
+	if err != nil {
+		t.Fatalf("decrypt active credential: %v", err)
+	}
+	if cookie != "cf_clearance=newer" {
+		t.Fatalf("older session replaced active credential: %q", cookie)
+	}
+	var reloadedOlder model.VerificationSession
+	if err := dbpkg.GetDB().WithContext(ctx).First(&reloadedOlder, older.Session.ID).Error; err != nil {
+		t.Fatalf("reload older session: %v", err)
+	}
+	if reloadedOlder.Status != model.VerificationSessionSuperseded ||
+		reloadedOlder.CookieEncrypted != "" {
+		t.Fatalf("superseded session retained credential: %+v", reloadedOlder)
+	}
+}
+
+func TestRevokingCredentialRetainsVerificationFence(t *testing.T) {
+	ctx := setupBackupTestDB(t)
+	_, account := createVerificationFixture(t, ctx)
+	older, err := VerificationSessionCreate(ctx, VerificationSessionCreateRequest{
+		SiteAccountID: account.ID,
+	})
+	if err != nil {
+		t.Fatalf("create older session: %v", err)
+	}
+	newer, err := VerificationSessionCreate(ctx, VerificationSessionCreateRequest{
+		SiteAccountID: account.ID,
+	})
+	if err != nil {
+		t.Fatalf("create newer session: %v", err)
+	}
+	if _, err := VerificationSessionManualComplete(
+		ctx,
+		newer.Session.ID,
+		"cf_clearance=newer",
+		"",
+	); err != nil {
+		t.Fatalf("complete newer session: %v", err)
+	}
+	if err := VerificationSessionRevoke(ctx, newer.Session.ID); err != nil {
+		t.Fatalf("revoke newer session: %v", err)
+	}
+	if _, err := VerificationSessionManualComplete(
+		ctx,
+		older.Session.ID,
+		"cf_clearance=older",
+		"",
+	); !errors.Is(err, errVerificationSessionSuperseded) {
+		t.Fatalf("older completion error = %v, want superseded", err)
+	}
+	var reloaded model.SiteAccount
+	if err := dbpkg.GetDB().WithContext(ctx).First(&reloaded, account.ID).Error; err != nil {
+		t.Fatalf("reload account: %v", err)
+	}
+	if reloaded.VerificationSessionFenceID != newer.Session.ID ||
+		reloaded.VerificationCookieEncrypted != "" {
+		t.Fatalf("revoke lowered fence or retained credential: %+v", reloaded)
+	}
+}
+
+func TestVerificationCompletionExtendsCredentialFromCompletionTime(t *testing.T) {
+	ctx := setupBackupTestDB(t)
+	_, account := createVerificationFixture(t, ctx)
+	created, err := VerificationSessionCreate(ctx, VerificationSessionCreateRequest{
+		SiteAccountID: account.ID,
+		TTLMinutes:    15,
+	})
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+	createdAt := time.Now().Add(-10 * time.Minute)
+	originalExpiry := createdAt.Add(15 * time.Minute)
+	if err := dbpkg.GetDB().WithContext(ctx).Model(&model.VerificationSession{}).
+		Where("id = ?", created.Session.ID).
+		Updates(map[string]any{
+			"created_at": createdAt,
+			"expires_at": originalExpiry,
+		}).Error; err != nil {
+		t.Fatalf("age pending session: %v", err)
+	}
+	before := time.Now()
+	completed, err := VerificationSessionManualComplete(
+		ctx,
+		created.Session.ID,
+		"cf_clearance=value",
+		"",
+	)
+	if err != nil {
+		t.Fatalf("complete session: %v", err)
+	}
+	if completed.ExpiresAt.Before(before.Add(15*time.Minute - time.Second)) {
+		t.Fatalf(
+			"credential expiry was not extended from completion: got %s, original %s",
+			completed.ExpiresAt,
+			originalExpiry,
+		)
+	}
+}
+
+func TestVerificationSessionCleanupErasesExpiredCredential(t *testing.T) {
+	ctx := setupBackupTestDB(t)
+	_, account := createVerificationFixture(t, ctx)
+	created, err := VerificationSessionCreate(ctx, VerificationSessionCreateRequest{
+		SiteAccountID: account.ID,
+		Operation:     model.SiteOperationSync,
+	})
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+	if _, err := VerificationSessionManualComplete(
+		ctx,
+		created.Session.ID,
+		"cf_clearance=value",
+		"",
+	); err != nil {
+		t.Fatalf("complete session: %v", err)
+	}
+	expiredAt := time.Now().Add(-time.Minute)
+	if err := dbpkg.GetDB().WithContext(ctx).Model(&model.VerificationSession{}).
+		Where("id = ?", created.Session.ID).
+		Update("expires_at", expiredAt).Error; err != nil {
+		t.Fatalf("expire completed session: %v", err)
+	}
+	if err := dbpkg.GetDB().WithContext(ctx).Model(&model.SiteAccount{}).
+		Where("id = ?", account.ID).
+		Update("verification_expires_at", expiredAt).Error; err != nil {
+		t.Fatalf("expire account credential: %v", err)
+	}
+
+	cleaned, err := VerificationSessionCleanup(ctx, time.Now())
+	if err != nil {
+		t.Fatalf("cleanup verification sessions: %v", err)
+	}
+	if cleaned != 1 {
+		t.Fatalf("cleaned %d sessions, want 1", cleaned)
+	}
+	var session model.VerificationSession
+	if err := dbpkg.GetDB().WithContext(ctx).First(&session, created.Session.ID).Error; err != nil {
+		t.Fatalf("reload session: %v", err)
+	}
+	if session.Status != model.VerificationSessionExpired || session.CookieEncrypted != "" {
+		t.Fatalf("expired session retained credential: %+v", session)
+	}
+	var reloadedAccount model.SiteAccount
+	if err := dbpkg.GetDB().WithContext(ctx).First(&reloadedAccount, account.ID).Error; err != nil {
+		t.Fatalf("reload account: %v", err)
+	}
+	if reloadedAccount.VerificationCookieEncrypted != "" ||
+		reloadedAccount.VerificationSessionFenceID != created.Session.ID {
+		t.Fatalf("cleanup lost fence or retained credential: %+v", reloadedAccount)
+	}
+	var task model.VerificationTask
+	if err := dbpkg.GetDB().WithContext(ctx).First(&task, created.Task.ID).Error; err != nil {
+		t.Fatalf("reload task: %v", err)
+	}
+	if task.RetryStatus != model.VerificationRetryCanceled {
+		t.Fatalf("expired session retained retry work: %+v", task)
 	}
 }
 
@@ -767,6 +1189,151 @@ func TestClashSwitchNodeWaitsForControllerConfirmation(t *testing.T) {
 	}
 }
 
+func TestClashOperationGuardCoversCallerRequestLifetime(t *testing.T) {
+	ctx := setupBackupTestDB(t)
+	var mu sync.Mutex
+	current := "A"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		switch r.Method {
+		case http.MethodGet:
+			_, _ = w.Write([]byte(`{"now":"` + current + `","all":["A","B"]}`))
+		case http.MethodPut:
+			current = "B"
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			t.Fatalf("unexpected method: %s", r.Method)
+		}
+	}))
+	defer server.Close()
+
+	controller := model.ClashController{
+		Name:      "operation-guard-controller",
+		APIURL:    server.URL,
+		ProxyURL:  "http://127.0.0.1:19093",
+		GroupName: "Octopus",
+		Enabled:   true,
+	}
+	if err := dbpkg.GetDB().WithContext(ctx).Create(&controller).Error; err != nil {
+		t.Fatalf("create controller: %v", err)
+	}
+	releaseA, err := ClashSwitchNodeForOperation(ctx, controller.ID, "A")
+	if err != nil {
+		t.Fatalf("hold node A: %v", err)
+	}
+	acquiredB := make(chan func(), 1)
+	errorsB := make(chan error, 1)
+	go func() {
+		releaseB, switchErr := ClashSwitchNodeForOperation(ctx, controller.ID, "B")
+		if switchErr != nil {
+			errorsB <- switchErr
+			return
+		}
+		acquiredB <- releaseB
+	}()
+
+	select {
+	case releaseB := <-acquiredB:
+		releaseB()
+		releaseA()
+		t.Fatal("second operation switched nodes before the first request released its guard")
+	case err := <-errorsB:
+		releaseA()
+		t.Fatalf("second operation failed while waiting: %v", err)
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	releaseA()
+	select {
+	case releaseB := <-acquiredB:
+		releaseB()
+	case err := <-errorsB:
+		t.Fatalf("second operation failed after release: %v", err)
+	case <-time.After(time.Second):
+		t.Fatal("second operation did not acquire guard after release")
+	}
+}
+
+func TestClashOperationGuardWaitHonorsContextCancellation(t *testing.T) {
+	ctx := setupBackupTestDB(t)
+	controller := model.ClashController{
+		Name:      "cancelable-operation-guard",
+		APIURL:    "http://127.0.0.1:1",
+		ProxyURL:  "http://127.0.0.1:19094",
+		GroupName: "Octopus",
+		Enabled:   true,
+	}
+	if err := dbpkg.GetDB().WithContext(ctx).Create(&controller).Error; err != nil {
+		t.Fatalf("create controller: %v", err)
+	}
+	release, err := acquireClashOperationGuard(ctx, &controller)
+	if err != nil {
+		t.Fatalf("acquire first guard: %v", err)
+	}
+	defer release()
+
+	waitCtx, cancel := context.WithTimeout(ctx, 30*time.Millisecond)
+	defer cancel()
+	startedAt := time.Now()
+	_, err = acquireClashOperationGuard(waitCtx, &controller)
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("guard wait error = %v", err)
+	}
+	if time.Since(startedAt) > 250*time.Millisecond {
+		t.Fatal("guard wait ignored context deadline")
+	}
+}
+
+func TestClashControllerHTTPClientIsBounded(t *testing.T) {
+	client, err := newClashControllerHTTPClient()
+	if err != nil {
+		t.Fatalf("create controller client: %v", err)
+	}
+	if client.Timeout != clashControllerHTTPTimeout || client.Timeout <= 0 {
+		t.Fatalf("controller client timeout = %s", client.Timeout)
+	}
+}
+
+func TestClashControllerUpsertRejectsGlobalGroup(t *testing.T) {
+	ctx := setupBackupTestDB(t)
+	for _, groupName := range []string{"GLOBAL", "global", " Global "} {
+		t.Run(groupName, func(t *testing.T) {
+			_, err := ClashControllerUpsert(ctx, ClashControllerInput{
+				Name:      "global-group-" + strings.TrimSpace(groupName),
+				APIURL:    "http://127.0.0.1:9090",
+				ProxyURL:  "http://127.0.0.1:7890",
+				GroupName: groupName,
+				Enabled:   true,
+			})
+			if err == nil || !strings.Contains(err.Error(), "not GLOBAL") {
+				t.Fatalf("GLOBAL group should be rejected, got %v", err)
+			}
+		})
+	}
+}
+
+func TestClashControllerOperationRejectsLegacyGlobalGroup(t *testing.T) {
+	ctx := setupBackupTestDB(t)
+	controller := model.ClashController{
+		Name:      "legacy-global",
+		APIURL:    "http://127.0.0.1:9090",
+		ProxyURL:  "http://127.0.0.1:7890",
+		GroupName: "GLOBAL",
+		Enabled:   true,
+	}
+	if err := dbpkg.GetDB().WithContext(ctx).Create(&controller).Error; err != nil {
+		t.Fatalf("seed legacy GLOBAL controller: %v", err)
+	}
+	release, err := ClashSwitchNodeForOperation(ctx, controller.ID, "node-a")
+	if release != nil {
+		release()
+	}
+	if err == nil || !strings.Contains(err.Error(), "not GLOBAL") {
+		t.Fatalf("legacy GLOBAL controller should be blocked at runtime, got %v", err)
+	}
+}
+
 func TestSiteProxyPreferenceCooldownExpiryAndSuccessRecovery(t *testing.T) {
 	ctx := setupBackupTestDB(t)
 	path := SiteProxyPathDescriptor{
@@ -813,6 +1380,83 @@ func TestSiteProxyPreferenceCooldownExpiryAndSuccessRecovery(t *testing.T) {
 	recovered.ExpiresAt = &expired
 	if SiteProxyPreferenceUsable(recovered, time.Now()) {
 		t.Fatal("expired preference should not be usable")
+	}
+}
+
+func TestSiteProxyPreferenceClearSiteKeepsAccountPreferences(t *testing.T) {
+	ctx := setupBackupTestDB(t)
+	site, account := createVerificationFixture(t, ctx)
+	proxyID := 41
+	if err := dbpkg.GetDB().WithContext(ctx).Model(&model.Site{}).
+		Where("id = ?", site.ID).
+		Updates(map[string]any{
+			"preferred_proxy_config_id": proxyID,
+			"preferred_clash_node":      "site-node",
+		}).Error; err != nil {
+		t.Fatalf("seed site preference fields: %v", err)
+	}
+	if err := dbpkg.GetDB().WithContext(ctx).Model(&model.SiteAccount{}).
+		Where("id = ?", account.ID).
+		Updates(map[string]any{
+			"preferred_proxy_config_id": proxyID + 1,
+			"preferred_clash_node":      "account-node",
+		}).Error; err != nil {
+		t.Fatalf("seed account preference fields: %v", err)
+	}
+	for _, descriptor := range []SiteProxyPathDescriptor{
+		{
+			SiteID:        site.ID,
+			SiteAccountID: 0,
+			ProxyMode:     model.ProxyUsageModePool,
+			ProxyConfigID: proxyID,
+			ClashNode:     "site-node",
+		},
+		{
+			SiteID:        site.ID,
+			SiteAccountID: account.ID,
+			ProxyMode:     model.ProxyUsageModePool,
+			ProxyConfigID: proxyID + 1,
+			ClashNode:     "account-node",
+		},
+	} {
+		if err := SiteProxyPreferenceRecordSuccess(ctx, descriptor, time.Millisecond); err != nil {
+			t.Fatalf("seed path preference: %v", err)
+		}
+	}
+
+	if err := SiteProxyPreferenceClearSite(ctx, site.ID); err != nil {
+		t.Fatalf("clear site preference: %v", err)
+	}
+	var siteCount, accountCount int64
+	if err := dbpkg.GetDB().WithContext(ctx).Model(&model.SiteProxyPreference{}).
+		Where("site_id = ? AND site_account_id = 0", site.ID).
+		Count(&siteCount).Error; err != nil {
+		t.Fatalf("count site preferences: %v", err)
+	}
+	if err := dbpkg.GetDB().WithContext(ctx).Model(&model.SiteProxyPreference{}).
+		Where("site_id = ? AND site_account_id = ?", site.ID, account.ID).
+		Count(&accountCount).Error; err != nil {
+		t.Fatalf("count account preferences: %v", err)
+	}
+	if siteCount != 0 || accountCount != 1 {
+		t.Fatalf("site clear crossed account boundary: site=%d account=%d", siteCount, accountCount)
+	}
+
+	var reloadedSite model.Site
+	var reloadedAccount model.SiteAccount
+	if err := dbpkg.GetDB().WithContext(ctx).First(&reloadedSite, site.ID).Error; err != nil {
+		t.Fatalf("reload site: %v", err)
+	}
+	if err := dbpkg.GetDB().WithContext(ctx).First(&reloadedAccount, account.ID).Error; err != nil {
+		t.Fatalf("reload account: %v", err)
+	}
+	if reloadedSite.PreferredProxyConfigID != nil || reloadedSite.PreferredClashNode != "" {
+		t.Fatalf("site preference fields were not cleared: %+v", reloadedSite)
+	}
+	if reloadedAccount.PreferredProxyConfigID == nil ||
+		*reloadedAccount.PreferredProxyConfigID != proxyID+1 ||
+		reloadedAccount.PreferredClashNode != "account-node" {
+		t.Fatalf("account preference fields were changed: %+v", reloadedAccount)
 	}
 }
 

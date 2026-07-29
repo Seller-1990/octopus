@@ -91,7 +91,11 @@ func UsageAnalyticsSummaryGet(ctx context.Context, filter UsageAnalyticsFilter) 
 	}
 
 	metrics := accumulator.metrics(normalized.Scope)
-	earliest, available, err := usageDrilldownAvailability(ctx, normalized.StartTime)
+	earliest, available, err := usageDrilldownAvailability(
+		ctx,
+		normalized.StartTime,
+		normalized.EndTime,
+	)
 	if err != nil {
 		return UsageAnalyticsSummary{}, err
 	}
@@ -210,7 +214,11 @@ func usageMetricsFromAggregate(row usageAggregateRow, scope UsageMetricScope) Us
 	return metrics
 }
 
-func usageDrilldownAvailability(ctx context.Context, startTime int64) (*int64, bool, error) {
+func usageDrilldownAvailability(
+	ctx context.Context,
+	startTime int64,
+	endTime int64,
+) (*int64, bool, error) {
 	var earliest *int64
 	if err := db.GetDB().WithContext(ctx).
 		Model(&model.RelayLog{}).
@@ -221,5 +229,13 @@ func usageDrilldownAvailability(ctx context.Context, startTime int64) (*int64, b
 	if earliest == nil {
 		return nil, false, nil
 	}
-	return earliest, startTime >= *earliest, nil
+	var count int64
+	if err := db.GetDB().WithContext(ctx).
+		Model(&model.RelayLog{}).
+		Where("time >= ? AND time < ?", startTime, endTime).
+		Limit(1).
+		Count(&count).Error; err != nil {
+		return nil, false, err
+	}
+	return earliest, count > 0, nil
 }

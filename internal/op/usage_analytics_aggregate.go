@@ -12,8 +12,9 @@ import (
 )
 
 type usageAnalyticsAggregateWindow struct {
-	start int64
-	end   int64
+	start       int64
+	end         int64
+	granularity model.UsageAggregateGranularity
 }
 
 func (window usageAnalyticsAggregateWindow) valid() bool {
@@ -157,7 +158,34 @@ func usageAnalyticsDailyAggregateWindow(filter UsageAnalyticsFilter) usageAnalyt
 		0, 0, 0, 0,
 		time.UTC,
 	)
-	return usageAnalyticsAggregateWindow{start: start.Unix(), end: end.Unix()}
+	return usageAnalyticsAggregateWindow{
+		start:       start.Unix(),
+		end:         end.Unix(),
+		granularity: model.UsageAggregateDaily,
+	}
+}
+
+func usageAnalyticsHourlyAggregateWindow(filter UsageAnalyticsFilter) usageAnalyticsAggregateWindow {
+	retentionCutoff := time.Now().UTC().
+		AddDate(0, 0, -usageHourlyRetentionDays()).
+		Truncate(time.Hour)
+	start := time.Unix(filter.StartTime, 0).UTC().Truncate(time.Hour)
+	if start.Unix() < filter.StartTime {
+		start = start.Add(time.Hour)
+	}
+	if start.Before(retentionCutoff) {
+		start = retentionCutoff
+	}
+	end := time.Unix(filter.EndTime, 0).UTC().Truncate(time.Hour)
+	currentHour := time.Now().UTC().Truncate(time.Hour)
+	if end.After(currentHour) {
+		end = currentHour
+	}
+	return usageAnalyticsAggregateWindow{
+		start:       start.Unix(),
+		end:         end.Unix(),
+		granularity: model.UsageAggregateHourly,
+	}
 }
 
 func usageAnalyticsFactQuery(
@@ -167,7 +195,7 @@ func usageAnalyticsFactQuery(
 ) *gorm.DB {
 	query := usageAnalyticsBaseQuery(ctx, filter)
 	if window.valid() {
-		// Daily aggregates cover only facts that have been transactionally
+		// Aggregates cover only facts that have been transactionally
 		// marked as aggregated. Keep pending facts visible during backfill so a
 		// retention-window boundary cannot temporarily hide usage.
 		query = query.Where(
@@ -188,7 +216,7 @@ func usageAnalyticsAggregateQuery(
 		Model(&model.UsageAggregate{}).
 		Where(
 			"granularity = ? AND metric_scope = ? AND bucket_start >= ? AND bucket_start < ?",
-			model.UsageAggregateDaily,
+			window.granularity,
 			filter.Scope,
 			window.start,
 			window.end,

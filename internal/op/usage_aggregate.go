@@ -456,14 +456,76 @@ func UsageFactsBackfill(ctx context.Context, limit int) (int, error) {
 }
 
 func UsageAggregateRetention(ctx context.Context, now time.Time, hourlyDays int) (int64, error) {
-	if hourlyDays <= 0 {
-		hourlyDays = 90
-	}
-	cutoff := now.UTC().AddDate(0, 0, -hourlyDays).Truncate(time.Hour).Unix()
+	cutoff := usageRetentionCutoff(now, hourlyDays)
 	result := db.GetDB().WithContext(ctx).
 		Where("granularity = ? AND bucket_start < ?", model.UsageAggregateHourly, cutoff).
 		Delete(&model.UsageAggregate{})
 	return result.RowsAffected, result.Error
+}
+
+func UsageFactsRetention(
+	ctx context.Context,
+	now time.Time,
+	hourlyDays int,
+	batchSize int,
+) (int64, error) {
+	if batchSize <= 0 || batchSize > usageAggregateBatchSize {
+		batchSize = usageAggregateBatchSize
+	}
+	cutoff := usageRetentionCutoff(now, hourlyDays)
+	var deleted int64
+	err := db.GetDB().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var requestIDs []int64
+		if err := tx.Model(&model.UsageRequestFact{}).
+			Where("aggregated_at IS NOT NULL AND time < ?", cutoff).
+			Order("time ASC, relay_log_id ASC").
+			Limit(batchSize).
+			Pluck("relay_log_id", &requestIDs).Error; err != nil {
+			return err
+		}
+		if len(requestIDs) > 0 {
+			result := tx.Where("relay_log_id IN ? AND aggregated_at IS NOT NULL", requestIDs).
+				Delete(&model.UsageRequestFact{})
+			if result.Error != nil {
+				return result.Error
+			}
+			deleted += result.RowsAffected
+		}
+
+		type attemptKey struct {
+			RelayLogID    int64
+			AttemptNumber int
+		}
+		var attemptKeys []attemptKey
+		if err := tx.Model(&model.UsageAttemptFact{}).
+			Select("relay_log_id, attempt_number").
+			Where("aggregated_at IS NOT NULL AND time < ?", cutoff).
+			Order("time ASC, relay_log_id ASC, attempt_number ASC").
+			Limit(batchSize).
+			Scan(&attemptKeys).Error; err != nil {
+			return err
+		}
+		for _, key := range attemptKeys {
+			result := tx.Where(
+				"relay_log_id = ? AND attempt_number = ? AND aggregated_at IS NOT NULL",
+				key.RelayLogID,
+				key.AttemptNumber,
+			).Delete(&model.UsageAttemptFact{})
+			if result.Error != nil {
+				return result.Error
+			}
+			deleted += result.RowsAffected
+		}
+		return nil
+	})
+	return deleted, err
+}
+
+func usageRetentionCutoff(now time.Time, hourlyDays int) int64 {
+	if hourlyDays <= 0 {
+		hourlyDays = usageHourlyRetentionDays()
+	}
+	return now.UTC().AddDate(0, 0, -hourlyDays).Truncate(time.Hour).Unix()
 }
 
 func usageHourlyRetentionDays() int {

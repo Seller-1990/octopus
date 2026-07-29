@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/bestruirui/octopus/internal/db"
@@ -31,6 +32,7 @@ type VerificationSessionCreated struct {
 }
 
 var errVerificationSessionExpired = errors.New("verification session expired")
+var verificationSessionEnsureLocks sync.Map
 
 func VerificationSessionCreate(ctx context.Context, request VerificationSessionCreateRequest) (*VerificationSessionCreated, error) {
 	account, normalized, err := resolveVerificationSessionRequest(ctx, request)
@@ -127,6 +129,12 @@ func VerificationSessionEnsure(
 	if err != nil {
 		return nil, err
 	}
+	release, err := acquireVerificationSessionEnsureGuard(ctx, account.ID)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+
 	now := time.Now()
 	var session model.VerificationSession
 	query := db.GetDB().WithContext(ctx).
@@ -162,6 +170,33 @@ func VerificationSessionEnsure(
 	return createVerificationSession(ctx, account, request)
 }
 
+func acquireVerificationSessionEnsureGuard(
+	ctx context.Context,
+	accountID int,
+) (func(), error) {
+	if accountID <= 0 {
+		return nil, fmt.Errorf("site account id is required")
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	created := make(chan struct{}, 1)
+	created <- struct{}{}
+	lockValue, _ := verificationSessionEnsureLocks.LoadOrStore(accountID, created)
+	lock := lockValue.(chan struct{})
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case <-lock:
+	}
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			lock <- struct{}{}
+		})
+	}, nil
+}
+
 func VerificationSessionList(ctx context.Context, accountID int) ([]model.VerificationSession, error) {
 	if err := expireVerificationTasks(ctx); err != nil {
 		return nil, err
@@ -190,7 +225,6 @@ func VerificationSessionRevoke(ctx context.Context, id int64) error {
 		if session.Status == model.VerificationSessionRevoked {
 			return nil
 		}
-		activeCookie := session.CookieEncrypted
 		session.Status = model.VerificationSessionRevoked
 		session.CookieEncrypted = ""
 		if err := tx.Save(&session).Error; err != nil {
@@ -202,12 +236,13 @@ func VerificationSessionRevoke(ctx context.Context, id int64) error {
 		if err := cancelVerificationRetryForSession(tx, session.ID); err != nil {
 			return err
 		}
-		if activeCookie == "" {
-			return nil
-		}
 		return tx.Model(&model.SiteAccount{}).
-			Where("id = ? AND verification_cookie_encrypted = ?", session.SiteAccountID, activeCookie).
-			Updates(clearedVerificationAccountFields()).Error
+			Where(
+				"id = ? AND verification_session_fence_id = ?",
+				session.SiteAccountID,
+				session.ID,
+			).
+			Updates(clearedVerificationCredentialFields()).Error
 	})
 }
 
@@ -216,6 +251,11 @@ func VerificationSessionClearAccount(ctx context.Context, accountID int) error {
 		return fmt.Errorf("site account id is required")
 	}
 	return db.GetDB().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var account model.SiteAccount
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			First(&account, accountID).Error; err != nil {
+			return fmt.Errorf("site account not found")
+		}
 		var sessionIDs []int64
 		if err := tx.Model(&model.VerificationSession{}).
 			Where("site_account_id = ? AND status IN ?", accountID, []model.VerificationSessionStatus{
@@ -251,9 +291,17 @@ func VerificationSessionClearAccount(ctx context.Context, accountID int) error {
 				return err
 			}
 		}
+		fenceID := account.VerificationSessionFenceID
+		for _, sessionID := range sessionIDs {
+			if sessionID > fenceID {
+				fenceID = sessionID
+			}
+		}
+		fields := clearedVerificationCredentialFields()
+		fields["verification_session_fence_id"] = fenceID
 		return tx.Model(&model.SiteAccount{}).
 			Where("id = ?", accountID).
-			Updates(clearedVerificationAccountFields()).Error
+			Updates(fields).Error
 	})
 }
 
@@ -263,7 +311,7 @@ func VerificationHeadersForAccount(
 	clashNode string,
 ) (cookie string, userAgent string, ok bool) {
 	if account == nil || account.VerificationCookieEncrypted == "" ||
-		account.VerificationExpiresAt == nil || time.Now().After(*account.VerificationExpiresAt) {
+		account.VerificationExpiresAt == nil || !account.VerificationExpiresAt.After(time.Now()) {
 		return "", "", false
 	}
 	if !sameOptionalInt(account.VerificationProxyConfigID, proxyConfigID) {
@@ -318,7 +366,7 @@ func completeVerificationSession(
 			First(&session, sessionID).Error; err != nil {
 			return fmt.Errorf("verification session not found")
 		}
-		if now.After(session.ExpiresAt) {
+		if !session.ExpiresAt.After(now) {
 			if err := expireVerificationSession(tx, &session, now); err != nil {
 				return err
 			}
@@ -329,15 +377,25 @@ func completeVerificationSession(
 		if err != nil {
 			return err
 		}
-		if err := completeVerificationSessionRecord(
+		installed, err := completeVerificationSessionRecord(
 			tx,
 			&session,
 			cookie,
 			effectiveUserAgent,
 			source,
 			now,
-		); err != nil {
+		)
+		if err != nil {
 			return err
+		}
+		if !installed {
+			completionErr = errVerificationSessionSuperseded
+			return tx.Model(&model.VerificationTask{}).
+				Where("session_id = ? AND status IN ?", session.ID, []model.VerificationTaskStatus{
+					model.VerificationTaskPending,
+					model.VerificationTaskClaimed,
+				}).
+				Updates(canceledVerificationTaskFields()).Error
 		}
 		return tx.Model(&model.VerificationTask{}).
 			Where("session_id = ? AND status IN ?", session.ID, []model.VerificationTaskStatus{
@@ -364,11 +422,24 @@ func expireVerificationSession(tx *gorm.DB, session *model.VerificationSession, 
 	if tx == nil || session == nil {
 		return fmt.Errorf("verification session is required")
 	}
+	hadCredential := session.CookieEncrypted != ""
 	session.Status = model.VerificationSessionExpired
+	session.CookieEncrypted = ""
 	if err := tx.Save(session).Error; err != nil {
 		return err
 	}
-	return tx.Model(&model.VerificationTask{}).
+	if hadCredential {
+		if err := tx.Model(&model.SiteAccount{}).
+			Where(
+				"id = ? AND verification_session_fence_id = ?",
+				session.SiteAccountID,
+				session.ID,
+			).
+			Updates(clearedVerificationCredentialFields()).Error; err != nil {
+			return err
+		}
+	}
+	if err := tx.Model(&model.VerificationTask{}).
 		Where("session_id = ? AND status IN ?", session.ID, []model.VerificationTaskStatus{
 			model.VerificationTaskPending,
 			model.VerificationTaskClaimed,
@@ -380,7 +451,49 @@ func expireVerificationSession(tx *gorm.DB, session *model.VerificationSession, 
 			"claimed_at":       nil,
 			"retry_status":     model.VerificationRetryCanceled,
 			"retry_token_hash": "",
+		}).Error; err != nil {
+		return err
+	}
+	return tx.Model(&model.VerificationTask{}).
+		Where("session_id = ? AND retry_status IN ?", session.ID, []model.VerificationRetryStatus{
+			model.VerificationRetryPending,
+			model.VerificationRetryRunning,
+		}).
+		Updates(map[string]any{
+			"retry_status":     model.VerificationRetryCanceled,
+			"retry_token_hash": "",
 		}).Error
+}
+
+func VerificationSessionCleanup(ctx context.Context, now time.Time) (int64, error) {
+	var cleaned int64
+	err := db.GetDB().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := refreshVerificationTaskClaims(tx, now); err != nil {
+			return err
+		}
+		var sessions []model.VerificationSession
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where(
+				"(status IN ? AND expires_at <= ?) OR (status = ? AND cookie_encrypted <> '')",
+				[]model.VerificationSessionStatus{
+					model.VerificationSessionPending,
+					model.VerificationSessionCompleted,
+				},
+				now,
+				model.VerificationSessionExpired,
+			).
+			Find(&sessions).Error; err != nil {
+			return err
+		}
+		for index := range sessions {
+			if err := expireVerificationSession(tx, &sessions[index], now); err != nil {
+				return err
+			}
+			cleaned++
+		}
+		return nil
+	})
+	return cleaned, err
 }
 
 func cancelVerificationTasksForSession(tx *gorm.DB, sessionID int64) error {
@@ -415,7 +528,7 @@ func cancelVerificationRetryForSession(tx *gorm.DB, sessionID int64) error {
 		}).Error
 }
 
-func clearedVerificationAccountFields() map[string]any {
+func clearedVerificationCredentialFields() map[string]any {
 	return map[string]any{
 		"verification_cookie_encrypted": "",
 		"verification_user_agent":       "",

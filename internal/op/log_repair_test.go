@@ -45,6 +45,7 @@ func TestRelayLogRepairExecuteIsAuditedAndIdempotent(t *testing.T) {
 	ctx := setupSiteOpTestDB(t)
 	resetRelayLogStateForTest()
 	seedRelayLogRepairRows(t, ctx)
+	seedRelayLogRepairUsage(t, ctx)
 
 	result, err := RelayLogRepairExecute(ctx, RelayLogRepairFilter{})
 	if err != nil {
@@ -75,6 +76,7 @@ func TestRelayLogRepairExecuteIsAuditedAndIdempotent(t *testing.T) {
 	if audit.DryRun || audit.Matched != 1 || audit.Updated != 1 {
 		t.Fatalf("unexpected execute audit: %+v", audit)
 	}
+	assertRelayLogRepairUsage(t, ctx)
 
 	second, err := RelayLogRepairExecute(ctx, RelayLogRepairFilter{})
 	if err != nil {
@@ -82,6 +84,64 @@ func TestRelayLogRepairExecuteIsAuditedAndIdempotent(t *testing.T) {
 	}
 	if second.Matched != 0 || second.Updated != 0 {
 		t.Fatalf("repair was not idempotent: %+v", second)
+	}
+	assertRelayLogRepairUsage(t, ctx)
+}
+
+func TestRelayLogRepairRollsBackWhenDailyAggregateIsMissing(t *testing.T) {
+	ctx := setupSiteOpTestDB(t)
+	resetRelayLogStateForTest()
+	seedRelayLogRepairRows(t, ctx)
+	seedRelayLogRepairUsage(t, ctx)
+	if err := dbpkg.GetDB().WithContext(ctx).
+		Where("granularity = ?", model.UsageAggregateDaily).
+		Delete(&model.UsageAggregate{}).Error; err != nil {
+		t.Fatalf("delete daily aggregate: %v", err)
+	}
+
+	if _, err := RelayLogRepairExecute(ctx, RelayLogRepairFilter{}); err == nil {
+		t.Fatal("repair succeeded without the required daily aggregate")
+	}
+	var row model.RelayLog
+	if err := dbpkg.GetDB().WithContext(ctx).First(&row, 1001).Error; err != nil {
+		t.Fatalf("load relay log: %v", err)
+	}
+	if row.Success || row.Outcome != model.RequestOutcomeFailed || row.RepairBatchID != "" {
+		t.Fatalf("failed repair did not roll back relay log: %+v", row)
+	}
+	var request model.UsageRequestFact
+	if err := dbpkg.GetDB().WithContext(ctx).First(&request, "relay_log_id = ?", 1001).Error; err != nil {
+		t.Fatalf("load request fact: %v", err)
+	}
+	if request.Outcome != model.RequestOutcomeFailed {
+		t.Fatalf("failed repair did not roll back request fact: %+v", request)
+	}
+}
+
+func TestRelayLogRepairAllowsExpiredHourlyAggregateToBeMissing(t *testing.T) {
+	ctx := setupSiteOpTestDB(t)
+	resetRelayLogStateForTest()
+	seedRelayLogRepairRows(t, ctx)
+	seedRelayLogRepairUsage(t, ctx)
+	if err := dbpkg.GetDB().WithContext(ctx).
+		Where("granularity = ?", model.UsageAggregateHourly).
+		Delete(&model.UsageAggregate{}).Error; err != nil {
+		t.Fatalf("delete hourly aggregate: %v", err)
+	}
+
+	result, err := RelayLogRepairExecute(ctx, RelayLogRepairFilter{})
+	if err != nil {
+		t.Fatalf("repair with expired hourly aggregate: %v", err)
+	}
+	if result.Updated != 1 {
+		t.Fatalf("unexpected repair result: %+v", result)
+	}
+	var request model.UsageRequestFact
+	if err := dbpkg.GetDB().WithContext(ctx).First(&request, "relay_log_id = ?", 1001).Error; err != nil {
+		t.Fatalf("load request fact: %v", err)
+	}
+	if request.Outcome != model.RequestOutcomeSuccess {
+		t.Fatalf("request fact was not repaired: %+v", request)
 	}
 }
 
@@ -122,5 +182,78 @@ func seedRelayLogRepairRows(t *testing.T, ctx context.Context) {
 	}
 	if err := dbpkg.GetDB().WithContext(ctx).Create(&rows).Error; err != nil {
 		t.Fatalf("seed relay logs: %v", err)
+	}
+}
+
+func seedRelayLogRepairUsage(t *testing.T, ctx context.Context) {
+	t.Helper()
+	request := model.UsageRequestFact{
+		RelayLogID:   1001,
+		Time:         1001,
+		RequestModel: "grok",
+		Outcome:      model.RequestOutcomeFailed,
+		TokenSource:  model.UsageValueSourceReported,
+	}
+	attempt := model.UsageAttemptFact{
+		RelayLogID:    1001,
+		AttemptNumber: 1,
+		Time:          1001,
+		RequestModel:  "grok",
+		Status:        model.AttemptFailed,
+		Outcome:       model.RequestOutcomeFailed,
+		Attribution:   model.AttemptAttributionUpstream,
+		TokenSource:   model.UsageValueSourceReported,
+	}
+	if err := dbpkg.GetDB().WithContext(ctx).Create(&request).Error; err != nil {
+		t.Fatalf("seed request fact: %v", err)
+	}
+	if err := dbpkg.GetDB().WithContext(ctx).Create(&attempt).Error; err != nil {
+		t.Fatalf("seed attempt fact: %v", err)
+	}
+	if processed, err := UsageAggregatePending(ctx, 100); err != nil || processed != 2 {
+		t.Fatalf("aggregate repair facts: processed=%d err=%v", processed, err)
+	}
+}
+
+func assertRelayLogRepairUsage(t *testing.T, ctx context.Context) {
+	t.Helper()
+	var request model.UsageRequestFact
+	if err := dbpkg.GetDB().WithContext(ctx).First(&request, "relay_log_id = ?", 1001).Error; err != nil {
+		t.Fatalf("load repaired request fact: %v", err)
+	}
+	if request.Outcome != model.RequestOutcomeSuccess || request.AggregatedAt == nil {
+		t.Fatalf("request fact was not repaired: %+v", request)
+	}
+
+	var attempt model.UsageAttemptFact
+	if err := dbpkg.GetDB().WithContext(ctx).
+		First(&attempt, "relay_log_id = ? AND attempt_number = ?", 1001, 1).Error; err != nil {
+		t.Fatalf("load repaired attempt fact: %v", err)
+	}
+	if attempt.Status != model.AttemptSuccess ||
+		attempt.Outcome != model.RequestOutcomeSuccess ||
+		attempt.Attribution != model.AttemptAttributionNone ||
+		attempt.AggregatedAt == nil {
+		t.Fatalf("attempt fact was not repaired: %+v", attempt)
+	}
+
+	facts := []usageAggregateFact{
+		usageAggregateFactFromRequest(request),
+		usageAggregateFactFromAttempt(attempt),
+	}
+	for _, fact := range facts {
+		for _, granularity := range []model.UsageAggregateGranularity{
+			model.UsageAggregateHourly,
+			model.UsageAggregateDaily,
+		} {
+			key := usageAggregateKey(fact, granularity, usageAggregateBucketStart(fact.time, granularity))
+			var aggregate model.UsageAggregate
+			if err := dbpkg.GetDB().WithContext(ctx).First(&aggregate, "aggregate_key = ?", key).Error; err != nil {
+				t.Fatalf("load repaired %s aggregate %s: %v", fact.scope, granularity, err)
+			}
+			if aggregate.SuccessCount != 1 || aggregate.FailedCount != 0 || aggregate.MetricCount != 1 {
+				t.Fatalf("aggregate outcome was not shifted exactly once: %+v", aggregate)
+			}
+		}
 	}
 }

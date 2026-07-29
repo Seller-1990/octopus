@@ -2,6 +2,7 @@ package op
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"net/url"
@@ -14,6 +15,11 @@ import (
 	"golang.org/x/net/publicsuffix"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
+)
+
+var (
+	errVerificationTaskClaimExpired  = errors.New("verification task claim expired")
+	errVerificationSessionSuperseded = errors.New("verification session was superseded")
 )
 
 const (
@@ -30,8 +36,9 @@ type VerificationBridgePairingCreated struct {
 }
 
 type VerificationTaskClaimed struct {
-	Task      model.VerificationTask `json:"task"`
-	TaskToken string                 `json:"task_token"`
+	Task           model.VerificationTask `json:"task"`
+	TaskToken      string                 `json:"task_token"`
+	ClaimExpiresAt time.Time              `json:"claim_expires_at"`
 }
 
 type VerificationCookieInput struct {
@@ -47,10 +54,18 @@ func VerificationBridgePairingCreate(
 	ctx context.Context,
 	name string,
 	ttlDays int,
+	siteAccountID int,
 ) (*VerificationBridgePairingCreated, error) {
 	name = strings.TrimSpace(name)
 	if name == "" {
 		return nil, fmt.Errorf("pairing name is required")
+	}
+	if siteAccountID <= 0 {
+		return nil, fmt.Errorf("site account scope is required")
+	}
+	var account model.SiteAccount
+	if err := db.GetDB().WithContext(ctx).First(&account, siteAccountID).Error; err != nil {
+		return nil, fmt.Errorf("site account scope not found")
 	}
 	ttl := time.Duration(ttlDays) * 24 * time.Hour
 	if ttl <= 0 {
@@ -64,9 +79,10 @@ func VerificationBridgePairingCreate(
 		return nil, err
 	}
 	pairing := model.VerificationBridgePairing{
-		Name:      name,
-		TokenHash: verificationTokenHash(token),
-		ExpiresAt: time.Now().Add(ttl),
+		Name:          name,
+		SiteAccountID: siteAccountID,
+		TokenHash:     verificationTokenHash(token),
+		ExpiresAt:     time.Now().Add(ttl),
 	}
 	if err := db.GetDB().WithContext(ctx).Create(&pairing).Error; err != nil {
 		return nil, err
@@ -143,6 +159,12 @@ func VerificationTaskClaim(
 		}
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
 			Where("status = ? AND expires_at > ?", model.VerificationTaskPending, now).
+			Where(
+				"session_id IN (?)",
+				tx.Model(&model.VerificationSession{}).
+					Select("id").
+					Where("site_account_id = ?", pairing.SiteAccountID),
+			).
 			Order("created_at ASC, id ASC").
 			First(&task).Error; err != nil {
 			if err == gorm.ErrRecordNotFound {
@@ -169,7 +191,18 @@ func VerificationTaskClaim(
 	if err != nil {
 		return nil, err
 	}
-	return &VerificationTaskClaimed{Task: task, TaskToken: taskToken}, nil
+	claimExpiresAt := now.Add(verificationTaskClaimTTL)
+	if task.ExpiresAt.Before(claimExpiresAt) {
+		claimExpiresAt = task.ExpiresAt
+	}
+	if pairing.ExpiresAt.Before(claimExpiresAt) {
+		claimExpiresAt = pairing.ExpiresAt
+	}
+	return &VerificationTaskClaimed{
+		Task:           task,
+		TaskToken:      taskToken,
+		ClaimExpiresAt: claimExpiresAt,
+	}, nil
 }
 
 func VerificationTaskComplete(
@@ -183,9 +216,10 @@ func VerificationTaskComplete(
 	if err != nil {
 		return nil, err
 	}
+	claimTokenHash := verificationTokenHash(strings.TrimSpace(taskToken))
 	var task model.VerificationTask
 	if err := db.GetDB().WithContext(ctx).
-		Where("pairing_id = ? AND claim_token_hash = ?", pairing.ID, verificationTokenHash(strings.TrimSpace(taskToken))).
+		Where("pairing_id = ? AND claim_token_hash = ?", pairing.ID, claimTokenHash).
 		First(&task).Error; err != nil {
 		return nil, fmt.Errorf("verification task not found")
 	}
@@ -205,43 +239,64 @@ func VerificationTaskComplete(
 	}
 
 	var session model.VerificationSession
-	now := time.Now()
 	var completionErr error
 	err = db.GetDB().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if _, err := activeVerificationPairing(tx, pairing.ID, now); err != nil {
+		if _, err := activeVerificationPairing(tx, pairing.ID, time.Now()); err != nil {
 			return err
 		}
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&task, task.ID).Error; err != nil {
 			return err
 		}
 		if task.Status != model.VerificationTaskClaimed ||
-			task.PairingID == nil || *task.PairingID != pairing.ID {
+			task.PairingID == nil || *task.PairingID != pairing.ID ||
+			task.ClaimTokenHash != claimTokenHash {
 			return fmt.Errorf("verification task was already consumed")
 		}
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
 			First(&session, task.SessionID).Error; err != nil {
 			return err
 		}
-		if now.After(task.ExpiresAt) || now.After(session.ExpiresAt) {
+		now := time.Now()
+		if !task.ExpiresAt.After(now) || !session.ExpiresAt.After(now) {
 			if err := expireVerificationSession(tx, &session, now); err != nil {
 				return err
 			}
 			completionErr = errVerificationSessionExpired
 			return nil
 		}
+		if task.ClaimedAt == nil ||
+			!task.ClaimedAt.Add(verificationTaskClaimTTL).After(now) {
+			if err := tx.Model(&task).Updates(map[string]any{
+				"status":           model.VerificationTaskPending,
+				"pairing_id":       nil,
+				"claim_token_hash": "",
+				"claimed_at":       nil,
+			}).Error; err != nil {
+				return err
+			}
+			completionErr = errVerificationTaskClaimExpired
+			return nil
+		}
 		resolvedUserAgent, resolveErr := resolveVerificationUserAgent(session.UserAgent, effectiveUserAgent)
 		if resolveErr != nil {
 			return resolveErr
 		}
-		if err := completeVerificationSessionRecord(
+		installed, err := completeVerificationSessionRecord(
 			tx,
 			&session,
 			cookieHeader,
 			resolvedUserAgent,
 			"bridge",
 			now,
-		); err != nil {
+		)
+		if err != nil {
 			return err
+		}
+		if !installed {
+			completionErr = errVerificationSessionSuperseded
+			fields := canceledVerificationTaskFields()
+			fields["completed_at"] = now
+			return tx.Model(&task).Updates(fields).Error
 		}
 		return tx.Model(&task).Updates(map[string]any{
 			"status":           model.VerificationTaskCompleted,
@@ -316,31 +371,55 @@ func completeVerificationSessionRecord(
 	userAgent string,
 	source string,
 	completedAt time.Time,
-) error {
+) (bool, error) {
 	if session == nil || session.Status != model.VerificationSessionPending {
-		return fmt.Errorf("verification session is not pending")
+		return false, fmt.Errorf("verification session is not pending")
 	}
 	encrypted, err := EncryptSecret(cookie)
 	if err != nil {
-		return err
+		return false, err
 	}
 	if userAgent != "" {
 		session.UserAgent = userAgent
 	}
+	ttl := session.ExpiresAt.Sub(session.CreatedAt)
+	if ttl <= 0 || ttl > time.Hour {
+		ttl = 15 * time.Minute
+	}
+	session.ExpiresAt = completedAt.Add(ttl)
 	session.CookieEncrypted = encrypted
-	session.Status = model.VerificationSessionCompleted
 	session.CompletedAt = &completedAt
 	session.Source = source
-	if err := tx.Save(session).Error; err != nil {
-		return err
+	result := tx.Model(&model.SiteAccount{}).
+		Where(
+			"id = ? AND verification_session_fence_id < ?",
+			session.SiteAccountID,
+			session.ID,
+		).
+		Updates(map[string]any{
+			"verification_cookie_encrypted": encrypted,
+			"verification_session_fence_id": session.ID,
+			"verification_user_agent":       session.UserAgent,
+			"verification_proxy_config_id":  session.ProxyConfigID,
+			"verification_clash_node":       session.ClashNode,
+			"verification_expires_at":       session.ExpiresAt,
+		})
+	if result.Error != nil {
+		return false, result.Error
 	}
-	return tx.Model(&model.SiteAccount{}).Where("id = ?", session.SiteAccountID).Updates(map[string]any{
-		"verification_cookie_encrypted": encrypted,
-		"verification_user_agent":       session.UserAgent,
-		"verification_proxy_config_id":  session.ProxyConfigID,
-		"verification_clash_node":       session.ClashNode,
-		"verification_expires_at":       session.ExpiresAt,
-	}).Error
+	if result.RowsAffected != 1 {
+		session.Status = model.VerificationSessionSuperseded
+		session.CookieEncrypted = ""
+		if err := tx.Save(session).Error; err != nil {
+			return false, err
+		}
+		return false, nil
+	}
+	session.Status = model.VerificationSessionCompleted
+	if err := tx.Save(session).Error; err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 func verificationBridgePairingByToken(
@@ -359,6 +438,9 @@ func verificationBridgePairingByToken(
 	}
 	if pairing.RevokedAt != nil || time.Now().After(pairing.ExpiresAt) {
 		return nil, fmt.Errorf("verification bridge pairing expired or revoked")
+	}
+	if pairing.SiteAccountID <= 0 {
+		return nil, fmt.Errorf("verification bridge pairing has no account scope")
 	}
 	now := time.Now()
 	if err := db.GetDB().WithContext(ctx).Model(&pairing).
@@ -388,11 +470,20 @@ func verificationCookieHeader(
 		return "", fmt.Errorf("verification cookies must contain 1 to %d entries", verificationCookieMaxCount)
 	}
 	targetHost = strings.ToLower(strings.TrimSpace(targetHost))
-	values := make(map[string]string, len(cookies))
+	type selectedCookie struct {
+		value  string
+		domain string
+		path   string
+	}
+	values := make(map[string][]selectedCookie, len(cookies))
+	scopes := make(map[string]map[string]string, len(cookies))
 	for _, cookie := range cookies {
 		name := strings.TrimSpace(cookie.Name)
 		if !validCookieName(name) || strings.ContainsAny(cookie.Value, "\r\n;") {
 			return "", fmt.Errorf("invalid verification cookie")
+		}
+		if !verificationCookieAllowed(name) {
+			continue
 		}
 		domain := strings.TrimPrefix(strings.ToLower(strings.TrimSpace(cookie.Domain)), ".")
 		if domain == "" {
@@ -405,7 +496,28 @@ func verificationCookieHeader(
 		if path != "" && !strings.HasPrefix(path, "/") {
 			return "", fmt.Errorf("invalid verification cookie path")
 		}
-		values[name] = cookie.Value
+		if path == "" {
+			path = "/"
+		}
+		scopeKey := domain + "\x00" + path
+		if scopes[name] == nil {
+			scopes[name] = make(map[string]string)
+		}
+		if existing, ok := scopes[name][scopeKey]; ok {
+			if existing != cookie.Value {
+				return "", fmt.Errorf("verification cookie %q has conflicting values for the same scope", name)
+			}
+			continue
+		}
+		scopes[name][scopeKey] = cookie.Value
+		values[name] = append(values[name], selectedCookie{
+			value:  cookie.Value,
+			domain: domain,
+			path:   path,
+		})
+	}
+	if len(values) == 0 {
+		return "", fmt.Errorf("verification cookies do not contain a supported Cloudflare credential")
 	}
 	names := make([]string, 0, len(values))
 	for name := range values {
@@ -414,13 +526,37 @@ func verificationCookieHeader(
 	sort.Strings(names)
 	parts := make([]string, 0, len(names))
 	for _, name := range names {
-		parts = append(parts, name+"="+values[name])
+		selected := values[name]
+		sort.SliceStable(selected, func(i, j int) bool {
+			if len(selected[i].path) != len(selected[j].path) {
+				return len(selected[i].path) > len(selected[j].path)
+			}
+			leftExact := selected[i].domain == targetHost
+			rightExact := selected[j].domain == targetHost
+			if leftExact != rightExact {
+				return leftExact
+			}
+			if len(selected[i].domain) != len(selected[j].domain) {
+				return len(selected[i].domain) > len(selected[j].domain)
+			}
+			return selected[i].value < selected[j].value
+		})
+		for _, cookie := range selected {
+			parts = append(parts, name+"="+cookie.value)
+		}
 	}
 	header := strings.Join(parts, "; ")
 	if len(header) > verificationCookieMaxBytes {
 		return "", fmt.Errorf("verification cookie header is too large")
 	}
 	return header, nil
+}
+
+func verificationCookieAllowed(name string) bool {
+	name = strings.TrimSpace(name)
+	return name == "cf_clearance" ||
+		name == "__cf_bm" ||
+		strings.HasPrefix(name, "cf_chl_")
 }
 
 func validCookieName(value string) bool {
@@ -475,8 +611,11 @@ func activeVerificationPairing(
 	if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&pairing, id).Error; err != nil {
 		return nil, fmt.Errorf("verification bridge is not paired")
 	}
-	if pairing.RevokedAt != nil || now.After(pairing.ExpiresAt) {
+	if pairing.RevokedAt != nil || !pairing.ExpiresAt.After(now) {
 		return nil, fmt.Errorf("verification bridge pairing expired or revoked")
+	}
+	if pairing.SiteAccountID <= 0 {
+		return nil, fmt.Errorf("verification bridge pairing has no account scope")
 	}
 	return &pairing, nil
 }

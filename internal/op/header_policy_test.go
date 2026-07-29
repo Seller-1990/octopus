@@ -179,6 +179,17 @@ func TestApplyHeaderPolicyExplicitEmptyListDeniesAllClientHeaders(t *testing.T) 
 	}
 }
 
+func TestApplyHeaderPolicyExplicitlyClearsUserAgent(t *testing.T) {
+	outbound := http.Header{"User-Agent": []string{"inherited-agent"}}
+	ApplyHeaderPolicy(outbound, nil, nil, model.ResolvedHeaderPolicy{
+		UserAgentConfigured: true,
+		UserAgent:           "",
+	})
+	if values, ok := outbound["User-Agent"]; ok || len(values) != 0 {
+		t.Fatalf("explicit empty user-agent should remove the inherited value: %#v", outbound)
+	}
+}
+
 func TestResolveHeaderPolicyPreservesExplicitEmptyAllowList(t *testing.T) {
 	ctx := setupBackupTestDB(t)
 	if _, err := HeaderPolicyUpsert(ctx, model.HeaderPolicy{
@@ -273,6 +284,50 @@ func TestApplyHeaderPolicyDropsInvalidLegacyValues(t *testing.T) {
 	}
 	if outbound.Get("X-Bad") != "" || outbound.Get("Authorization") != "" {
 		t.Fatalf("unsafe legacy header was applied: %#v", outbound)
+	}
+}
+
+func TestApplyHeaderPolicyPreservesGeminiCredentialAcrossEveryPolicyLayer(t *testing.T) {
+	outbound := http.Header{"X-Goog-Api-Key": []string{"trusted-channel-key"}}
+	client := http.Header{"X-Goog-Api-Key": []string{"client-key"}}
+	legacy := []model.CustomHeader{{
+		HeaderKey:   "X-Goog-Api-Key",
+		HeaderValue: "legacy-key",
+	}}
+	ApplyHeaderPolicy(outbound, client, legacy, model.ResolvedHeaderPolicy{
+		ForwardClientHeaders: true,
+		AllowedClientHeaders: []string{"*"},
+		SetHeaders: []model.CustomHeader{{
+			HeaderKey:   "X-Goog-Api-Key",
+			HeaderValue: "policy-key",
+		}},
+		UnsetHeaders: []string{"X-Goog-Api-Key"},
+	})
+
+	if got := outbound.Get("X-Goog-Api-Key"); got != "trusted-channel-key" {
+		t.Fatalf("Gemini credential was overridden or removed: %q", got)
+	}
+}
+
+func TestHeaderPolicyFiltersProtectedGeminiCredentialFromUnset(t *testing.T) {
+	ctx := setupBackupTestDB(t)
+	saved, err := HeaderPolicyUpsert(ctx, model.HeaderPolicy{
+		Scope:        model.HeaderPolicyScopeGlobal,
+		Enabled:      true,
+		UnsetHeaders: []string{"X-Goog-Api-Key", "X-Optional"},
+	})
+	if err != nil {
+		t.Fatalf("HeaderPolicyUpsert failed: %v", err)
+	}
+	if slices.ContainsFunc(saved.UnsetHeaders, func(value string) bool {
+		return strings.EqualFold(value, "X-Goog-Api-Key")
+	}) {
+		t.Fatalf("protected Gemini credential remained in unset list: %#v", saved.UnsetHeaders)
+	}
+	if !slices.ContainsFunc(saved.UnsetHeaders, func(value string) bool {
+		return strings.EqualFold(value, "X-Optional")
+	}) {
+		t.Fatalf("ordinary unset header was lost: %#v", saved.UnsetHeaders)
 	}
 }
 

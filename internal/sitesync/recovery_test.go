@@ -122,7 +122,7 @@ func TestRunSiteOperationWithRecoveryReportsVerificationPersistenceFailure(t *te
 	}
 }
 
-func TestRunSiteOperationWithRecoveryLearnsDirectAfterProxyFailure(t *testing.T) {
+func TestRunSiteOperationWithRecoveryDoesNotReplacePreferredPathWithDirectFallback(t *testing.T) {
 	ctx := setupProjectTestDB(t)
 	siteRecord, account := createRecoveryFixture(t, ctx)
 	proxy := model.ProxyConfiguration{
@@ -163,8 +163,8 @@ func TestRunSiteOperationWithRecoveryLearnsDirectAfterProxyFailure(t *testing.T)
 	if err := dbpkg.GetDB().WithContext(ctx).First(&reloaded, siteRecord.ID).Error; err != nil {
 		t.Fatalf("reload site: %v", err)
 	}
-	if reloaded.PreferredProxyConfigID != nil || reloaded.PreferredClashNode != "" {
-		t.Fatalf("direct success did not clear failed preferred proxy: %+v", reloaded)
+	if reloaded.PreferredProxyConfigID == nil || *reloaded.PreferredProxyConfigID != proxy.ID {
+		t.Fatalf("direct fallback replaced the learned proxy preference: %+v", reloaded)
 	}
 }
 
@@ -235,6 +235,137 @@ func TestRunSiteOperationWithRecoveryUsesProxyEndpointWhenControllerIsUnavailabl
 		*attempts[0].ClashControllerID != controller.ID ||
 		!strings.Contains(attempts[0].Message, "controller unavailable") {
 		t.Fatalf("controller outage fallback was not explicitly diagnosed: %+v", attempts)
+	}
+}
+
+func TestBuildSiteRecoveryPathsKeepsConfiguredProxyBeforeDirect(t *testing.T) {
+	ctx := setupProjectTestDB(t)
+	siteRecord, account := createRecoveryFixture(t, ctx)
+	proxy := model.ProxyConfiguration{
+		Name:    "configured-proxy",
+		URL:     "http://127.0.0.1:18083",
+		Enabled: true,
+	}
+	if err := op.ProxyConfigurationCreate(&proxy, ctx); err != nil {
+		t.Fatalf("create proxy: %v", err)
+	}
+	siteRecord.ProxyMode = model.ProxyUsageModePool
+	siteRecord.ProxyConfigID = &proxy.ID
+
+	paths, err := buildSiteRecoveryPaths(ctx, &siteRecord, &account)
+	if err != nil {
+		t.Fatalf("build recovery paths: %v", err)
+	}
+	if len(paths) < 2 ||
+		paths[0].proxyMode != model.ProxyUsageModePool ||
+		paths[0].proxyConfigID == nil ||
+		*paths[0].proxyConfigID != proxy.ID ||
+		paths[1].proxyMode != model.ProxyUsageModeDirect {
+		t.Fatalf("configured proxy must precede direct fallback: %+v", paths)
+	}
+
+	if err := dbpkg.GetDB().WithContext(ctx).Model(&model.ProxyConfiguration{}).
+		Where("id = ?", proxy.ID).
+		Update("enabled", false).Error; err != nil {
+		t.Fatalf("disable proxy: %v", err)
+	}
+	paths, err = buildSiteRecoveryPaths(ctx, &siteRecord, &account)
+	if err != nil {
+		t.Fatalf("build paths with disabled current proxy: %v", err)
+	}
+	if len(paths) == 0 || paths[0].proxyMode != model.ProxyUsageModeDirect {
+		t.Fatalf("disabled current proxy should be skipped: %+v", paths)
+	}
+}
+
+func TestBuildSiteRecoveryPathsKeepsExplicitPathAheadOfLearnedPreference(t *testing.T) {
+	ctx := setupProjectTestDB(t)
+	siteRecord, account := createRecoveryFixture(t, ctx)
+	explicitProxy := model.ProxyConfiguration{
+		Name: "explicit-proxy", URL: "http://127.0.0.1:18086", Enabled: true,
+	}
+	learnedProxy := model.ProxyConfiguration{
+		Name: "learned-proxy", URL: "http://127.0.0.1:18087", Enabled: true,
+	}
+	if err := op.ProxyConfigurationCreate(&explicitProxy, ctx); err != nil {
+		t.Fatalf("create explicit proxy: %v", err)
+	}
+	if err := op.ProxyConfigurationCreate(&learnedProxy, ctx); err != nil {
+		t.Fatalf("create learned proxy: %v", err)
+	}
+	account.ProxyMode = model.ProxyUsageModePool
+	account.ProxyConfigID = &explicitProxy.ID
+	account.PreferredProxyConfigID = &learnedProxy.ID
+
+	paths, err := buildSiteRecoveryPaths(ctx, &siteRecord, &account)
+	if err != nil {
+		t.Fatalf("build recovery paths: %v", err)
+	}
+	if len(paths) < 2 ||
+		paths[0].proxyConfigID == nil || *paths[0].proxyConfigID != explicitProxy.ID ||
+		paths[1].proxyConfigID == nil || *paths[1].proxyConfigID != learnedProxy.ID {
+		t.Fatalf("explicit path must precede learned preference: %+v", paths)
+	}
+}
+
+func TestLearnSiteRecoveryPathBootstrapsExplicitAccountOverride(t *testing.T) {
+	ctx := setupProjectTestDB(t)
+	siteRecord, account := createRecoveryFixture(t, ctx)
+	proxy := model.ProxyConfiguration{
+		Name: "account-bootstrap-proxy", URL: "http://127.0.0.1:18088", Enabled: true,
+	}
+	if err := op.ProxyConfigurationCreate(&proxy, ctx); err != nil {
+		t.Fatalf("create proxy: %v", err)
+	}
+	account.ProxyMode = model.ProxyUsageModePool
+	account.ProxyConfigID = &proxy.ID
+
+	if err := learnSiteRecoveryPath(ctx, &siteRecord, &account, siteRecoveryPath{
+		proxyMode:     model.ProxyUsageModePool,
+		proxyConfigID: &proxy.ID,
+	}); err != nil {
+		t.Fatalf("learn account path: %v", err)
+	}
+	var reloaded model.SiteAccount
+	if err := dbpkg.GetDB().WithContext(ctx).First(&reloaded, account.ID).Error; err != nil {
+		t.Fatalf("reload account: %v", err)
+	}
+	if reloaded.PreferredProxyConfigID == nil || *reloaded.PreferredProxyConfigID != proxy.ID {
+		t.Fatalf("account preference did not bootstrap: %+v", reloaded)
+	}
+}
+
+func TestBuildSiteRecoveryPathsFallsBackFromUnavailableAccountPreferenceToSite(t *testing.T) {
+	ctx := setupProjectTestDB(t)
+	siteRecord, account := createRecoveryFixture(t, ctx)
+	accountProxy := model.ProxyConfiguration{
+		Name: "disabled-account-proxy", URL: "http://127.0.0.1:18084", Enabled: true,
+	}
+	siteProxy := model.ProxyConfiguration{
+		Name: "healthy-site-proxy", URL: "http://127.0.0.1:18085", Enabled: true,
+	}
+	if err := op.ProxyConfigurationCreate(&accountProxy, ctx); err != nil {
+		t.Fatalf("create account proxy: %v", err)
+	}
+	if err := op.ProxyConfigurationCreate(&siteProxy, ctx); err != nil {
+		t.Fatalf("create site proxy: %v", err)
+	}
+	account.PreferredProxyConfigID = &accountProxy.ID
+	siteRecord.PreferredProxyConfigID = &siteProxy.ID
+	if err := dbpkg.GetDB().WithContext(ctx).Model(&model.ProxyConfiguration{}).
+		Where("id = ?", accountProxy.ID).
+		Update("enabled", false).Error; err != nil {
+		t.Fatalf("disable account preferred proxy: %v", err)
+	}
+
+	paths, err := buildSiteRecoveryPaths(ctx, &siteRecord, &account)
+	if err != nil {
+		t.Fatalf("build recovery paths: %v", err)
+	}
+	if len(paths) == 0 ||
+		paths[0].proxyConfigID == nil ||
+		*paths[0].proxyConfigID != siteProxy.ID {
+		t.Fatalf("site preference did not replace unavailable account override: %+v", paths)
 	}
 }
 

@@ -111,6 +111,113 @@ func TestHandlerAllowLossyRecordsProtocolWarnings(t *testing.T) {
 	}
 }
 
+func TestSetProtocolWarningHeaderClearsPreviousCandidateWarning(t *testing.T) {
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+
+	setProtocolWarningHeader(c, []string{"lossy route"})
+	if got := recorder.Header().Get("X-Octopus-Warning"); got != "lossy route" {
+		t.Fatalf("warning header = %q", got)
+	}
+	setProtocolWarningHeader(c, nil)
+	if got := recorder.Header().Get("X-Octopus-Warning"); got != "" {
+		t.Fatalf("warning header leaked across candidates: %q", got)
+	}
+}
+
+func TestCandidateHeaderPolicyAppliesToSpecialRelayTransports(t *testing.T) {
+	ctx := setupRelayTestDB(t)
+	const (
+		canonicalModelID = 606
+		routeCandidateID = 707
+	)
+	if _, err := op.HeaderPolicyUpsert(ctx, model.HeaderPolicy{
+		Scope:   model.HeaderPolicyScopeCanonicalModel,
+		ScopeID: canonicalModelID,
+		Enabled: true,
+		SetHeaders: []model.CustomHeader{{
+			HeaderKey:   "X-Route-Scope",
+			HeaderValue: "canonical",
+		}},
+	}); err != nil {
+		t.Fatalf("create canonical header policy: %v", err)
+	}
+	if _, err := op.HeaderPolicyUpsert(ctx, model.HeaderPolicy{
+		Scope:   model.HeaderPolicyScopeRouteCandidate,
+		ScopeID: routeCandidateID,
+		Enabled: true,
+		SetHeaders: []model.CustomHeader{{
+			HeaderKey:   "X-Route-Scope",
+			HeaderValue: "candidate",
+		}},
+	}); err != nil {
+		t.Fatalf("create candidate header policy: %v", err)
+	}
+
+	channel := &model.Channel{ID: 808}
+	compactHeaders := http.Header{}
+	compactPolicy := copyProxyHeaders(
+		ctx,
+		nil,
+		channel,
+		compactHeaders,
+		canonicalModelID,
+		routeCandidateID,
+	)
+	assertSpecialRouteHeaderPolicy(t, "compact", compactHeaders, compactPolicy)
+
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/images/generations", nil)
+	imageRequest := httptest.NewRequest(http.MethodPost, "https://upstream.example/images/generations", nil)
+	imagePolicy := copyHeadersToUpstream(
+		imageRequest,
+		c,
+		channel,
+		"secret",
+		"application/json",
+		false,
+		canonicalModelID,
+		routeCandidateID,
+	)
+	assertSpecialRouteHeaderPolicy(t, "images", imageRequest.Header, imagePolicy)
+
+	wsHeaders, wsPolicy := buildUpstreamWSHeadersForRoute(
+		ctx,
+		nil,
+		channel,
+		"secret",
+		canonicalModelID,
+		routeCandidateID,
+	)
+	assertSpecialRouteHeaderPolicy(t, "websocket", wsHeaders, wsPolicy)
+
+	unscopedWSHeaders := buildUpstreamWSHeaders(nil, channel, "secret")
+	if unscopedWSHeaders.Get("X-Route-Scope") != "" {
+		t.Fatalf("unscoped WebSocket headers inherited route policy: %#v", unscopedWSHeaders)
+	}
+	if wsHeaderSignature(wsHeaders) == wsHeaderSignature(unscopedWSHeaders) {
+		t.Fatal("route-scoped WebSocket headers did not isolate the connection pool")
+	}
+}
+
+func assertSpecialRouteHeaderPolicy(
+	t *testing.T,
+	transport string,
+	headers http.Header,
+	policy model.ResolvedHeaderPolicy,
+) {
+	t.Helper()
+	if got := headers.Get("X-Route-Scope"); got != "candidate" {
+		t.Fatalf("%s route header = %q, want candidate", transport, got)
+	}
+	if len(policy.Trace) != 2 ||
+		policy.Trace[0].Scope != model.HeaderPolicyScopeCanonicalModel ||
+		policy.Trace[1].Scope != model.HeaderPolicyScopeRouteCandidate {
+		t.Fatalf("%s policy trace lost canonical/candidate layers: %+v", transport, policy.Trace)
+	}
+}
+
 func TestHandlerRecordsProtocolTransformFailureStageWithoutUpstreamAttribution(t *testing.T) {
 	ctx := setupRelayTestDB(t)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

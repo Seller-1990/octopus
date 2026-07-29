@@ -41,4 +41,20 @@ func UsageMaintenanceTask() {
 	} else if deleted > 0 {
 		log.Debugf("usage aggregate retention removed %d hourly rows", deleted)
 	}
+	for batch := 0; batch < 20; batch++ {
+		deleted, err := op.UsageFactsRetention(ctx, time.Now(), 0, 1000)
+		if err != nil {
+			log.Warnf("usage facts retention failed: %v", err)
+			return
+		}
+		if deleted == 0 {
+			break
+		}
+		log.Debugf("usage facts retention removed %d aggregated rows", deleted)
+	}
+	if updated, err := op.RouteCandidateHealthRefresh(ctx, time.Now(), 5); err != nil {
+		log.Warnf("route candidate health refresh failed: %v", err)
+	} else if updated > 0 {
+		log.Debugf("route candidate health refresh updated %d candidates", updated)
+	}
 }

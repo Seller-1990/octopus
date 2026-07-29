@@ -33,6 +33,7 @@ var defaultAllowedClientHeaderPatterns = []string{
 var protectedForwardHeaders = map[string]struct{}{
 	"authorization":       {},
 	"x-api-key":           {},
+	"x-goog-api-key":      {},
 	"cookie":              {},
 	"set-cookie":          {},
 	"host":                {},
@@ -238,7 +239,10 @@ func validateHeaderPolicy(item *model.HeaderPolicy) error {
 	}
 	item.SetHeaders = normalizedHeaders
 	var err error
-	item.UnsetHeaders, err = normalizeHeaderNames(item.UnsetHeaders, true)
+	// Unset cannot disable transport-trusted authentication/protocol headers.
+	// Drop protected names at validation time as well as at application time so
+	// imported and legacy policies cannot re-enable that bypass.
+	item.UnsetHeaders, err = normalizeHeaderNames(item.UnsetHeaders, false)
 	if err != nil {
 		return err
 	}
@@ -439,6 +443,7 @@ func applyHeaderPolicyLayer(result *model.ResolvedHeaderPolicy, policy model.Hea
 		result.ForwardClientHeaders = *policy.ForwardClientHeaders
 	}
 	if policy.UserAgent != nil {
+		result.UserAgentConfigured = true
 		result.UserAgent = *policy.UserAgent
 		trace.AppliedKeys = append(trace.AppliedKeys, "User-Agent")
 	}
@@ -535,7 +540,7 @@ func ApplyHeaderPolicy(outboundHeader, clientHeader http.Header, legacy []model.
 		outboundHeader.Set(key, header.HeaderValue)
 	}
 	for _, key := range policy.UnsetHeaders {
-		if httpguts.ValidHeaderFieldName(key) {
+		if httpguts.ValidHeaderFieldName(key) && !HeaderIsProtected(key) {
 			outboundHeader.Del(key)
 		}
 	}
@@ -546,8 +551,12 @@ func ApplyHeaderPolicy(outboundHeader, clientHeader http.Header, legacy []model.
 			outboundHeader.Set(header.HeaderKey, header.HeaderValue)
 		}
 	}
-	if policy.UserAgent != "" && httpguts.ValidHeaderFieldValue(policy.UserAgent) {
-		outboundHeader.Set("User-Agent", policy.UserAgent)
+	if policy.UserAgentConfigured && httpguts.ValidHeaderFieldValue(policy.UserAgent) {
+		if policy.UserAgent == "" {
+			outboundHeader.Del("User-Agent")
+		} else {
+			outboundHeader.Set("User-Agent", policy.UserAgent)
+		}
 	}
 }
 

@@ -213,6 +213,44 @@ func TestUsageAnalyticsSeparatesRequestsAndAttempts(t *testing.T) {
 	}
 }
 
+func TestUsageDrilldownAvailabilityUsesRequestedOverlap(t *testing.T) {
+	ctx := setupSiteOpTestDB(t)
+	relayLog := model.RelayLog{
+		ID:               9_250,
+		Time:             200,
+		RequestModelName: "overlap-model",
+	}
+	if err := dbpkg.GetDB().WithContext(ctx).Create(&relayLog).Error; err != nil {
+		t.Fatalf("create relay log: %v", err)
+	}
+
+	summary, err := UsageAnalyticsSummaryGet(ctx, UsageAnalyticsFilter{
+		StartTime: 100,
+		EndTime:   300,
+		Timezone:  "UTC",
+	})
+	if err != nil {
+		t.Fatalf("summary with overlapping relay log: %v", err)
+	}
+	if !summary.DrilldownAvailable ||
+		summary.EarliestRelayLogTime == nil ||
+		*summary.EarliestRelayLogTime != relayLog.Time {
+		t.Fatalf("overlapping relay log was not drillable: %+v", summary)
+	}
+
+	summary, err = UsageAnalyticsSummaryGet(ctx, UsageAnalyticsFilter{
+		StartTime: 100,
+		EndTime:   150,
+		Timezone:  "UTC",
+	})
+	if err != nil {
+		t.Fatalf("summary without overlapping relay log: %v", err)
+	}
+	if summary.DrilldownAvailable {
+		t.Fatalf("non-overlapping relay log was marked drillable: %+v", summary)
+	}
+}
+
 func TestUsageBreakdownScansCurrentFactMetrics(t *testing.T) {
 	ctx := setupSiteOpTestDB(t)
 	now := time.Now().Unix()
@@ -782,6 +820,17 @@ func TestUsageDailyAggregateSurvivesHourlyRetentionAndServesAnalytics(t *testing
 	if len(series.Points) != 1 || series.Points[0].RequestCount != 1 {
 		t.Fatalf("unexpected aggregate series: %+v", series)
 	}
+	localFilter := filter
+	localFilter.Timezone = "Asia/Shanghai"
+	localSeries, err := UsageAnalyticsTimeseriesGet(ctx, localFilter)
+	if err != nil {
+		t.Fatalf("historical local timeseries fallback: %v", err)
+	}
+	if localSeries.Timezone != "UTC" ||
+		len(localSeries.Points) != 1 ||
+		localSeries.Points[0].RequestCount != 1 {
+		t.Fatalf("historical timeseries did not disclose UTC aggregate fallback: %+v", localSeries)
+	}
 	breakdown, err := UsageAnalyticsBreakdownGet(
 		ctx,
 		filter,
@@ -826,6 +875,205 @@ func TestUsageDailyAggregateSurvivesHourlyRetentionAndServesAnalytics(t *testing
 	}
 	if breakdown.Total != 0 || len(breakdown.Items) != 0 {
 		t.Fatalf("aggregate search did not filter rows: %+v", breakdown)
+	}
+}
+
+func TestUsageHourlyAggregateServesRecentUTCTimeseries(t *testing.T) {
+	ctx := setupSiteOpTestDB(t)
+	if err := settingRefreshCache(ctx); err != nil {
+		t.Fatalf("settingRefreshCache failed: %v", err)
+	}
+	hour := time.Now().UTC().Add(-2 * time.Hour).Truncate(time.Hour)
+	fact := model.UsageRequestFact{
+		RelayLogID:   9230,
+		Time:         hour.Add(10 * time.Minute).Unix(),
+		RequestModel: "recent-hourly-model",
+		Outcome:      model.RequestOutcomeSuccess,
+		InputTokens:  40,
+		OutputTokens: 10,
+		DurationMS:   300,
+		TokenSource:  model.UsageValueSourceReported,
+	}
+	if err := dbpkg.GetDB().WithContext(ctx).Create(&fact).Error; err != nil {
+		t.Fatalf("create recent usage fact: %v", err)
+	}
+	if processed, err := UsageAggregatePending(ctx, 100); err != nil || processed != 1 {
+		t.Fatalf("aggregate recent fact: processed=%d err=%v", processed, err)
+	}
+	if err := dbpkg.GetDB().WithContext(ctx).
+		Delete(&model.UsageRequestFact{}, "relay_log_id = ?", fact.RelayLogID).Error; err != nil {
+		t.Fatalf("delete recent source fact: %v", err)
+	}
+
+	series, err := UsageAnalyticsTimeseriesGet(ctx, UsageAnalyticsFilter{
+		StartTime: hour.Unix(),
+		EndTime:   hour.Add(time.Hour).Unix(),
+		Timezone:  "UTC",
+		Scope:     UsageMetricScopeRequest,
+	})
+	if err != nil {
+		t.Fatalf("query recent hourly aggregate: %v", err)
+	}
+	if series.Granularity != "hour" ||
+		len(series.Points) != 1 ||
+		series.Points[0].RequestCount != 1 ||
+		series.Points[0].TotalTokens != 50 {
+		t.Fatalf("hourly aggregate was not used by timeseries: %+v", series)
+	}
+}
+
+func TestUsageAggregateRetentionUsesConfiguredHourlyDays(t *testing.T) {
+	ctx := setupSiteOpTestDB(t)
+	if err := settingRefreshCache(ctx); err != nil {
+		t.Fatalf("settingRefreshCache failed: %v", err)
+	}
+	if err := SettingSetString(model.SettingKeyUsageHourlyRetentionDays, "1"); err != nil {
+		t.Fatalf("set hourly retention: %v", err)
+	}
+	oldBucket := time.Now().UTC().Add(-48 * time.Hour).Truncate(time.Hour).Unix()
+	aggregates := []model.UsageAggregate{
+		{
+			AggregateKey: "configured-retention-hour", Granularity: model.UsageAggregateHourly,
+			MetricScope: string(UsageMetricScopeRequest), BucketStart: oldBucket,
+		},
+		{
+			AggregateKey: "configured-retention-day", Granularity: model.UsageAggregateDaily,
+			MetricScope: string(UsageMetricScopeRequest), BucketStart: oldBucket,
+		},
+	}
+	if err := dbpkg.GetDB().WithContext(ctx).Create(&aggregates).Error; err != nil {
+		t.Fatalf("create retention aggregates: %v", err)
+	}
+	if deleted, err := UsageAggregateRetention(ctx, time.Now(), 0); err != nil || deleted != 1 {
+		t.Fatalf("configured retention: deleted=%d err=%v", deleted, err)
+	}
+	var hourlyCount, dailyCount int64
+	if err := dbpkg.GetDB().WithContext(ctx).Model(&model.UsageAggregate{}).
+		Where("granularity = ?", model.UsageAggregateHourly).
+		Count(&hourlyCount).Error; err != nil {
+		t.Fatalf("count hourly aggregates: %v", err)
+	}
+	if err := dbpkg.GetDB().WithContext(ctx).Model(&model.UsageAggregate{}).
+		Where("granularity = ?", model.UsageAggregateDaily).
+		Count(&dailyCount).Error; err != nil {
+		t.Fatalf("count daily aggregates: %v", err)
+	}
+	if hourlyCount != 0 || dailyCount != 1 {
+		t.Fatalf("configured retention removed wrong rows: hourly=%d daily=%d", hourlyCount, dailyCount)
+	}
+}
+
+func TestUsageFactsRetentionDeletesOnlyOldAggregatedFacts(t *testing.T) {
+	ctx := setupSiteOpTestDB(t)
+	if err := settingRefreshCache(ctx); err != nil {
+		t.Fatalf("settingRefreshCache failed: %v", err)
+	}
+	if err := SettingSetString(model.SettingKeyUsageHourlyRetentionDays, "1"); err != nil {
+		t.Fatalf("set hourly retention: %v", err)
+	}
+	aggregatedAt := time.Now()
+	oldTime := time.Now().UTC().Add(-48 * time.Hour).Unix()
+	recentTime := time.Now().UTC().Add(-2 * time.Hour).Unix()
+	requests := []model.UsageRequestFact{
+		{RelayLogID: 9301, Time: oldTime, Outcome: model.RequestOutcomeSuccess, AggregatedAt: &aggregatedAt},
+		{RelayLogID: 9302, Time: oldTime, Outcome: model.RequestOutcomeSuccess},
+		{RelayLogID: 9303, Time: recentTime, Outcome: model.RequestOutcomeSuccess, AggregatedAt: &aggregatedAt},
+	}
+	attempts := []model.UsageAttemptFact{
+		{RelayLogID: 9301, AttemptNumber: 1, Time: oldTime, Outcome: model.RequestOutcomeSuccess, AggregatedAt: &aggregatedAt},
+		{RelayLogID: 9302, AttemptNumber: 1, Time: oldTime, Outcome: model.RequestOutcomeSuccess},
+		{RelayLogID: 9303, AttemptNumber: 1, Time: recentTime, Outcome: model.RequestOutcomeSuccess, AggregatedAt: &aggregatedAt},
+	}
+	if err := dbpkg.GetDB().WithContext(ctx).Create(&requests).Error; err != nil {
+		t.Fatalf("create request facts: %v", err)
+	}
+	if err := dbpkg.GetDB().WithContext(ctx).Create(&attempts).Error; err != nil {
+		t.Fatalf("create attempt facts: %v", err)
+	}
+	daily := model.UsageAggregate{
+		AggregateKey: "facts-retention-daily",
+		Granularity:  model.UsageAggregateDaily,
+		MetricScope:  string(UsageMetricScopeRequest),
+		BucketStart:  oldTime,
+	}
+	if err := dbpkg.GetDB().WithContext(ctx).Create(&daily).Error; err != nil {
+		t.Fatalf("create daily aggregate: %v", err)
+	}
+
+	deleted, err := UsageFactsRetention(ctx, time.Now(), 0, 100)
+	if err != nil || deleted != 2 {
+		t.Fatalf("facts retention: deleted=%d err=%v", deleted, err)
+	}
+	var requestCount, attemptCount, dailyCount int64
+	if err := dbpkg.GetDB().WithContext(ctx).Model(&model.UsageRequestFact{}).Count(&requestCount).Error; err != nil {
+		t.Fatalf("count request facts: %v", err)
+	}
+	if err := dbpkg.GetDB().WithContext(ctx).Model(&model.UsageAttemptFact{}).Count(&attemptCount).Error; err != nil {
+		t.Fatalf("count attempt facts: %v", err)
+	}
+	if err := dbpkg.GetDB().WithContext(ctx).Model(&model.UsageAggregate{}).
+		Where("aggregate_key = ?", daily.AggregateKey).
+		Count(&dailyCount).Error; err != nil {
+		t.Fatalf("count daily aggregate: %v", err)
+	}
+	if requestCount != 2 || attemptCount != 2 || dailyCount != 1 {
+		t.Fatalf(
+			"retention removed pending/recent/daily data: requests=%d attempts=%d daily=%d",
+			requestCount,
+			attemptCount,
+			dailyCount,
+		)
+	}
+}
+
+func TestRelayLogCleanupWaitsForUsageBackfill(t *testing.T) {
+	ctx := setupSiteOpTestDB(t)
+	if err := settingRefreshCache(ctx); err != nil {
+		t.Fatalf("settingRefreshCache failed: %v", err)
+	}
+	if err := SettingSetString(model.SettingKeyRelayLogKeepPeriod, "1"); err != nil {
+		t.Fatalf("set relay log retention: %v", err)
+	}
+	oldTime := time.Now().Add(-48 * time.Hour).Unix()
+	logs := []model.RelayLog{
+		{ID: 9241, Time: oldTime, Outcome: model.RequestOutcomeSuccess, Success: true},
+		{ID: 9242, Time: oldTime, Outcome: model.RequestOutcomeSuccess, Success: true},
+	}
+	if err := dbpkg.GetDB().WithContext(ctx).Create(&logs).Error; err != nil {
+		t.Fatalf("create old relay logs: %v", err)
+	}
+	if err := dbpkg.GetDB().WithContext(ctx).Create(&model.UsageRequestFact{
+		RelayLogID: 9241,
+		Time:       oldTime,
+		Outcome:    model.RequestOutcomeSuccess,
+	}).Error; err != nil {
+		t.Fatalf("create existing usage fact: %v", err)
+	}
+
+	if err := relayLogCleanup(ctx); err != nil {
+		t.Fatalf("first relay cleanup: %v", err)
+	}
+	var remaining []int64
+	if err := dbpkg.GetDB().WithContext(ctx).Model(&model.RelayLog{}).
+		Order("id ASC").
+		Pluck("id", &remaining).Error; err != nil {
+		t.Fatalf("load remaining relay logs: %v", err)
+	}
+	if !slices.Equal(remaining, []int64{9242}) {
+		t.Fatalf("cleanup deleted a log before usage backfill: %v", remaining)
+	}
+	if processed, err := UsageFactsBackfill(ctx, 100); err != nil || processed != 1 {
+		t.Fatalf("backfill retained relay log: processed=%d err=%v", processed, err)
+	}
+	if err := relayLogCleanup(ctx); err != nil {
+		t.Fatalf("second relay cleanup: %v", err)
+	}
+	var count int64
+	if err := dbpkg.GetDB().WithContext(ctx).Model(&model.RelayLog{}).Count(&count).Error; err != nil {
+		t.Fatalf("count final relay logs: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("backfilled relay log was not cleaned up: %d", count)
 	}
 }
 

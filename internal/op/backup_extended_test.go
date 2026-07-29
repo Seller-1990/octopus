@@ -6,7 +6,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -39,8 +41,13 @@ func TestDBExportImportExtendedDataRoundTrip(t *testing.T) {
 	if dump.Version != dbDumpVersion {
 		t.Fatalf("dump version = %d, want %d", dump.Version, dbDumpVersion)
 	}
-	if len(dump.ClashControllers) != 1 || dump.ClashControllers[0].SecretEncrypted != seed.controller.SecretEncrypted {
-		t.Fatalf("clash controller secret was not exported in encrypted form: %+v", dump.ClashControllers)
+	if len(dump.ClashControllers) != 1 || dump.ClashControllers[0].SecretEncrypted != "" {
+		t.Fatalf("ordinary backup exported a controller secret: %+v", dump.ClashControllers)
+	}
+	for _, setting := range dump.Settings {
+		if setting.Key == model.SettingKeyJWTSecret || setting.Key == model.SettingKeyWebDAVPassword {
+			t.Fatalf("ordinary backup exported sensitive setting %s", setting.Key)
+		}
 	}
 	if len(dump.SiteAccounts) != 1 ||
 		dump.SiteAccounts[0].VerificationCookieEncrypted != "" ||
@@ -61,8 +68,8 @@ func TestDBExportImportExtendedDataRoundTrip(t *testing.T) {
 	if err := json.Unmarshal(payload, &restored); err != nil {
 		t.Fatalf("unmarshal dump failed: %v", err)
 	}
-	if len(restored.ClashControllers) != 1 || restored.ClashControllers[0].SecretEncrypted != seed.controller.SecretEncrypted {
-		t.Fatalf("encrypted clash secret did not survive JSON round trip: %+v", restored.ClashControllers)
+	if len(restored.ClashControllers) != 1 || restored.ClashControllers[0].SecretEncrypted != "" {
+		t.Fatalf("controller secret reappeared in JSON round trip: %+v", restored.ClashControllers)
 	}
 
 	_ = dbpkg.Close()
@@ -98,6 +105,11 @@ func TestDBExportImportExtendedDataRoundTrip(t *testing.T) {
 	}
 	if result.RowsAffected["header_policies"] != 3 {
 		t.Fatalf("header_policies rows affected = %d, want 3", result.RowsAffected["header_policies"])
+	}
+	if len(result.Warnings) != 1 ||
+		result.Warnings[0].Code != "credential_not_restored" ||
+		result.Warnings[0].ResourceName != seed.controller.Name {
+		t.Fatalf("missing controller credential warning: %+v", result.Warnings)
 	}
 
 	assertExtendedBackupRelations(t, seed)
@@ -422,6 +434,109 @@ func TestDBImportRejectsChildRowsWithoutImportedParents(t *testing.T) {
 	}
 	if count != 0 {
 		t.Fatalf("orphaned child attached to unrelated target channel: %d", count)
+	}
+}
+
+func TestDBImportRejectsUnmappedPositiveObservabilityDimensions(t *testing.T) {
+	tests := []struct {
+		name  string
+		field string
+		dump  *model.DBDump
+	}{
+		{
+			name:  "relay log channel",
+			field: "import relay_logs: channel_id 999 has no imported parent",
+			dump: &model.DBDump{
+				Version:     dbDumpVersion,
+				IncludeLogs: true,
+				Sites: []model.Site{{
+					ID: 1, Name: "rollback-site", Platform: model.SitePlatformNewAPI,
+					BaseURL: "https://rollback.example.com", Enabled: true,
+				}},
+				RelayLogs: []model.RelayLog{{
+					ID: 10, Time: 10, ChannelId: 999, Outcome: model.RequestOutcomeSuccess,
+				}},
+			},
+		},
+		{
+			name:  "usage request site",
+			field: "import usage_request_facts: site_id 999 has no imported parent",
+			dump: &model.DBDump{
+				Version:      dbDumpVersion,
+				IncludeStats: true,
+				UsageRequestFacts: []model.UsageRequestFact{{
+					RelayLogID: 10, Time: 10, SiteID: 999, Outcome: model.RequestOutcomeSuccess,
+				}},
+			},
+		},
+		{
+			name:  "usage aggregate api key",
+			field: "import usage_aggregates: api_key_id 999 has no imported parent",
+			dump: &model.DBDump{
+				Version:      dbDumpVersion,
+				IncludeStats: true,
+				UsageAggregates: []model.UsageAggregate{{
+					AggregateKey: "source", Granularity: model.UsageAggregateHourly,
+					MetricScope: string(UsageMetricScopeRequest), BucketStart: 10, APIKeyID: 999,
+				}},
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			ctx := setupBackupTestDB(t)
+			if _, err := DBImportIncremental(ctx, test.dump); err == nil ||
+				!strings.Contains(err.Error(), test.field) {
+				t.Fatalf("unmapped positive dimension was not rejected: %v", err)
+			}
+			var siteCount int64
+			if err := dbpkg.GetDB().WithContext(ctx).Model(&model.Site{}).
+				Count(&siteCount).Error; err != nil {
+				t.Fatalf("count sites after rollback: %v", err)
+			}
+			if siteCount != 0 {
+				t.Fatalf("failed import left partial parent rows: %d", siteCount)
+			}
+		})
+	}
+
+	targetID, err := remapImportID("usage_request_facts", "site_id", 0, nil)
+	if err != nil || targetID != 0 {
+		t.Fatalf("zero optional dimension should remain zero: id=%d err=%v", targetID, err)
+	}
+}
+
+func TestDBImportDoesNotMutateReusableLegacyDump(t *testing.T) {
+	ctx := setupBackupTestDB(t)
+	proxyURL := "http://127.0.0.1:18888"
+	dump := &model.DBDump{
+		Version: dbDumpVersion,
+		Channels: []model.Channel{{
+			ID:           100,
+			Name:         "legacy-proxy-channel",
+			Enabled:      true,
+			Proxy:        true,
+			ChannelProxy: &proxyURL,
+		}},
+	}
+	before := *dump
+	before.Channels = append([]model.Channel(nil), dump.Channels...)
+	before.ProxyConfigurations = append(
+		[]model.ProxyConfiguration(nil),
+		dump.ProxyConfigurations...,
+	)
+
+	if _, err := DBImportIncremental(ctx, dump); err != nil {
+		t.Fatalf("first legacy import failed: %v", err)
+	}
+	if !reflect.DeepEqual(*dump, before) {
+		t.Fatal("legacy import mutated the caller-owned dump")
+	}
+	if _, err := DBImportIncremental(ctx, dump); err != nil {
+		t.Fatalf("reusing the same legacy dump failed: %v", err)
+	}
+	if !reflect.DeepEqual(*dump, before) {
+		t.Fatal("second legacy import mutated the caller-owned dump")
 	}
 }
 
@@ -757,8 +872,12 @@ func TestDBExportZipIncludesExtendedTablesWithoutVerificationState(t *testing.T)
 	}
 
 	controllers := readZipFile(t, reader, "clash_controllers.json")
-	if !strings.Contains(controllers, seed.controller.SecretEncrypted) {
-		t.Fatal("ZIP did not preserve the encrypted Clash secret")
+	if strings.Contains(controllers, seed.controller.SecretEncrypted) {
+		t.Fatal("ZIP exported the encrypted Clash secret")
+	}
+	settings := readZipFile(t, reader, "settings.json")
+	if strings.Contains(settings, "source-backup-jwt-secret") {
+		t.Fatal("ZIP exported the JWT secret")
 	}
 	accounts := readZipFile(t, reader, "site_accounts.json")
 	if strings.Contains(accounts, "verification-cookie") || strings.Contains(accounts, "verification-agent") {
@@ -984,6 +1103,254 @@ func TestDBImportZipStatsOnlyRemapsCollidingUsageFacts(t *testing.T) {
 		second.RowsAffected["usage_attempt_facts"] != 0 {
 		t.Fatalf("stats-only import was not idempotent: %+v", second.RowsAffected)
 	}
+}
+
+func TestDBImportUsageFactsRemainIdempotentAfterAggregation(t *testing.T) {
+	ctx := setupBackupTestDB(t)
+	now := time.Now().UTC().Truncate(time.Second).Unix()
+	dump := &model.DBDump{
+		Version:      dbDumpVersion,
+		IncludeStats: true,
+		UsageRequestFacts: []model.UsageRequestFact{{
+			RelayLogID:   42,
+			Time:         now,
+			RequestModel: "aggregate-lifecycle",
+			Outcome:      model.RequestOutcomeSuccess,
+			InputTokens:  3,
+		}},
+		UsageAttemptFacts: []model.UsageAttemptFact{{
+			RelayLogID:    42,
+			AttemptNumber: 1,
+			Time:          now,
+			RequestModel:  "aggregate-lifecycle",
+			Status:        model.AttemptSuccess,
+			Outcome:       model.RequestOutcomeSuccess,
+			InputTokens:   3,
+		}},
+	}
+
+	first, err := DBImportIncremental(ctx, dump)
+	if err != nil {
+		t.Fatalf("first import failed: %v", err)
+	}
+	if first.RowsAffected["usage_request_facts"] != 1 ||
+		first.RowsAffected["usage_attempt_facts"] != 1 {
+		t.Fatalf("facts were not imported: %+v", first.RowsAffected)
+	}
+	if processed, err := UsageAggregatePending(ctx, 100); err != nil || processed != 2 {
+		t.Fatalf("aggregate imported facts: processed=%d err=%v", processed, err)
+	}
+
+	second, err := DBImportIncremental(ctx, dump)
+	if err != nil {
+		t.Fatalf("second import after aggregation failed: %v", err)
+	}
+	if second.RowsAffected["usage_request_facts"] != 0 ||
+		second.RowsAffected["usage_attempt_facts"] != 0 {
+		t.Fatalf("aggregation changed fact identity: %+v", second.RowsAffected)
+	}
+	if processed, err := UsageAggregatePending(ctx, 100); err != nil || processed != 0 {
+		t.Fatalf("duplicate facts were queued after re-import: processed=%d err=%v", processed, err)
+	}
+}
+
+func TestDBImportUsageAggregateSnapshotsAreIdempotent(t *testing.T) {
+	ctx := setupBackupTestDB(t)
+	aggregatedAt := time.Now().UTC()
+	fact := model.UsageRequestFact{
+		RelayLogID:       501,
+		Time:             aggregatedAt.Unix(),
+		RequestModel:     "snapshot-idempotency",
+		Outcome:          model.RequestOutcomeSuccess,
+		InputTokens:      7,
+		OutputTokens:     11,
+		DurationMS:       250,
+		TokenSource:      model.UsageValueSourceReported,
+		PriceSource:      model.PriceQuoteSourceGlobal,
+		PriceConvertible: true,
+		AggregatedAt:     &aggregatedAt,
+	}
+	aggregates := usageAggregateSnapshotsForRequestFact(fact)
+	dump := &model.DBDump{
+		Version:           dbDumpVersion,
+		IncludeStats:      true,
+		UsageRequestFacts: []model.UsageRequestFact{fact},
+		UsageAggregates:   aggregates,
+	}
+
+	first, err := DBImportIncremental(ctx, dump)
+	if err != nil {
+		t.Fatalf("first snapshot import failed: %v", err)
+	}
+	if first.RowsAffected["usage_request_facts"] != 1 ||
+		first.RowsAffected["usage_aggregates"] != 2 {
+		t.Fatalf("snapshot rows were not imported: %+v", first.RowsAffected)
+	}
+	if processed, err := UsageAggregatePending(ctx, 100); err != nil || processed != 0 {
+		t.Fatalf("snapshot-backed fact was queued again: processed=%d err=%v", processed, err)
+	}
+
+	second, err := DBImportIncremental(ctx, dump)
+	if err != nil {
+		t.Fatalf("second snapshot import failed: %v", err)
+	}
+	if second.RowsAffected["usage_request_facts"] != 0 ||
+		second.RowsAffected["usage_aggregates"] != 0 {
+		t.Fatalf("snapshot import was not idempotent: %+v", second.RowsAffected)
+	}
+}
+
+func TestDBImportRejectsConflictingUsageAggregateSnapshots(t *testing.T) {
+	for _, format := range []string{"json", "zip"} {
+		t.Run(format, func(t *testing.T) {
+			ctx := setupBackupTestDB(t)
+			conn := dbpkg.GetDB().WithContext(ctx)
+			aggregatedAt := time.Now().UTC()
+			fact := model.UsageRequestFact{
+				RelayLogID:   601,
+				Time:         aggregatedAt.Unix(),
+				RequestModel: "snapshot-conflict",
+				Outcome:      model.RequestOutcomeSuccess,
+				InputTokens:  13,
+				AggregatedAt: &aggregatedAt,
+			}
+			aggregates := usageAggregateSnapshotsForRequestFact(fact)
+			conflictingTarget := aggregates[0]
+			conflictingTarget.InputTokens++
+			mustCreateBackupRow(t, conn, &conflictingTarget)
+
+			var err error
+			switch format {
+			case "json":
+				_, err = DBImportIncremental(ctx, &model.DBDump{
+					Version:           dbDumpVersion,
+					IncludeStats:      true,
+					UsageRequestFacts: []model.UsageRequestFact{fact},
+					UsageAggregates:   aggregates,
+				})
+			case "zip":
+				payload := buildBackupImportZip(t, backupZipManifest{
+					Version:      dbDumpVersion,
+					ExportedAt:   "2026-07-29T00:00:00Z",
+					IncludeStats: true,
+					Format:       "zip-v1",
+				}, nil, map[string]string{
+					"usage_request_facts.ndjson": encodeBackupNDJSON(t, []model.UsageRequestFact{fact}),
+					"usage_aggregates.ndjson":    encodeBackupNDJSON(t, aggregates),
+				})
+				_, err = DBImportZip(ctx, bytes.NewReader(payload), int64(len(payload)))
+			}
+			if err == nil || !strings.Contains(err.Error(), "conflicts with different destination metrics") {
+				t.Fatalf("conflicting aggregate snapshot was accepted: %v", err)
+			}
+			var factCount int64
+			if countErr := conn.Model(&model.UsageRequestFact{}).Count(&factCount).Error; countErr != nil {
+				t.Fatalf("count request facts: %v", countErr)
+			}
+			if factCount != 0 {
+				t.Fatalf("failed aggregate import left facts behind: %d", factCount)
+			}
+			var reloaded model.UsageAggregate
+			if reloadErr := conn.First(&reloaded, "aggregate_key = ?", conflictingTarget.AggregateKey).Error; reloadErr != nil {
+				t.Fatalf("reload conflicting target: %v", reloadErr)
+			}
+			if reloaded.InputTokens != conflictingTarget.InputTokens {
+				t.Fatalf("conflicting target was overwritten: %+v", reloaded)
+			}
+		})
+	}
+}
+
+func TestDBImportRejectsPartialAggregateCoverageForProcessedFact(t *testing.T) {
+	ctx := setupBackupTestDB(t)
+	aggregatedAt := time.Now().UTC()
+	fact := model.UsageRequestFact{
+		RelayLogID:   701,
+		Time:         aggregatedAt.Unix(),
+		RequestModel: "partial-snapshot",
+		Outcome:      model.RequestOutcomeSuccess,
+		AggregatedAt: &aggregatedAt,
+	}
+	aggregates := usageAggregateSnapshotsForRequestFact(fact)
+	if _, err := DBImportIncremental(ctx, &model.DBDump{
+		Version:           dbDumpVersion,
+		IncludeStats:      true,
+		UsageRequestFacts: []model.UsageRequestFact{fact},
+		UsageAggregates:   aggregates[:1],
+	}); err == nil || !strings.Contains(err.Error(), "snapshot must contain both hourly and daily") {
+		t.Fatalf("partial aggregate coverage was accepted: %v", err)
+	}
+}
+
+func TestDBImportRejectsGlobalClashControllerGroup(t *testing.T) {
+	ctx := setupBackupTestDB(t)
+	_, err := DBImportIncremental(ctx, &model.DBDump{
+		Version: dbDumpVersion,
+		ClashControllers: []model.ClashControllerBackup{{
+			ID:        1,
+			Name:      "unsafe-global",
+			APIURL:    "http://127.0.0.1:9090",
+			ProxyURL:  "http://127.0.0.1:7890",
+			GroupName: "GLOBAL",
+			Enabled:   true,
+		}},
+	})
+	if err == nil || !strings.Contains(err.Error(), "not GLOBAL") {
+		t.Fatalf("GLOBAL Clash group import should be rejected, got %v", err)
+	}
+}
+
+func TestUsageAggregateImportFingerprintUsesPostgresStoragePrecision(t *testing.T) {
+	row := model.UsageAggregate{
+		AggregateKey: "postgres-real",
+		CostUSD:      0.123456789,
+	}
+	rounded := row
+	rounded.CostUSD = float64(float32(row.CostUSD))
+
+	sourceFingerprint, err := usageAggregateImportFingerprint(row, "postgres")
+	if err != nil {
+		t.Fatalf("fingerprint source aggregate: %v", err)
+	}
+	storedFingerprint, err := usageAggregateImportFingerprint(rounded, "postgres")
+	if err != nil {
+		t.Fatalf("fingerprint stored aggregate: %v", err)
+	}
+	if !bytes.Equal(sourceFingerprint, storedFingerprint) {
+		t.Fatal("PostgreSQL REAL rounding changed aggregate snapshot identity")
+	}
+
+	different := rounded
+	different.CostUSD += 0.01
+	differentFingerprint, err := usageAggregateImportFingerprint(different, "postgres")
+	if err != nil {
+		t.Fatalf("fingerprint different aggregate: %v", err)
+	}
+	if bytes.Equal(sourceFingerprint, differentFingerprint) {
+		t.Fatal("materially different PostgreSQL aggregate metrics were treated as identical")
+	}
+}
+
+func usageAggregateSnapshotsForRequestFact(
+	fact model.UsageRequestFact,
+) []model.UsageAggregate {
+	value := usageAggregateFactFromRequest(fact)
+	rows := make([]model.UsageAggregate, 0, 2)
+	for _, granularity := range []model.UsageAggregateGranularity{
+		model.UsageAggregateHourly,
+		model.UsageAggregateDaily,
+	} {
+		bucketStart := usageAggregateBucketStart(value.time, granularity)
+		row := newUsageAggregate(
+			usageAggregateKey(value, granularity, bucketStart),
+			value,
+			granularity,
+			bucketStart,
+		)
+		addUsageFactToAggregate(row, value)
+		rows = append(rows, *row)
+	}
+	return rows
 }
 
 func TestDBImportUsageFactsSkipOccupiedDeterministicIDs(t *testing.T) {
@@ -1263,6 +1630,45 @@ func TestDBImportZipRejectsDuplicateAndUnexpectedEntries(t *testing.T) {
 	}
 }
 
+func TestDBImportZipRejectsManifestMissingRequiredEntry(t *testing.T) {
+	tests := []struct {
+		name     string
+		manifest backupZipManifest
+		missing  string
+	}{
+		{
+			name: "logs",
+			manifest: backupZipManifest{
+				Version: dbDumpVersion, ExportedAt: "2026-07-28T00:00:00Z",
+				Format: "zip-v1", IncludeLogs: true,
+			},
+			missing: "relay_logs.ndjson",
+		},
+		{
+			name: "stats",
+			manifest: backupZipManifest{
+				Version: dbDumpVersion, ExportedAt: "2026-07-28T00:00:00Z",
+				Format: "zip-v1", IncludeStats: true,
+			},
+			missing: "usage_aggregates.ndjson",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			payload := buildBackupImportZip(t, test.manifest, nil, nil)
+			payload = removeBackupZipEntry(t, payload, test.missing)
+			ctx := setupBackupTestDB(t)
+			if _, err := DBImportZip(
+				ctx,
+				bytes.NewReader(payload),
+				int64(len(payload)),
+			); err == nil || !strings.Contains(err.Error(), "missing required entry") {
+				t.Fatalf("manifest/file mismatch was accepted: %v", err)
+			}
+		})
+	}
+}
+
 func buildBackupImportZip(
 	t *testing.T,
 	manifest backupZipManifest,
@@ -1272,6 +1678,7 @@ func buildBackupImportZip(
 	t.Helper()
 	var payload bytes.Buffer
 	writer := zip.NewWriter(&payload)
+	written := make(map[string]struct{})
 	writeJSON := func(name string, value any) {
 		t.Helper()
 		entry, err := writer.Create(name)
@@ -1281,6 +1688,7 @@ func buildBackupImportZip(
 		if err := json.NewEncoder(entry).Encode(value); err != nil {
 			t.Fatalf("encode ZIP entry %s: %v", name, err)
 		}
+		written[name] = struct{}{}
 	}
 	writeJSON("manifest.json", manifest)
 	for name, value := range jsonEntries {
@@ -1294,11 +1702,80 @@ func buildBackupImportZip(
 		if _, err := entry.Write([]byte(value)); err != nil {
 			t.Fatalf("write ZIP entry %s: %v", name, err)
 		}
+		written[name] = struct{}{}
+	}
+	required := make([]string, 0)
+	if manifest.IncludeLogs {
+		required = append(required,
+			"relay_logs.ndjson",
+			"relay_log_repair_audits.json",
+			"site_operation_attempts.ndjson",
+		)
+	}
+	if manifest.IncludeStats {
+		required = append(required,
+			"stats_total.json", "stats_daily.json", "stats_hourly.json",
+			"stats_model.json", "stats_channel.json", "stats_api_key.json",
+			"stats_site_model_hourly.json", "usage_request_facts.ndjson",
+			"usage_attempt_facts.ndjson", "usage_aggregates.ndjson",
+		)
+	}
+	for _, name := range required {
+		if _, ok := written[name]; ok {
+			continue
+		}
+		if strings.HasSuffix(name, ".json") {
+			writeJSON(name, []any{})
+			continue
+		}
+		_, err := writer.Create(name)
+		if err != nil {
+			t.Fatalf("create empty ZIP entry %s: %v", name, err)
+		}
+		written[name] = struct{}{}
 	}
 	if err := writer.Close(); err != nil {
 		t.Fatalf("close ZIP: %v", err)
 	}
 	return payload.Bytes()
+}
+
+func removeBackupZipEntry(t *testing.T, payload []byte, name string) []byte {
+	t.Helper()
+	reader, err := zip.NewReader(bytes.NewReader(payload), int64(len(payload)))
+	if err != nil {
+		t.Fatalf("open source ZIP: %v", err)
+	}
+	var result bytes.Buffer
+	writer := zip.NewWriter(&result)
+	removed := false
+	for _, file := range reader.File {
+		if file.Name == name {
+			removed = true
+			continue
+		}
+		source, err := file.Open()
+		if err != nil {
+			t.Fatalf("open source entry %s: %v", file.Name, err)
+		}
+		target, err := writer.CreateHeader(&file.FileHeader)
+		if err != nil {
+			source.Close()
+			t.Fatalf("create target entry %s: %v", file.Name, err)
+		}
+		if _, err := io.Copy(target, source); err != nil {
+			source.Close()
+			t.Fatalf("copy ZIP entry %s: %v", file.Name, err)
+		}
+		source.Close()
+	}
+	if !removed {
+		t.Fatalf("ZIP entry %s was not present", name)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("close rewritten ZIP: %v", err)
+	}
+	return result.Bytes()
 }
 
 func encodeBackupNDJSON[T any](t *testing.T, rows []T) string {
@@ -1332,7 +1809,7 @@ func seedExtendedBackupData(t *testing.T, ctx context.Context) extendedBackupSee
 		Name:            "backup-controller",
 		APIURL:          "http://127.0.0.1:9090",
 		ProxyURL:        "http://127.0.0.1:7890",
-		GroupName:       "GLOBAL",
+		GroupName:       "Octopus-Recovery",
 		SecretEncrypted: encryptedControllerSecret,
 		Enabled:         true,
 	}
@@ -1638,7 +2115,7 @@ func assertExtendedBackupRelations(t *testing.T, seed extendedBackupSeed) {
 
 	var controller model.ClashController
 	mustFindBackupRow(t, conn.Where("name = ?", seed.controller.Name), &controller)
-	if controller.ID == seed.controller.ID || controller.SecretEncrypted != seed.controller.SecretEncrypted {
+	if controller.ID == seed.controller.ID || controller.SecretEncrypted != "" || controller.Enabled {
 		t.Fatalf("controller collision/remap failed: %+v", controller)
 	}
 	var proxy model.ProxyConfiguration

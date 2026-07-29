@@ -230,14 +230,20 @@ func manualCompleteVerificationSession(c *gin.Context) {
 
 func createVerificationPairing(c *gin.Context) {
 	var request struct {
-		Name    string `json:"name" binding:"required"`
-		TTLDays int    `json:"ttl_days,omitempty"`
+		Name          string `json:"name" binding:"required"`
+		TTLDays       int    `json:"ttl_days,omitempty"`
+		SiteAccountID int    `json:"site_account_id" binding:"required"`
 	}
 	if err := c.ShouldBindJSON(&request); err != nil {
 		resp.InvalidJSON(c)
 		return
 	}
-	item, err := op.VerificationBridgePairingCreate(c.Request.Context(), request.Name, request.TTLDays)
+	item, err := op.VerificationBridgePairingCreate(
+		c.Request.Context(),
+		request.Name,
+		request.TTLDays,
+		request.SiteAccountID,
+	)
 	if err != nil {
 		resp.Error(c, http.StatusBadRequest, err.Error())
 		return

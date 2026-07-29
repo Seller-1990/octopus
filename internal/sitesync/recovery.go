@@ -32,6 +32,8 @@ type siteRecoveryPath struct {
 	diagnostic        string
 }
 
+type recoveryPathContextKey struct{}
+
 type checkinRecoveryValue struct {
 	result      *model.SiteCheckinResult
 	accessToken string
@@ -48,7 +50,13 @@ func syncAccountStateWithRecovery(
 		account,
 		model.SiteOperationSync,
 		func(runCtx context.Context, siteCopy *model.Site, accountCopy *model.SiteAccount) (*syncSnapshot, error) {
-			return syncAccountState(runCtx, siteCopy, accountCopy)
+			snapshot, err := syncAccountState(runCtx, siteCopy, accountCopy)
+			if snapshot != nil {
+				snapshot.proxyMode = accountCopy.ProxyMode
+				snapshot.proxyConfigID = cloneInt(accountCopy.ProxyConfigID)
+				snapshot.clashNode = accountCopy.PreferredClashNode
+			}
+			return snapshot, err
 		},
 	)
 }
@@ -85,7 +93,10 @@ func runSiteOperationWithRecovery[T any](
 	if siteRecord == nil || account == nil {
 		return zero, fmt.Errorf("site or account is nil")
 	}
-	paths, err := buildSiteRecoveryPaths(ctx, siteRecord, account)
+	recoveryCtx, cancel := context.WithTimeout(ctx, siteRecoveryBudget)
+	defer cancel()
+
+	paths, err := buildSiteRecoveryPaths(recoveryCtx, siteRecord, account)
 	if err != nil {
 		return zero, err
 	}
@@ -96,8 +107,6 @@ func runSiteOperationWithRecovery[T any](
 		paths = paths[:siteRecoveryMaxPaths]
 	}
 
-	recoveryCtx, cancel := context.WithTimeout(ctx, siteRecoveryBudget)
-	defer cancel()
 	operationID := strconv.FormatInt(snowflake.GenerateID(), 10)
 	var lastErr error
 	var lastValue T
@@ -120,8 +129,14 @@ func runSiteOperationWithRecovery[T any](
 			return lastValue, recoveryCtx.Err()
 		}
 		startedAt := time.Now()
+		releaseSwitch := func() {}
 		if path.clashControllerID != nil && path.clashNode != "" {
-			if err := op.ClashSwitchNode(recoveryCtx, *path.clashControllerID, path.clashNode); err != nil {
+			release, err := op.ClashSwitchNodeForOperation(
+				recoveryCtx,
+				*path.clashControllerID,
+				path.clashNode,
+			)
+			if err != nil {
 				stopReason := ""
 				if index == len(paths)-1 {
 					stopReason = "paths_exhausted"
@@ -155,6 +170,7 @@ func runSiteOperationWithRecovery[T any](
 				lastErr = err
 				continue
 			}
+			releaseSwitch = release
 		}
 
 		siteCopy := *siteRecord
@@ -162,7 +178,11 @@ func runSiteOperationWithRecovery[T any](
 		accountCopy.ProxyMode = path.proxyMode
 		accountCopy.ProxyConfigID = cloneInt(path.proxyConfigID)
 		accountCopy.PreferredClashNode = path.clashNode
-		value, runErr := run(recoveryCtx, &siteCopy, &accountCopy)
+		runCtx := context.WithValue(recoveryCtx, recoveryPathContextKey{}, path)
+		value, runErr := func() (T, error) {
+			defer releaseSwitch()
+			return run(runCtx, &siteCopy, &accountCopy)
+		}()
 		lastValue = value
 		if runErr == nil {
 			reportSiteRecoveryWriteError(siteRecord, account, operationID, "record successful attempt", recordSiteOperationAttempt(
@@ -190,13 +210,15 @@ func runSiteOperationWithRecovery[T any](
 					startedAt,
 				),
 			)
-			reportSiteRecoveryWriteError(
-				siteRecord,
-				account,
-				operationID,
-				"learn successful path",
-				learnSiteRecoveryPath(recoveryCtx, siteRecord, account, path),
-			)
+			if path.proxyMode == model.ProxyUsageModePool {
+				reportSiteRecoveryWriteError(
+					siteRecord,
+					account,
+					operationID,
+					"learn successful path",
+					learnSiteRecoveryPath(recoveryCtx, siteRecord, account, path),
+				)
+			}
 			return value, nil
 		}
 		lastErr = runErr
@@ -283,13 +305,6 @@ func buildSiteRecoveryPaths(
 		return []siteRecoveryPath{current}, nil
 	}
 
-	preferredID := account.PreferredProxyConfigID
-	preferredNode := account.PreferredClashNode
-	if preferredID == nil {
-		preferredID = siteRecord.PreferredProxyConfigID
-		preferredNode = siteRecord.PreferredClashNode
-	}
-
 	proxies, err := op.ProxyConfigurationList(ctx)
 	if err != nil {
 		return nil, err
@@ -320,22 +335,49 @@ func buildSiteRecoveryPaths(
 		paths = append(paths, path)
 	}
 
-	if preferredID != nil {
+	currentUsable := current.proxyMode != model.ProxyUsageModePool
+	if current.proxyMode == model.ProxyUsageModePool && current.proxyConfigID != nil {
+		if proxy, ok := byID[*current.proxyConfigID]; ok {
+			currentUsable = true
+			current.clashControllerID = cloneInt(proxy.ClashControllerID)
+		}
+	}
+	if current.proxyMode != model.ProxyUsageModeDirect && currentUsable {
+		appendPath(current)
+	}
+
+	appendPreferred := func(preferredID *int, preferredNode string) bool {
+		if preferredID == nil {
+			return false
+		}
 		if proxy, ok := byID[*preferredID]; ok {
 			preferredPaths := recoveryPathsForProxy(ctx, proxy, preferredNode)
 			for _, path := range preferredPaths {
 				if recoveryPathUsable(siteRecord.ID, account.ID, path, preferenceByKey) {
+					before := len(paths)
 					appendPath(path)
-					break
+					return len(paths) > before
 				}
 			}
 		}
+		return false
 	}
+	accountPreferred := appendPreferred(
+		account.PreferredProxyConfigID,
+		account.PreferredClashNode,
+	)
+	if !accountPreferred {
+		appendPreferred(
+			siteRecord.PreferredProxyConfigID,
+			siteRecord.PreferredClashNode,
+		)
+	}
+	// Preserve an explicitly configured site/account proxy before falling back
+	// to direct. Automatic recovery must not silently bypass the administrator's
+	// configured current path on the first attempt, while direct remains an explicit
+	// last-resort candidate.
 	appendPath(siteRecoveryPath{proxyMode: model.ProxyUsageModeDirect, label: "direct"})
 	otherPaths := make([]siteRecoveryPath, 0, len(proxies)*2+1)
-	if current.proxyMode != model.ProxyUsageModeDirect {
-		otherPaths = append(otherPaths, current)
-	}
 	for _, proxy := range proxies {
 		if !proxy.Enabled {
 			continue
@@ -392,7 +434,13 @@ func recoveryPathsForProxy(ctx context.Context, proxy model.ProxyConfiguration, 
 		}
 		nodes = append(nodes, value)
 	}
-	appendNode(preferredNode)
+	preferredNode = strings.TrimSpace(preferredNode)
+	for _, node := range state.All {
+		if strings.TrimSpace(node) == preferredNode {
+			appendNode(preferredNode)
+			break
+		}
+	}
 	appendNode(state.Now)
 	for _, node := range state.All {
 		appendNode(node)
@@ -413,7 +461,11 @@ func recoveryPathKey(path siteRecoveryPath) string {
 	if path.proxyConfigID != nil {
 		proxyID = *path.proxyConfigID
 	}
-	return fmt.Sprintf("%s:%d:%s", path.proxyMode, proxyID, path.clashNode)
+	controllerID := 0
+	if path.clashControllerID != nil {
+		controllerID = *path.clashControllerID
+	}
+	return fmt.Sprintf("%s:%d:%d:%s", path.proxyMode, proxyID, controllerID, path.clashNode)
 }
 
 func recoveryPathDescriptor(
@@ -586,7 +638,7 @@ func recordSiteRecoveryPathFailure(
 
 func recoveryPathFailureAffectsHealth(failureClass string) bool {
 	switch failureClass {
-	case "network", "timeout", "cloudflare":
+	case "network", "timeout":
 		return true
 	default:
 		return false
@@ -594,7 +646,10 @@ func recoveryPathFailureAffectsHealth(failureClass string) bool {
 }
 
 func recoveryPreferenceScopeAccountID(account *model.SiteAccount) int {
-	if account != nil && (account.PreferredProxyConfigID != nil || strings.TrimSpace(account.PreferredClashNode) != "") {
+	if account != nil &&
+		(account.ProxyMode != "" && account.ProxyMode != model.ProxyUsageModeInherit ||
+			account.PreferredProxyConfigID != nil ||
+			strings.TrimSpace(account.PreferredClashNode) != "") {
 		return account.ID
 	}
 	return 0
@@ -606,16 +661,12 @@ func learnSiteRecoveryPath(
 	account *model.SiteAccount,
 	path siteRecoveryPath,
 ) error {
-	updates := map[string]any{
-		"preferred_proxy_config_id": nil,
-		"preferred_clash_node":      "",
-	}
-	if path.proxyMode == model.ProxyUsageModePool && path.proxyConfigID != nil {
-		updates["preferred_proxy_config_id"] = *path.proxyConfigID
-		updates["preferred_clash_node"] = path.clashNode
-	} else if path.proxyMode != model.ProxyUsageModeDirect &&
-		path.proxyMode != model.ProxyUsageModeSystem {
+	if path.proxyMode != model.ProxyUsageModePool || path.proxyConfigID == nil {
 		return nil
+	}
+	updates := map[string]any{
+		"preferred_proxy_config_id": *path.proxyConfigID,
+		"preferred_clash_node":      path.clashNode,
 	}
 	if recoveryPreferenceScopeAccountID(account) > 0 {
 		if err := db.GetDB().WithContext(ctx).Model(&model.SiteAccount{}).
@@ -623,9 +674,6 @@ func learnSiteRecoveryPath(
 			return err
 		}
 		account.PreferredProxyConfigID = cloneInt(path.proxyConfigID)
-		if path.proxyMode != model.ProxyUsageModePool {
-			account.PreferredProxyConfigID = nil
-		}
 		account.PreferredClashNode = updates["preferred_clash_node"].(string)
 		return nil
 	}
@@ -634,9 +682,6 @@ func learnSiteRecoveryPath(
 		return err
 	}
 	siteRecord.PreferredProxyConfigID = cloneInt(path.proxyConfigID)
-	if path.proxyMode != model.ProxyUsageModePool {
-		siteRecord.PreferredProxyConfigID = nil
-	}
 	siteRecord.PreferredClashNode = updates["preferred_clash_node"].(string)
 	return nil
 }
@@ -702,10 +747,9 @@ func siteRecoveryErrorRetryable(err error) bool {
 			return true
 		}
 	}
-	for _, status := range []int{408, 409, 425, 429, 500, 502, 503, 504, 520, 521, 522, 523, 524} {
-		if strings.Contains(lowered, strconv.Itoa(status)) {
-			return true
-		}
+	switch siteErrorStatusCode(err) {
+	case 408, 409, 425, 429, 500, 502, 503, 504, 520, 521, 522, 523, 524:
+		return true
 	}
 	return false
 }
@@ -731,11 +775,14 @@ func classifySiteRecoveryError(err error) string {
 		return "network"
 	}
 	lowered := strings.ToLower(err.Error())
-	if strings.Contains(lowered, "401") || strings.Contains(lowered, "unauthorized") {
+	switch siteErrorStatusCode(err) {
+	case 401, 403:
 		return "authentication"
-	}
-	if strings.Contains(lowered, "429") {
+	case 429:
 		return "rate_limit"
+	}
+	if strings.Contains(lowered, "unauthorized") || strings.Contains(lowered, "forbidden") {
+		return "authentication"
 	}
 	if strings.Contains(lowered, "decode") || strings.Contains(lowered, "html") {
 		return "response_format"

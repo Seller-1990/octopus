@@ -83,10 +83,11 @@ type SiteOperationAttempt struct {
 type VerificationSessionStatus string
 
 const (
-	VerificationSessionPending   VerificationSessionStatus = "pending"
-	VerificationSessionCompleted VerificationSessionStatus = "completed"
-	VerificationSessionExpired   VerificationSessionStatus = "expired"
-	VerificationSessionRevoked   VerificationSessionStatus = "revoked"
+	VerificationSessionPending    VerificationSessionStatus = "pending"
+	VerificationSessionCompleted  VerificationSessionStatus = "completed"
+	VerificationSessionExpired    VerificationSessionStatus = "expired"
+	VerificationSessionRevoked    VerificationSessionStatus = "revoked"
+	VerificationSessionSuperseded VerificationSessionStatus = "superseded"
 )
 
 type VerificationSession struct {
@@ -105,13 +106,14 @@ type VerificationSession struct {
 }
 
 type VerificationBridgePairing struct {
-	ID         int64      `json:"id" gorm:"primaryKey;autoIncrement"`
-	Name       string     `json:"name" gorm:"size:128;not null"`
-	TokenHash  string     `json:"-" gorm:"size:64;uniqueIndex;not null"`
-	ExpiresAt  time.Time  `json:"expires_at" gorm:"index"`
-	LastSeenAt *time.Time `json:"last_seen_at,omitempty"`
-	RevokedAt  *time.Time `json:"revoked_at,omitempty" gorm:"index"`
-	CreatedAt  time.Time  `json:"created_at"`
+	ID            int64      `json:"id" gorm:"primaryKey;autoIncrement"`
+	Name          string     `json:"name" gorm:"size:128;not null"`
+	SiteAccountID int        `json:"site_account_id" gorm:"not null;default:0;index"`
+	TokenHash     string     `json:"-" gorm:"size:64;uniqueIndex;not null"`
+	ExpiresAt     time.Time  `json:"expires_at" gorm:"index"`
+	LastSeenAt    *time.Time `json:"last_seen_at,omitempty"`
+	RevokedAt     *time.Time `json:"revoked_at,omitempty" gorm:"index"`
+	CreatedAt     time.Time  `json:"created_at"`
 }
 
 type VerificationTaskStatus string

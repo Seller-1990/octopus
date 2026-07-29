@@ -95,7 +95,7 @@ func TestAssessProtocolRouteContinuationRequiresResponses(t *testing.T) {
 		false,
 	)
 	if !sameProtocol.Included || sameProtocol.Mode != dbmodel.ProtocolExecutionModeTransform {
-		t.Fatalf("same-protocol continuation should use stateful transform execution: %+v", sameProtocol)
+		t.Fatalf("continuation without a channel-specific raw WS path should use transform execution: %+v", sameProtocol)
 	}
 
 	crossProtocol := AssessProtocolRoute(
@@ -106,6 +106,173 @@ func TestAssessProtocolRouteContinuationRequiresResponses(t *testing.T) {
 	)
 	if crossProtocol.Included || crossProtocol.Compatibility != dbmodel.ProtocolCompatibilityUnsupported {
 		t.Fatalf("allow-lossy must not permit cross-protocol continuation: %+v", crossProtocol)
+	}
+}
+
+func TestAssessProtocolRoutePassthroughOnlyRequiresRawPassthrough(t *testing.T) {
+	tests := []struct {
+		name         string
+		requirements dbmodel.ProtocolRouteRequirements
+		outbound     dbmodel.ProtocolName
+		wantIncluded bool
+		wantMode     dbmodel.ProtocolExecutionMode
+	}{
+		{
+			name: "chat raw passthrough",
+			requirements: dbmodel.ProtocolRouteRequirements{
+				InboundProtocol: dbmodel.ProtocolOpenAIChat,
+			},
+			outbound:     dbmodel.ProtocolOpenAIChat,
+			wantIncluded: true,
+			wantMode:     dbmodel.ProtocolExecutionModePassthrough,
+		},
+		{
+			name: "responses continuation requires channel capability",
+			requirements: dbmodel.ProtocolRouteRequirements{
+				InboundProtocol: dbmodel.ProtocolOpenAIResponses,
+				Features:        []dbmodel.ProtocolFeature{dbmodel.ProtocolFeatureContinuation},
+			},
+			outbound:     dbmodel.ProtocolOpenAIResponses,
+			wantIncluded: false,
+			wantMode:     dbmodel.ProtocolExecutionModeTransform,
+		},
+		{
+			name: "embedding raw passthrough",
+			requirements: dbmodel.ProtocolRouteRequirements{
+				InboundProtocol: dbmodel.ProtocolOpenAIEmbedding,
+			},
+			outbound:     dbmodel.ProtocolOpenAIEmbedding,
+			wantIncluded: true,
+			wantMode:     dbmodel.ProtocolExecutionModePassthrough,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			assessment := AssessProtocolRoute(
+				test.requirements,
+				test.outbound,
+				dbmodel.ProtocolPolicyPassthroughOnly,
+				false,
+			)
+			if assessment.Included != test.wantIncluded || assessment.Mode != test.wantMode {
+				t.Fatalf("unexpected passthrough-only assessment: %+v", assessment)
+			}
+			if !test.wantIncluded && assessment.Reason != "passthrough-only policy" {
+				t.Fatalf("transform path was rejected for the wrong reason: %+v", assessment)
+			}
+		})
+	}
+}
+
+func TestProtocolExecutionModeForResponsesChannel(t *testing.T) {
+	ctx := setupBackupTestDB(t)
+	if err := settingRefreshCache(ctx); err != nil {
+		t.Fatalf("refresh settings: %v", err)
+	}
+	if err := SettingSetString(dbmodel.SettingKeyResponsesWSDefaultMode, string(dbmodel.ChannelWSModePassthrough)); err != nil {
+		t.Fatalf("set default WS mode: %v", err)
+	}
+	if err := SettingSetString(dbmodel.SettingKeyResponsesWSEnabled, "true"); err != nil {
+		t.Fatalf("enable Responses WS: %v", err)
+	}
+	requirements := dbmodel.ProtocolRouteRequirements{
+		InboundProtocol: dbmodel.ProtocolOpenAIResponses,
+		Features:        []dbmodel.ProtocolFeature{dbmodel.ProtocolFeatureContinuation},
+	}
+	channel := dbmodel.Channel{
+		Type:   outbound.OutboundTypeOpenAIResponse,
+		WSMode: dbmodel.ChannelWSModePassthrough,
+	}
+	if got := protocolExecutionModeForChannel(requirements, channel); got != dbmodel.ProtocolExecutionModePassthrough {
+		t.Fatalf("passthrough channel mode = %q", got)
+	}
+	channel.WSMode = dbmodel.ChannelWSModeTransform
+	if got := protocolExecutionModeForChannel(requirements, channel); got != dbmodel.ProtocolExecutionModeTransform {
+		t.Fatalf("transform channel mode = %q", got)
+	}
+
+	requirements.Features = append(requirements.Features, dbmodel.ProtocolFeatureWebSocket)
+	channel.WSMode = dbmodel.ChannelWSModePassthrough
+	if err := SettingSetString(dbmodel.SettingKeyResponsesWSEnabled, "false"); err != nil {
+		t.Fatalf("disable Responses WS: %v", err)
+	}
+	if got := protocolExecutionModeForChannel(requirements, channel); got != dbmodel.ProtocolExecutionModeTransform {
+		t.Fatalf("disabled client WS mode = %q", got)
+	}
+}
+
+func TestProtocolSettingsKeepTheStrictestLayer(t *testing.T) {
+	channel := dbmodel.Channel{
+		ProtocolPolicy: dbmodel.ProtocolPolicyPassthroughOnly,
+		AllowLossy:     true,
+	}
+	canonical := &dbmodel.CanonicalModel{
+		Manual:         true,
+		ProtocolPolicy: dbmodel.ProtocolPolicyAuto,
+		AllowLossy:     false,
+	}
+
+	policy, allowLossy := effectiveProtocolSettings(canonical, channel, dbmodel.RouteCandidate{}, false)
+	if policy != dbmodel.ProtocolPolicyPassthroughOnly || allowLossy {
+		t.Fatalf("canonical settings weakened the channel boundary: policy=%q allow_lossy=%v", policy, allowLossy)
+	}
+
+	allow := true
+	candidate := dbmodel.RouteCandidate{
+		ProtocolPolicy: dbmodel.ProtocolPolicyTransformAllowed,
+		AllowLossy:     &allow,
+	}
+	policy, allowLossy = effectiveProtocolSettings(canonical, channel, candidate, true)
+	if policy != dbmodel.ProtocolPolicyPassthroughOnly || allowLossy {
+		t.Fatalf("candidate settings weakened a stricter parent: policy=%q allow_lossy=%v", policy, allowLossy)
+	}
+}
+
+func TestAssessProtocolRouteMarksCrossProtocolStructuredOutputLossy(t *testing.T) {
+	requirements := dbmodel.ProtocolRouteRequirements{
+		InboundProtocol: dbmodel.ProtocolOpenAIResponses,
+		Features:        []dbmodel.ProtocolFeature{dbmodel.ProtocolFeatureStructuredOutput},
+	}
+	strict := AssessProtocolRoute(
+		requirements,
+		dbmodel.ProtocolAnthropic,
+		dbmodel.ProtocolPolicyTransformAllowed,
+		false,
+	)
+	if strict.Included || strict.Compatibility != dbmodel.ProtocolCompatibilityLossy {
+		t.Fatalf("strict structured-output conversion should be excluded: %+v", strict)
+	}
+	lossy := AssessProtocolRoute(
+		requirements,
+		dbmodel.ProtocolAnthropic,
+		dbmodel.ProtocolPolicyTransformAllowed,
+		true,
+	)
+	if !lossy.Included || len(lossy.Warnings) == 0 {
+		t.Fatalf("explicit lossy conversion should include a warning: %+v", lossy)
+	}
+}
+
+func TestVolcengineProtocolRequiresLossyOptInForMetadata(t *testing.T) {
+	request := &transformermodel.InternalLLMRequest{
+		RawAPIFormat: transformermodel.APIFormatOpenAIResponse,
+		Metadata:     map[string]string{"trace": "value"},
+	}
+	requirements := ProtocolRequirementsFromRequest(request)
+	assertProtocolFeatures(t, requirements.Features, dbmodel.ProtocolFeatureProviderExtensions)
+
+	strict := AssessProtocolRoute(
+		requirements,
+		dbmodel.ProtocolVolcengine,
+		dbmodel.ProtocolPolicyTransformAllowed,
+		false,
+	)
+	if strict.Included || strict.Compatibility != dbmodel.ProtocolCompatibilityLossy {
+		t.Fatalf("Volcengine metadata loss should require opt-in: %+v", strict)
+	}
+	if got := ProtocolForOutboundType(outbound.OutboundTypeVolcengine); got != dbmodel.ProtocolVolcengine {
+		t.Fatalf("Volcengine outbound protocol = %q", got)
 	}
 }
 

@@ -54,11 +54,29 @@ func UsageAnalyticsTimeseriesGet(ctx context.Context, filter UsageAnalyticsFilte
 	if normalized.EndTime-normalized.StartTime <= int64(72*time.Hour/time.Second) {
 		granularity = "hour"
 	}
-	window := usageAnalyticsDailyAggregateWindow(normalized)
-	if window.valid() && normalized.Timezone == "UTC" {
-		granularity = "day"
-	} else if granularity != "day" || normalized.Timezone != "UTC" {
-		window = usageAnalyticsAggregateWindow{}
+	window := usageAnalyticsAggregateWindow{}
+	if normalized.Timezone != "UTC" &&
+		normalized.StartTime < usageRetentionCutoff(time.Now(), 0) {
+		normalized.Timezone = "UTC"
+		location = time.UTC
+	}
+	if normalized.Timezone == "UTC" {
+		if granularity == "hour" {
+			// A narrow historical range can still be older than hourly
+			// retention. Prefer the surviving daily aggregate in that case
+			// instead of returning a row of empty hourly buckets.
+			if dailyWindow := usageAnalyticsDailyAggregateWindow(normalized); dailyWindow.valid() {
+				window = dailyWindow
+				granularity = "day"
+			} else {
+				window = usageAnalyticsHourlyAggregateWindow(normalized)
+			}
+		} else {
+			window = usageAnalyticsDailyAggregateWindow(normalized)
+			if window.valid() {
+				granularity = "day"
+			}
+		}
 	}
 
 	var rows []usageAnalyticsFactRow

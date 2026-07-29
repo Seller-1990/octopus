@@ -62,6 +62,9 @@ func VerificationRetryAcquire(ctx context.Context, sessionID int64) (*Verificati
 			First(&work.Session, sessionID).Error; err != nil {
 			return fmt.Errorf("verification session not found")
 		}
+		if !work.Session.ExpiresAt.After(now) {
+			return expireVerificationSession(tx, &work.Session, now)
+		}
 		if work.Session.Status != model.VerificationSessionCompleted {
 			return tx.Model(&work.Task).Updates(map[string]any{
 				"retry_status":     model.VerificationRetryCanceled,
@@ -139,6 +142,12 @@ func VerificationRetryRequeue(ctx context.Context, sessionID int64) error {
 				model.VerificationRetrySucceeded,
 			},
 		).
+		Where(
+			"session_id IN (?)",
+			db.GetDB().Model(&model.VerificationSession{}).
+				Select("id").
+				Where("status = ? AND expires_at > ?", model.VerificationSessionCompleted, time.Now()),
+		).
 		Updates(map[string]any{
 			"retry_status":       model.VerificationRetryPending,
 			"retry_token_hash":   "",
@@ -159,22 +168,29 @@ func VerificationRetryPendingSessionIDs(ctx context.Context, limit int) ([]int64
 	if limit <= 0 || limit > 100 {
 		limit = 20
 	}
-	staleBefore := time.Now().Add(-verificationRetryStaleAfter)
+	now := time.Now()
+	staleBefore := now.Add(-verificationRetryStaleAfter)
 	var sessionIDs []int64
 	err := db.GetDB().WithContext(ctx).
 		Model(&model.VerificationTask{}).
-		Where("status = ?", model.VerificationTaskCompleted).
-		Where("operation IN ?", []model.SiteOperationType{
+		Joins("JOIN verification_sessions ON verification_sessions.id = verification_tasks.session_id").
+		Where("verification_tasks.status = ?", model.VerificationTaskCompleted).
+		Where(
+			"verification_sessions.status = ? AND verification_sessions.expires_at > ?",
+			model.VerificationSessionCompleted,
+			now,
+		).
+		Where("verification_tasks.operation IN ?", []model.SiteOperationType{
 			model.SiteOperationSync,
 			model.SiteOperationCheckin,
 		}).
 		Where(
-			"retry_status = ? OR (retry_status = ? AND retry_started_at <= ?)",
+			"verification_tasks.retry_status = ? OR (verification_tasks.retry_status = ? AND verification_tasks.retry_started_at <= ?)",
 			model.VerificationRetryPending,
 			model.VerificationRetryRunning,
 			staleBefore,
 		).
-		Order("created_at ASC, id ASC").
+		Order("verification_tasks.created_at ASC, verification_tasks.id ASC").
 		Limit(limit).
 		Pluck("session_id", &sessionIDs).Error
 	return sessionIDs, err

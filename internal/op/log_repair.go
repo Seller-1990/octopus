@@ -13,6 +13,7 @@ import (
 	"github.com/bestruirui/octopus/internal/model"
 	transformerModel "github.com/bestruirui/octopus/internal/transformer/model"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 const (
@@ -92,25 +93,11 @@ func RelayLogRepairExecute(ctx context.Context, filter RelayLogRepairFilter) (Re
 		if end > len(matchedIDs) {
 			end = len(matchedIDs)
 		}
-		result := db.GetDB().WithContext(ctx).
-			Model(&model.RelayLog{}).
-			Where("id IN ? AND (repair_batch_id = '' OR repair_batch_id IS NULL)", matchedIDs[start:end]).
-			Updates(map[string]interface{}{
-				"original_outcome":      model.RequestOutcomeFailed,
-				"original_error":        gorm.Expr("error"),
-				"success":               true,
-				"outcome":               model.RequestOutcomeSuccess,
-				"error":                 "",
-				"transport_termination": model.TransportTerminationClientDisconnectedAfterFinish,
-				"completion_evidence":   model.CompletionEvidenceHistoricalRule,
-				"repair_batch_id":       batchID,
-				"repair_rule_version":   relayLogRepairRuleV1,
-				"repaired_at":           completedAt,
-			})
-		if result.Error != nil {
-			return RelayLogRepairResult{}, result.Error
+		count, err := repairRelayLogBatch(ctx, matchedIDs[start:end], batchID, completedAt)
+		if err != nil {
+			return RelayLogRepairResult{}, err
 		}
-		updated += int(result.RowsAffected)
+		updated += count
 	}
 
 	if err := createRelayLogRepairAudit(ctx, batchID, preview, updated, false, completedAt); err != nil {
@@ -122,6 +109,192 @@ func RelayLogRepairExecute(ctx context.Context, filter RelayLogRepairFilter) (Re
 		BatchID:               batchID,
 		Updated:               updated,
 	}, nil
+}
+
+func repairRelayLogBatch(
+	ctx context.Context,
+	ids []int64,
+	batchID string,
+	completedAt time.Time,
+) (int, error) {
+	if len(ids) == 0 {
+		return 0, nil
+	}
+	updated := 0
+	err := db.GetDB().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var rows []model.RelayLog
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where("id IN ? AND (repair_batch_id = '' OR repair_batch_id IS NULL)", ids).
+			Order("id ASC").
+			Find(&rows).Error; err != nil {
+			return err
+		}
+		for i := range rows {
+			row := rows[i]
+			originalOutcome := row.Outcome
+			if originalOutcome == "" {
+				originalOutcome = model.RequestOutcomeFailed
+			}
+			result := tx.Model(&model.RelayLog{}).
+				Where("id = ? AND (repair_batch_id = '' OR repair_batch_id IS NULL)", row.ID).
+				Updates(map[string]any{
+					"original_outcome":      originalOutcome,
+					"original_error":        row.Error,
+					"success":               true,
+					"outcome":               model.RequestOutcomeSuccess,
+					"error":                 "",
+					"transport_termination": model.TransportTerminationClientDisconnectedAfterFinish,
+					"completion_evidence":   model.CompletionEvidenceHistoricalRule,
+					"repair_batch_id":       batchID,
+					"repair_rule_version":   relayLogRepairRuleV1,
+					"repaired_at":           completedAt,
+				})
+			if result.Error != nil {
+				return result.Error
+			}
+			if result.RowsAffected == 0 {
+				continue
+			}
+			if err := repairUsageOutcomeForRelayLog(tx, row.ID); err != nil {
+				return err
+			}
+			updated++
+		}
+		return nil
+	})
+	return updated, err
+}
+
+func repairUsageOutcomeForRelayLog(tx *gorm.DB, relayLogID int64) error {
+	var request model.UsageRequestFact
+	err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+		First(&request, "relay_log_id = ?", relayLogID).Error
+	if err == nil && request.Outcome != model.RequestOutcomeSuccess {
+		if request.AggregatedAt != nil {
+			if err := shiftUsageAggregateOutcome(
+				tx,
+				usageAggregateFactFromRequest(request),
+				request.Outcome,
+				model.RequestOutcomeSuccess,
+			); err != nil {
+				return err
+			}
+		}
+		if err := tx.Model(&model.UsageRequestFact{}).
+			Where("relay_log_id = ?", relayLogID).
+			Update("outcome", model.RequestOutcomeSuccess).Error; err != nil {
+			return err
+		}
+	} else if err != nil && err != gorm.ErrRecordNotFound {
+		return err
+	}
+
+	var attempt model.UsageAttemptFact
+	err = tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+		Where("relay_log_id = ? AND outcome = ?", relayLogID, model.RequestOutcomeFailed).
+		Order("attempt_number DESC").
+		First(&attempt).Error
+	if err == gorm.ErrRecordNotFound {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if attempt.AggregatedAt != nil {
+		if err := shiftUsageAggregateOutcome(
+			tx,
+			usageAggregateFactFromAttempt(attempt),
+			attempt.Outcome,
+			model.RequestOutcomeSuccess,
+		); err != nil {
+			return err
+		}
+	}
+	return tx.Model(&model.UsageAttemptFact{}).
+		Where("relay_log_id = ? AND attempt_number = ?", relayLogID, attempt.AttemptNumber).
+		Updates(map[string]any{
+			"status":      model.AttemptSuccess,
+			"outcome":     model.RequestOutcomeSuccess,
+			"attribution": model.AttemptAttributionNone,
+		}).Error
+}
+
+func shiftUsageAggregateOutcome(
+	tx *gorm.DB,
+	fact usageAggregateFact,
+	from model.RequestOutcome,
+	to model.RequestOutcome,
+) error {
+	if from == to {
+		return nil
+	}
+	fromColumn := usageAggregateOutcomeColumn(from)
+	toColumn := usageAggregateOutcomeColumn(to)
+	for _, granularity := range []model.UsageAggregateGranularity{
+		model.UsageAggregateHourly,
+		model.UsageAggregateDaily,
+	} {
+		bucketStart := usageAggregateBucketStart(fact.time, granularity)
+		key := usageAggregateKey(fact, granularity, bucketStart)
+		var aggregate model.UsageAggregate
+		err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			First(&aggregate, "aggregate_key = ?", key).Error
+		if err == gorm.ErrRecordNotFound &&
+			granularity == model.UsageAggregateHourly &&
+			bucketStart < usageRetentionCutoff(time.Now(), 0) {
+			continue
+		}
+		if err != nil {
+			return fmt.Errorf("load %s usage aggregate %s: %w", granularity, key, err)
+		}
+		if usageAggregateOutcomeCount(aggregate, from) <= 0 {
+			return fmt.Errorf(
+				"%s usage aggregate %s has no %s outcome to shift",
+				granularity,
+				key,
+				from,
+			)
+		}
+		updates := map[string]any{
+			fromColumn: gorm.Expr(fmt.Sprintf("%s - 1", fromColumn)),
+			toColumn:   gorm.Expr(fmt.Sprintf("%s + 1", toColumn)),
+		}
+		if err := tx.Model(&model.UsageAggregate{}).
+			Where("aggregate_key = ?", key).
+			Updates(updates).Error; err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func usageAggregateOutcomeCount(
+	aggregate model.UsageAggregate,
+	outcome model.RequestOutcome,
+) int64 {
+	switch outcome {
+	case model.RequestOutcomeSuccess:
+		return aggregate.SuccessCount
+	case model.RequestOutcomeFailed:
+		return aggregate.FailedCount
+	case model.RequestOutcomeClientCanceled:
+		return aggregate.CanceledCount
+	default:
+		return aggregate.IndeterminateCount
+	}
+}
+
+func usageAggregateOutcomeColumn(outcome model.RequestOutcome) string {
+	switch outcome {
+	case model.RequestOutcomeSuccess:
+		return "success_count"
+	case model.RequestOutcomeFailed:
+		return "failed_count"
+	case model.RequestOutcomeClientCanceled:
+		return "canceled_count"
+	default:
+		return "indeterminate_count"
+	}
 }
 
 func scanRelayLogRepairCandidates(

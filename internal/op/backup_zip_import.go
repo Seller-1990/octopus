@@ -293,11 +293,17 @@ func validateBackupZipManifestFiles(
 		"usage_attempt_facts.ndjson", "usage_aggregates.ndjson",
 	}
 	for _, name := range logFiles {
+		if manifest.IncludeLogs && files[name] == nil {
+			return fmt.Errorf("ZIP manifest includes logs but is missing required entry %q", name)
+		}
 		if !manifest.IncludeLogs && files[name] != nil {
 			return fmt.Errorf("ZIP manifest excludes logs but contains %q", name)
 		}
 	}
 	for _, name := range statsFiles {
+		if manifest.IncludeStats && files[name] == nil {
+			return fmt.Errorf("ZIP manifest includes stats but is missing required entry %q", name)
+		}
 		if !manifest.IncludeStats && files[name] != nil {
 			return fmt.Errorf("ZIP manifest excludes stats but contains %q", name)
 		}

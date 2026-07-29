@@ -1,9 +1,13 @@
 package sitesync
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
+	dbpkg "github.com/bestruirui/octopus/internal/db"
 	"github.com/bestruirui/octopus/internal/model"
+	"github.com/bestruirui/octopus/internal/op"
 )
 
 func TestParseSitePricingQuotesAppliesGroupMultiplierOnlyInResolver(t *testing.T) {
@@ -91,5 +95,167 @@ func TestParseSitePricingQuotesPreservesPerRequestAndSiteCreditUnits(t *testing.
 	}
 	if got := byModel["invalid-unit-model"].Unit; got != model.PriceUnit("per_second") {
 		t.Fatalf("unknown unit %q was not preserved for rejection", got)
+	}
+}
+
+func TestSyncAccountBindsFirstPricingRefreshToProjectedCandidate(t *testing.T) {
+	ctx := setupProjectTestDB(t)
+	const (
+		accessToken = "sync-pricing-access-token"
+		modelName   = "gpt-sync-pricing"
+	)
+	pricingCalls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer "+accessToken {
+			w.WriteHeader(http.StatusUnauthorized)
+			_, _ = w.Write([]byte(`{"error":{"message":"unauthorized"}}`))
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/v1/models":
+			_, _ = w.Write([]byte(`{"data":[{"id":"` + modelName + `"}]}`))
+		case "/api/pricing":
+			pricingCalls++
+			_, _ = w.Write([]byte(`{"data":[{
+				"model_name":"` + modelName + `",
+				"enable_groups":["default"],
+				"input_price":1.25,
+				"output_price":3.5,
+				"currency":"USD"
+			}]}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	site := model.Site{
+		Name:     "Sync Pricing Site",
+		Platform: model.SitePlatformAPI,
+		BaseURL:  server.URL,
+		Enabled:  true,
+	}
+	if err := op.SiteCreate(&site, ctx); err != nil {
+		t.Fatalf("create site: %v", err)
+	}
+	account := model.SiteAccount{
+		SiteID:         site.ID,
+		Name:           "Sync Pricing Account",
+		CredentialType: model.SiteCredentialTypeAccessToken,
+		AccessToken:    accessToken,
+		Enabled:        true,
+		AutoSync:       true,
+	}
+	if err := op.SiteAccountCreate(&account, ctx); err != nil {
+		t.Fatalf("create account: %v", err)
+	}
+
+	result, err := SyncAccount(ctx, account.ID)
+	if err != nil {
+		t.Fatalf("SyncAccount: %v", err)
+	}
+	if result.ModelCount != 1 || pricingCalls != 1 {
+		t.Fatalf("unexpected sync/pricing result: result=%+v pricing_calls=%d", result, pricingCalls)
+	}
+	var quote model.SiteModelPriceQuote
+	if err := dbpkg.GetDB().WithContext(ctx).
+		Where("site_account_id = ? AND model_name = ?", account.ID, modelName).
+		First(&quote).Error; err != nil {
+		t.Fatalf("load projected quote: %v", err)
+	}
+	if quote.RouteCandidateID == nil || *quote.RouteCandidateID <= 0 {
+		t.Fatalf("first pricing refresh was not candidate-bound: %+v", quote)
+	}
+	var candidate model.RouteCandidate
+	if err := dbpkg.GetDB().WithContext(ctx).First(&candidate, *quote.RouteCandidateID).Error; err != nil {
+		t.Fatalf("load bound candidate: %v", err)
+	}
+	if candidate.SiteAccountID == nil || *candidate.SiteAccountID != account.ID ||
+		candidate.UpstreamModelName != modelName {
+		t.Fatalf("quote bound to wrong candidate: quote=%+v candidate=%+v", quote, candidate)
+	}
+	var unboundCount int64
+	if err := dbpkg.GetDB().WithContext(ctx).Model(&model.SiteModelPriceQuote{}).
+		Where("site_account_id = ? AND model_name = ? AND route_candidate_id IS NULL", account.ID, modelName).
+		Count(&unboundCount).Error; err != nil {
+		t.Fatalf("count unbound quotes: %v", err)
+	}
+	if unboundCount != 0 {
+		t.Fatalf("first sync left %d unbound pricing rows", unboundCount)
+	}
+}
+
+func TestSyncAccountReturnsPartialResultWhenCatalogProjectionFails(t *testing.T) {
+	ctx := setupProjectTestDB(t)
+	const (
+		accessToken = "sync-catalog-failure-token"
+		modelName   = "gpt-sync-catalog-failure"
+	)
+	pricingCalls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer "+accessToken {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/v1/models":
+			_, _ = w.Write([]byte(`{"data":[{"id":"` + modelName + `"}]}`))
+		case "/api/pricing":
+			pricingCalls++
+			_, _ = w.Write([]byte(`{"data":[{"model_name":"` + modelName + `","input_price":1}]}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	site := model.Site{
+		Name: "Catalog Failure Site", Platform: model.SitePlatformAPI,
+		BaseURL: server.URL, Enabled: true,
+	}
+	if err := op.SiteCreate(&site, ctx); err != nil {
+		t.Fatalf("create site: %v", err)
+	}
+	account := model.SiteAccount{
+		SiteID: site.ID, Name: "Catalog Failure Account",
+		CredentialType: model.SiteCredentialTypeAccessToken,
+		AccessToken:    accessToken, Enabled: true, AutoSync: true,
+	}
+	if err := op.SiteAccountCreate(&account, ctx); err != nil {
+		t.Fatalf("create account: %v", err)
+	}
+	if err := dbpkg.GetDB().WithContext(ctx).
+		Migrator().DropTable(&model.CanonicalModel{}); err != nil {
+		t.Fatalf("drop canonical model table: %v", err)
+	}
+
+	result, err := SyncAccount(ctx, account.ID)
+	if err == nil {
+		t.Fatal("catalog projection failure was not reported")
+	}
+	if result == nil || result.Status != model.SiteExecutionStatusPartial ||
+		result.ChannelCount != 1 || result.ModelCount != 1 {
+		t.Fatalf("persisted projection was hidden by catalog failure: %+v", result)
+	}
+	if pricingCalls != 0 {
+		t.Fatalf("pricing refresh ran without candidate catalog: %d calls", pricingCalls)
+	}
+	var bindingCount int64
+	if countErr := dbpkg.GetDB().WithContext(ctx).Model(&model.SiteChannelBinding{}).
+		Where("site_account_id = ?", account.ID).
+		Count(&bindingCount).Error; countErr != nil {
+		t.Fatalf("count persisted bindings: %v", countErr)
+	}
+	if bindingCount != 1 {
+		t.Fatalf("catalog failure rolled back or hid projected binding: %d", bindingCount)
+	}
+	var reloaded model.SiteAccount
+	if reloadErr := dbpkg.GetDB().WithContext(ctx).First(&reloaded, account.ID).Error; reloadErr != nil {
+		t.Fatalf("reload account: %v", reloadErr)
+	}
+	if reloaded.LastSyncStatus != model.SiteExecutionStatusPartial {
+		t.Fatalf("account sync state did not record partial projection: %+v", reloaded)
 	}
 }

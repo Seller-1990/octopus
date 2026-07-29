@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/bestruirui/octopus/internal/db"
+	"github.com/bestruirui/octopus/internal/globalprice"
 	"github.com/bestruirui/octopus/internal/model"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -20,48 +21,61 @@ func SiteModelPriceQuotesUpsert(ctx context.Context, quotes []model.SiteModelPri
 	if len(quotes) == 0 {
 		return nil
 	}
-	for i := range quotes {
-		if err := normalizeSiteModelPriceQuote(ctx, &quotes[i]); err != nil {
-			return err
+	return db.GetDB().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		for i := range quotes {
+			if err := normalizeSiteModelPriceQuoteWithDB(ctx, tx, &quotes[i]); err != nil {
+				return err
+			}
+			if err := tx.Clauses(clause.OnConflict{
+				Columns: []clause.Column{{Name: "identity_key"}},
+				DoUpdates: clause.AssignmentColumns([]string{
+					"route_candidate_id",
+					"site_id",
+					"site_account_id",
+					"group_key",
+					"model_name",
+					"source",
+					"unit",
+					"currency",
+					"input",
+					"output",
+					"cache_read",
+					"cache_write",
+					"per_request",
+					"group_multiplier",
+					"exchange_rate_to_usd",
+					"raw_payload",
+					"observed_at",
+					"valid_until",
+					"manual_override",
+					"status",
+					"last_error",
+					"updated_at",
+				}),
+			}).Create(&quotes[i]).Error; err != nil {
+				return err
+			}
+			if err := deleteSupersededUnboundQuote(tx, quotes[i]); err != nil {
+				return err
+			}
 		}
-		if err := db.GetDB().WithContext(ctx).Clauses(clause.OnConflict{
-			Columns: []clause.Column{{Name: "identity_key"}},
-			DoUpdates: clause.AssignmentColumns([]string{
-				"route_candidate_id",
-				"site_id",
-				"site_account_id",
-				"group_key",
-				"model_name",
-				"source",
-				"unit",
-				"currency",
-				"input",
-				"output",
-				"cache_read",
-				"cache_write",
-				"per_request",
-				"group_multiplier",
-				"exchange_rate_to_usd",
-				"raw_payload",
-				"observed_at",
-				"valid_until",
-				"manual_override",
-				"status",
-				"last_error",
-				"updated_at",
-			}),
-		}).Create(&quotes[i]).Error; err != nil {
-			return err
-		}
-	}
-	return nil
+		return nil
+	})
 }
 
 func normalizeSiteModelPriceQuote(ctx context.Context, quote *model.SiteModelPriceQuote) error {
+	return normalizeSiteModelPriceQuoteWithDB(ctx, db.GetDB().WithContext(ctx), quote)
+}
+
+func normalizeSiteModelPriceQuoteWithDB(
+	ctx context.Context,
+	query *gorm.DB,
+	quote *model.SiteModelPriceQuote,
+) error {
 	if quote == nil {
 		return fmt.Errorf("price quote is nil")
 	}
-	if err := hydratePriceQuoteScope(ctx, quote); err != nil {
+	if err := hydratePriceQuoteScope(query, quote); err != nil {
 		return err
 	}
 	quote.ModelName = strings.TrimSpace(quote.ModelName)
@@ -83,7 +97,7 @@ func normalizeSiteModelPriceQuote(ctx context.Context, quote *model.SiteModelPri
 		quote.GroupMultiplier = 1
 	}
 	if quote.ExchangeRateToUSD == 0 {
-		if rate, ok := currencyRateToUSD(ctx, quote.Currency); ok {
+		if rate, ok := currencyRateToUSDWithDB(query, quote.Currency); ok {
 			quote.ExchangeRateToUSD = rate
 		} else {
 			quote.ExchangeRateToUSD = 0
@@ -102,19 +116,19 @@ func normalizeSiteModelPriceQuote(ctx context.Context, quote *model.SiteModelPri
 		quote.Status = model.PriceQuoteStatusValid
 		quote.LastError = ""
 	}
-	if err := linkPriceQuoteRouteCandidate(ctx, quote); err != nil {
+	if err := linkPriceQuoteRouteCandidate(query, quote); err != nil {
 		return err
 	}
 	quote.RefreshIdentityKey()
 	return nil
 }
 
-func hydratePriceQuoteScope(ctx context.Context, quote *model.SiteModelPriceQuote) error {
+func hydratePriceQuoteScope(query *gorm.DB, quote *model.SiteModelPriceQuote) error {
 	if quote == nil || quote.RouteCandidateID == nil || *quote.RouteCandidateID <= 0 {
 		return nil
 	}
 	var candidate model.RouteCandidate
-	if err := db.GetDB().WithContext(ctx).First(&candidate, *quote.RouteCandidateID).Error; err != nil {
+	if err := query.First(&candidate, *quote.RouteCandidateID).Error; err != nil {
 		return err
 	}
 	if quote.SiteID <= 0 && candidate.SiteID != nil {
@@ -155,12 +169,13 @@ func validateSiteModelPriceQuote(quote model.SiteModelPriceQuote) error {
 	return nil
 }
 
-func linkPriceQuoteRouteCandidate(ctx context.Context, quote *model.SiteModelPriceQuote) error {
-	if quote == nil || quote.RouteCandidateID != nil || quote.SiteAccountID == nil {
+func linkPriceQuoteRouteCandidate(query *gorm.DB, quote *model.SiteModelPriceQuote) error {
+	if quote == nil || quote.RouteCandidateID != nil || quote.SiteAccountID == nil ||
+		quote.ManualOverride || quote.Source == model.PriceQuoteSourceManualOverride {
 		return nil
 	}
 	var candidate model.RouteCandidate
-	query := db.GetDB().WithContext(ctx).
+	query = query.
 		Where(
 			"site_account_id = ? AND LOWER(upstream_model_name) = ?",
 			*quote.SiteAccountID,
@@ -180,11 +195,50 @@ func linkPriceQuoteRouteCandidate(ctx context.Context, quote *model.SiteModelPri
 	return err
 }
 
+func deleteSupersededUnboundQuote(tx *gorm.DB, quote model.SiteModelPriceQuote) error {
+	if quote.RouteCandidateID == nil || quote.ManualOverride ||
+		quote.Source == model.PriceQuoteSourceManualOverride {
+		return nil
+	}
+	query := tx.Where(
+		"identity_key <> ? AND route_candidate_id IS NULL AND site_id = ? AND group_key = ? AND LOWER(model_name) = ? AND source = ?",
+		quote.IdentityKey,
+		quote.SiteID,
+		model.NormalizeSiteGroupKey(quote.GroupKey),
+		strings.ToLower(strings.TrimSpace(quote.ModelName)),
+		quote.Source,
+	)
+	if quote.SiteAccountID == nil {
+		query = query.Where("site_account_id IS NULL")
+	} else {
+		query = query.Where("site_account_id = ?", *quote.SiteAccountID)
+	}
+	return query.Delete(&model.SiteModelPriceQuote{}).Error
+}
+
 func SiteModelPriceQuoteList(ctx context.Context, canonicalModelID, routeCandidateID int) ([]model.SiteModelPriceQuote, error) {
-	query := db.GetDB().WithContext(ctx).Model(&model.SiteModelPriceQuote{})
 	if routeCandidateID > 0 {
-		query = query.Where("route_candidate_id = ?", routeCandidateID)
-	} else if canonicalModelID > 0 {
+		var candidate model.RouteCandidate
+		if err := db.GetDB().WithContext(ctx).First(&candidate, routeCandidateID).Error; err != nil {
+			return nil, err
+		}
+		items, err := priceQuotesForCandidate(ctx, candidate, candidate.UpstreamModelName, false)
+		if err != nil {
+			return nil, err
+		}
+		sort.SliceStable(items, func(i, j int) bool {
+			if items[i].ManualOverride != items[j].ManualOverride {
+				return items[i].ManualOverride
+			}
+			if items[i].ObservedAt.Equal(items[j].ObservedAt) {
+				return items[i].ID > items[j].ID
+			}
+			return items[i].ObservedAt.After(items[j].ObservedAt)
+		})
+		return items, nil
+	}
+	query := db.GetDB().WithContext(ctx).Model(&model.SiteModelPriceQuote{})
+	if canonicalModelID > 0 {
 		query = query.Where("route_candidate_id IN (?)",
 			db.GetDB().Model(&model.RouteCandidate{}).Select("id").Where("canonical_model_id = ?", canonicalModelID),
 		)
@@ -268,8 +322,18 @@ func EffectivePriceForCandidate(ctx context.Context, candidateID int, fallbackMo
 	if err != nil {
 		return model.EffectivePrice{}, err
 	}
+	now := time.Now()
+	eligible := quotes[:0]
+	for _, quote := range quotes {
+		if (quote.ManualOverride || quote.Source == model.PriceQuoteSourceManualOverride) &&
+			quote.ValidUntil != nil &&
+			!quote.ValidUntil.After(now) {
+			continue
+		}
+		eligible = append(eligible, quote)
+	}
+	quotes = eligible
 	if len(quotes) > 0 {
-		now := time.Now()
 		sort.SliceStable(quotes, func(i, j int) bool {
 			leftRank := priceQuoteRank(quotes[i], candidate, now)
 			rightRank := priceQuoteRank(quotes[j], candidate, now)
@@ -288,20 +352,10 @@ func EffectivePriceForCandidate(ctx context.Context, candidateID int, fallbackMo
 	}
 
 	if global, err := LLMGet(strings.ToLower(modelName)); err == nil {
-		return model.EffectivePrice{
-			RouteCandidateID:  candidateID,
-			Source:            model.PriceQuoteSourceGlobal,
-			Unit:              model.PriceUnitPerMillionTokens,
-			Currency:          "USD",
-			Input:             global.Input,
-			Output:            global.Output,
-			CacheRead:         global.CacheRead,
-			CacheWrite:        global.CacheWrite,
-			GroupMultiplier:   1,
-			ExchangeRateToUSD: 1,
-			Convertible:       true,
-			MatchReason:       "global model fallback",
-		}, nil
+		return effectivePriceFromGlobal(candidateID, global), nil
+	}
+	if global, ok := globalprice.Get(modelName); ok {
+		return effectivePriceFromGlobal(candidateID, global), nil
 	}
 	return model.EffectivePrice{
 		RouteCandidateID: candidateID,
@@ -314,16 +368,45 @@ func EffectivePriceForCandidate(ctx context.Context, candidateID int, fallbackMo
 	}, nil
 }
 
+func effectivePriceFromGlobal(candidateID int, price model.LLMPrice) model.EffectivePrice {
+	return model.EffectivePrice{
+		RouteCandidateID:  candidateID,
+		Source:            model.PriceQuoteSourceGlobal,
+		Unit:              model.PriceUnitPerMillionTokens,
+		Currency:          "USD",
+		Input:             price.Input,
+		Output:            price.Output,
+		CacheRead:         price.CacheRead,
+		CacheWrite:        price.CacheWrite,
+		GroupMultiplier:   1,
+		ExchangeRateToUSD: 1,
+		Convertible:       true,
+		MatchReason:       "global model fallback",
+	}
+}
+
 func matchingPriceQuotes(
 	ctx context.Context,
 	candidate model.RouteCandidate,
 	modelName string,
 ) ([]model.SiteModelPriceQuote, error) {
+	return priceQuotesForCandidate(ctx, candidate, modelName, true)
+}
+
+func priceQuotesForCandidate(
+	ctx context.Context,
+	candidate model.RouteCandidate,
+	modelName string,
+	validOnly bool,
+) ([]model.SiteModelPriceQuote, error) {
 	if candidate.ID <= 0 {
 		return nil, nil
 	}
 	query := db.GetDB().WithContext(ctx).
-		Where("LOWER(model_name) = ? AND status = ?", strings.ToLower(strings.TrimSpace(modelName)), model.PriceQuoteStatusValid)
+		Where("LOWER(model_name) = ?", strings.ToLower(strings.TrimSpace(modelName)))
+	if validOnly {
+		query = query.Where("status = ?", model.PriceQuoteStatusValid)
+	}
 	if candidate.SiteID != nil {
 		query = query.Where("route_candidate_id = ? OR site_id = ?", candidate.ID, *candidate.SiteID)
 	} else {
@@ -343,6 +426,13 @@ func matchingPriceQuotes(
 }
 
 func priceQuoteMatchesCandidate(quote model.SiteModelPriceQuote, candidate model.RouteCandidate) bool {
+	// A manual quote explicitly bound to a route candidate must never widen
+	// back to the site/account/group scopes. Otherwise a sibling candidate can
+	// inherit another candidate's administrator override.
+	if (quote.ManualOverride || quote.Source == model.PriceQuoteSourceManualOverride) &&
+		quote.RouteCandidateID != nil {
+		return *quote.RouteCandidateID == candidate.ID
+	}
 	if quote.RouteCandidateID != nil && *quote.RouteCandidateID == candidate.ID {
 		return true
 	}
@@ -482,11 +572,15 @@ func CurrencyRateUpsert(ctx context.Context, item model.CurrencyRate) (*model.Cu
 }
 
 func currencyRateToUSD(ctx context.Context, currency string) (float64, bool) {
+	return currencyRateToUSDWithDB(db.GetDB().WithContext(ctx), currency)
+}
+
+func currencyRateToUSDWithDB(query *gorm.DB, currency string) (float64, bool) {
 	if strings.EqualFold(currency, "USD") {
 		return 1, true
 	}
 	var item model.CurrencyRate
-	if err := db.GetDB().WithContext(ctx).
+	if err := query.
 		First(&item, "currency = ?", strings.ToUpper(strings.TrimSpace(currency))).Error; err == nil && item.RateToUSD > 0 {
 		return item.RateToUSD, true
 	}

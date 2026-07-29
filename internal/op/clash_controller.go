@@ -42,6 +42,7 @@ const (
 	clashSwitchLeaseRetryDelay = 50 * time.Millisecond
 	clashSwitchConfirmAttempts = 5
 	clashSwitchConfirmDelay    = 100 * time.Millisecond
+	clashControllerHTTPTimeout = 15 * time.Second
 )
 
 func ClashControllerList(ctx context.Context) ([]model.ClashController, error) {
@@ -65,6 +66,9 @@ func ClashControllerUpsert(ctx context.Context, input ClashControllerInput) (*mo
 	input.GroupName = strings.TrimSpace(input.GroupName)
 	if input.Name == "" || input.APIURL == "" || input.ProxyURL == "" || input.GroupName == "" {
 		return nil, fmt.Errorf("name, api_url, proxy_url and group_name are required")
+	}
+	if err := validateClashDedicatedGroup(input.GroupName); err != nil {
+		return nil, err
 	}
 	if err := validateHTTPURL(input.APIURL); err != nil {
 		return nil, fmt.Errorf("invalid api_url: %w", err)
@@ -130,11 +134,44 @@ func ClashControllerState(ctx context.Context, id int) (ClashGroupState, error) 
 }
 
 func ClashSwitchNode(ctx context.Context, id int, node string) error {
+	release, err := ClashSwitchNodeForOperation(ctx, id, node)
+	if release != nil {
+		defer release()
+	}
+	return err
+}
+
+// ClashSwitchNodeForOperation keeps the controller/group guard until the
+// returned release function is called. Site recovery uses it to prevent
+// another operation from changing the selected node while traffic is in flight.
+func ClashSwitchNodeForOperation(
+	ctx context.Context,
+	id int,
+	node string,
+) (release func(), err error) {
 	controller, err := ClashControllerGet(ctx, id)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	return switchClashNode(ctx, controller, node)
+	if err := validateClashDedicatedGroup(controller.GroupName); err != nil {
+		return nil, err
+	}
+	release, err = acquireClashOperationGuard(ctx, controller)
+	if err != nil {
+		return nil, err
+	}
+	if err := switchClashNode(ctx, controller, node); err != nil {
+		release()
+		return nil, err
+	}
+	return release, nil
+}
+
+func validateClashDedicatedGroup(groupName string) error {
+	if strings.EqualFold(strings.TrimSpace(groupName), "GLOBAL") {
+		return fmt.Errorf("group_name must be a dedicated proxy group, not GLOBAL")
+	}
+	return nil
 }
 
 func fetchClashGroupState(ctx context.Context, controller *model.ClashController) (ClashGroupState, error) {
@@ -187,26 +224,6 @@ func switchClashNode(ctx context.Context, controller *model.ClashController, nod
 	if controller == nil || node == "" {
 		return fmt.Errorf("clash controller and node are required")
 	}
-	lockValue, _ := clashControllerLocks.LoadOrStore(controller.ID, &sync.Mutex{})
-	lock := lockValue.(*sync.Mutex)
-	lock.Lock()
-	defer lock.Unlock()
-	lease, err := acquireClashSwitchLease(ctx, controller)
-	if err != nil {
-		return err
-	}
-	defer func() {
-		releaseCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		if err := releaseClashSwitchLease(releaseCtx, lease); err != nil {
-			log.Warnw(
-				"release clash switch lease failed",
-				"lease_key", lease.key,
-				"error", err,
-			)
-		}
-	}()
-
 	state, err := fetchClashGroupState(ctx, controller)
 	if err != nil {
 		return err
@@ -271,6 +288,44 @@ func switchClashNode(ctx context.Context, controller *model.ClashController, nod
 		}
 	}
 	return nil
+}
+
+func acquireClashOperationGuard(
+	ctx context.Context,
+	controller *model.ClashController,
+) (func(), error) {
+	if controller == nil {
+		return nil, fmt.Errorf("clash controller is required")
+	}
+	created := make(chan struct{}, 1)
+	created <- struct{}{}
+	lockValue, _ := clashControllerLocks.LoadOrStore(controller.ID, created)
+	lock := lockValue.(chan struct{})
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case <-lock:
+	}
+	lease, err := acquireClashSwitchLease(ctx, controller)
+	if err != nil {
+		lock <- struct{}{}
+		return nil, err
+	}
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			releaseCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			if err := releaseClashSwitchLease(releaseCtx, lease); err != nil {
+				log.Warnw(
+					"release clash switch lease failed",
+					"lease_key", lease.key,
+					"error", err,
+				)
+			}
+			lock <- struct{}{}
+		})
+	}, nil
 }
 
 type clashSwitchLeaseHandle struct {
@@ -360,7 +415,10 @@ func newClashControllerHTTPClient() (*http.Client, error) {
 	}
 	cloned := transport.Clone()
 	cloned.Proxy = nil
-	return &http.Client{Transport: cloned}, nil
+	return &http.Client{
+		Transport: cloned,
+		Timeout:   clashControllerHTTPTimeout,
+	}, nil
 }
 
 func applyClashAuthorization(request *http.Request, controller *model.ClashController) error {

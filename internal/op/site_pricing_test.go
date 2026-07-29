@@ -192,6 +192,199 @@ func TestEffectivePricePreservesUnknownSiteCreditUntilRateConfigured(t *testing.
 	}
 }
 
+func TestEffectivePriceUsesBuiltInGlobalFallback(t *testing.T) {
+	ctx := setupBackupTestDB(t)
+	effective, err := EffectivePriceForCandidate(ctx, 0, "v0-1.0-md")
+	if err != nil {
+		t.Fatalf("resolve built-in global price: %v", err)
+	}
+	if effective.Source != model.PriceQuoteSourceGlobal ||
+		!effective.Convertible ||
+		effective.Input != 3 ||
+		effective.Output != 15 {
+		t.Fatalf("built-in global fallback mismatch: %+v", effective)
+	}
+}
+
+func TestSitePriceUpsertReplacesUnboundIdentityAfterCandidateProjection(t *testing.T) {
+	ctx := setupBackupTestDB(t)
+	site := model.Site{
+		Name: "pricing-projection-site", Platform: model.SitePlatformNewAPI,
+		BaseURL: "https://pricing-projection.example.com", Enabled: true,
+	}
+	mustCreatePricingRow(t, ctx, &site)
+	account := model.SiteAccount{
+		SiteID: site.ID, Name: "pricing-projection-account",
+		CredentialType: model.SiteCredentialTypeAccessToken, AccessToken: "token", Enabled: true,
+	}
+	mustCreatePricingRow(t, ctx, &account)
+	quote := model.SiteModelPriceQuote{
+		SiteID: site.ID, SiteAccountID: &account.ID, GroupKey: model.SiteDefaultGroupKey,
+		ModelName: "projection-priced-model", Source: model.PriceQuoteSourceSiteExact,
+		Unit: model.PriceUnitPerMillionTokens, Currency: "USD", Input: 1, Output: 2,
+		GroupMultiplier: 1, ExchangeRateToUSD: 1, ObservedAt: time.Now(),
+	}
+	if err := SiteModelPriceQuotesUpsert(ctx, []model.SiteModelPriceQuote{quote}); err != nil {
+		t.Fatalf("create unbound price quote: %v", err)
+	}
+
+	channel := model.Channel{Name: "pricing-projection-channel", Enabled: true}
+	canonical := model.CanonicalModel{
+		Name: "projection-priced-model", NormalizedName: "projection-priced-model", Enabled: true,
+	}
+	mustCreatePricingRow(t, ctx, &channel)
+	mustCreatePricingRow(t, ctx, &canonical)
+	candidate := model.RouteCandidate{
+		CanonicalModelID: canonical.ID, ChannelID: channel.ID,
+		UpstreamModelName: quote.ModelName, SiteID: &site.ID, SiteAccountID: &account.ID,
+		SiteGroupKey: model.SiteDefaultGroupKey, Status: model.RouteCandidateActive,
+		Weight: 1, LastSeenAt: time.Now(),
+	}
+	mustCreatePricingRow(t, ctx, &candidate)
+	if err := SiteModelPriceQuotesUpsert(ctx, []model.SiteModelPriceQuote{quote}); err != nil {
+		t.Fatalf("replace unbound quote after candidate projection: %v", err)
+	}
+
+	var stored []model.SiteModelPriceQuote
+	if err := dbpkg.GetDB().WithContext(ctx).
+		Where("site_id = ? AND model_name = ?", site.ID, quote.ModelName).
+		Find(&stored).Error; err != nil {
+		t.Fatalf("list projected price quotes: %v", err)
+	}
+	if len(stored) != 1 ||
+		stored[0].RouteCandidateID == nil ||
+		*stored[0].RouteCandidateID != candidate.ID {
+		t.Fatalf("unbound quote identity was not replaced: %+v", stored)
+	}
+}
+
+func TestManualCandidatePriceDoesNotLeakToSiblingCandidate(t *testing.T) {
+	ctx := setupBackupTestDB(t)
+	fixture := createPricingFixture(t, ctx, "manual-isolation")
+	siblingChannel := model.Channel{Name: "pricing-channel-sibling", Enabled: true}
+	mustCreatePricingRow(t, ctx, &siblingChannel)
+	sibling := model.RouteCandidate{
+		CanonicalModelID:  fixture.candidate.CanonicalModelID,
+		ChannelID:         siblingChannel.ID,
+		UpstreamModelName: fixture.candidate.UpstreamModelName,
+		SiteID:            fixture.candidate.SiteID,
+		SiteAccountID:     fixture.candidate.SiteAccountID,
+		SiteGroupKey:      fixture.candidate.SiteGroupKey,
+		Status:            model.RouteCandidateActive,
+		Weight:            1,
+		LastSeenAt:        time.Now(),
+	}
+	mustCreatePricingRow(t, ctx, &sibling)
+
+	manual, err := SiteModelPriceManualUpsert(ctx, model.SiteModelPriceQuote{
+		RouteCandidateID: &fixture.candidate.ID,
+		Unit:             model.PriceUnitPerMillionTokens,
+		Currency:         "USD",
+		Input:            7,
+		Output:           9,
+		GroupMultiplier:  1,
+	})
+	if err != nil {
+		t.Fatalf("create candidate-bound manual quote: %v", err)
+	}
+	if manual.RouteCandidateID == nil || *manual.RouteCandidateID != fixture.candidate.ID {
+		t.Fatalf("manual quote lost explicit candidate binding: %+v", manual)
+	}
+
+	siblingPrice, err := EffectivePriceForCandidate(ctx, sibling.ID, "")
+	if err != nil {
+		t.Fatalf("resolve sibling price: %v", err)
+	}
+	if siblingPrice.Source != model.PriceQuoteSourceUnknown {
+		t.Fatalf("candidate-bound manual quote leaked to sibling: %+v", siblingPrice)
+	}
+
+	scoped, err := SiteModelPriceManualUpsert(ctx, model.SiteModelPriceQuote{
+		SiteID:          fixture.site.ID,
+		SiteAccountID:   &fixture.account.ID,
+		GroupKey:        fixture.candidate.SiteGroupKey,
+		ModelName:       fixture.candidate.UpstreamModelName,
+		Unit:            model.PriceUnitPerMillionTokens,
+		Currency:        "USD",
+		Input:           3,
+		Output:          4,
+		GroupMultiplier: 1,
+	})
+	if err != nil {
+		t.Fatalf("create scoped manual quote: %v", err)
+	}
+	if scoped.RouteCandidateID != nil {
+		t.Fatalf("scoped manual quote was silently bound to a candidate: %+v", scoped)
+	}
+	siblingPrice, err = EffectivePriceForCandidate(ctx, sibling.ID, "")
+	if err != nil {
+		t.Fatalf("resolve scoped sibling price: %v", err)
+	}
+	if siblingPrice.Source != model.PriceQuoteSourceManualOverride ||
+		siblingPrice.QuoteID != scoped.ID ||
+		siblingPrice.Input != 3 {
+		t.Fatalf("scoped manual quote did not apply to sibling: %+v", siblingPrice)
+	}
+}
+
+func TestExpiredManualPriceYieldsToFreshScopedQuote(t *testing.T) {
+	ctx := setupBackupTestDB(t)
+	fixture := createPricingFixture(t, ctx, "expired-manual")
+	fresh := model.SiteModelPriceQuote{
+		SiteID:          fixture.site.ID,
+		SiteAccountID:   &fixture.account.ID,
+		GroupKey:        fixture.candidate.SiteGroupKey,
+		ModelName:       fixture.candidate.UpstreamModelName,
+		Source:          model.PriceQuoteSourceSiteExact,
+		Unit:            model.PriceUnitPerMillionTokens,
+		Currency:        "USD",
+		Input:           2,
+		Output:          4,
+		GroupMultiplier: 1,
+		ObservedAt:      time.Now(),
+	}
+	if err := SiteModelPriceQuotesUpsert(ctx, []model.SiteModelPriceQuote{fresh}); err != nil {
+		t.Fatalf("create fresh scoped quote: %v", err)
+	}
+	expiredAt := time.Now().Add(-time.Minute)
+	manual, err := SiteModelPriceManualUpsert(ctx, model.SiteModelPriceQuote{
+		RouteCandidateID: &fixture.candidate.ID,
+		Unit:             model.PriceUnitPerMillionTokens,
+		Currency:         "USD",
+		Input:            99,
+		Output:           99,
+		GroupMultiplier:  1,
+		ValidUntil:       &expiredAt,
+	})
+	if err != nil {
+		t.Fatalf("create expired manual quote: %v", err)
+	}
+
+	effective, err := EffectivePriceForCandidate(ctx, fixture.candidate.ID, "")
+	if err != nil {
+		t.Fatalf("resolve effective price: %v", err)
+	}
+	if effective.Source != model.PriceQuoteSourceSiteExact ||
+		effective.QuoteID == manual.ID ||
+		effective.Input != 2 {
+		t.Fatalf("expired manual quote still overrode fresh quote: %+v", effective)
+	}
+
+	quotes, err := SiteModelPriceQuoteList(ctx, 0, fixture.candidate.ID)
+	if err != nil {
+		t.Fatalf("list applicable candidate quotes: %v", err)
+	}
+	seenFresh := false
+	seenManual := false
+	for _, quote := range quotes {
+		seenFresh = seenFresh || quote.Source == model.PriceQuoteSourceSiteExact
+		seenManual = seenManual || quote.ID == manual.ID
+	}
+	if !seenFresh || !seenManual {
+		t.Fatalf("candidate quote list omitted applicable or diagnostic quote: %+v", quotes)
+	}
+}
+
 type pricingFixture struct {
 	site      model.Site
 	account   model.SiteAccount

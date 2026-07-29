@@ -15,6 +15,12 @@ func VerificationRetryTask() {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
 
+	if cleaned, err := op.VerificationSessionCleanup(ctx, time.Now()); err != nil {
+		log.Warnf("verification credential cleanup failed: %v", err)
+	} else if cleaned > 0 {
+		log.Debugf("verification credential cleanup expired %d sessions", cleaned)
+	}
+
 	sessionIDs, err := op.VerificationRetryPendingSessionIDs(ctx, verificationRetrySweepLimit)
 	if err != nil {
 		log.Warnf("list pending verification retries failed: %v", err)

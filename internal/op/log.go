@@ -407,6 +407,9 @@ func relayLogCleanup(ctx context.Context) error {
 	deletedRows := int64(0)
 	batchCount := 0
 	dbConn := db.GetDB().WithContext(ctx)
+	usageFactExists := dbConn.Model(&model.UsageRequestFact{}).
+		Select("1").
+		Where("usage_request_facts.relay_log_id = relay_logs.id")
 	for {
 		select {
 		case <-ctx.Done():
@@ -416,7 +419,7 @@ func relayLogCleanup(ctx context.Context) error {
 
 		var ids []int64
 		if err := dbConn.Model(&model.RelayLog{}).
-			Where("time < ?", cutoffTime).
+			Where("time < ? AND EXISTS (?)", cutoffTime, usageFactExists).
 			Order("time ASC").
 			Order("id ASC").
 			Limit(relayLogCleanupBatchSize).

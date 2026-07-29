@@ -66,6 +66,7 @@ type HeaderPolicyTrace struct {
 
 type ResolvedHeaderPolicy struct {
 	ForwardClientHeaders bool                `json:"forward_client_headers"`
+	UserAgentConfigured  bool                `json:"-"`
 	UserAgent            string              `json:"user_agent,omitempty"`
 	SetHeaders           []CustomHeader      `json:"set_headers"`
 	UnsetHeaders         []string            `json:"unset_headers"`

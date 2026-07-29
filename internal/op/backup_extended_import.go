@@ -43,6 +43,9 @@ func importClashControllers(
 		if item.Name == "" || item.APIURL == "" || item.ProxyURL == "" || item.GroupName == "" {
 			return fmt.Errorf("import clash_controllers: required field is empty")
 		}
+		if err := validateClashDedicatedGroup(item.GroupName); err != nil {
+			return fmt.Errorf("import clash_controllers: %w", err)
+		}
 		if err := validateHTTPURL(item.APIURL); err != nil {
 			return fmt.Errorf("import clash_controllers: %w", err)
 		}
@@ -54,11 +57,16 @@ func importClashControllers(
 
 		var existing model.ClashController
 		if err := tx.Where("name = ?", item.Name).First(&existing).Error; err == nil {
+			enabled := item.Enabled
+			if item.SecretEncrypted == "" && existing.SecretEncrypted == "" && enabled {
+				enabled = false
+				appendMissingClashCredentialWarning(result, item.Name)
+			}
 			updates := map[string]any{
 				"api_url":    item.APIURL,
 				"proxy_url":  item.ProxyURL,
 				"group_name": item.GroupName,
-				"enabled":    item.Enabled,
+				"enabled":    enabled,
 				"updated_at": item.UpdatedAt,
 			}
 			if item.SecretEncrypted != "" {
@@ -72,13 +80,36 @@ func importClashControllers(
 		} else if err != gorm.ErrRecordNotFound {
 			return fmt.Errorf("import clash_controllers: %w", err)
 		}
+		disableWithoutCredential := item.SecretEncrypted == "" && item.Enabled
+		if disableWithoutCredential {
+			item.Enabled = false
+			appendMissingClashCredentialWarning(result, item.Name)
+		}
 		if err := tx.Create(&item).Error; err != nil {
 			return fmt.Errorf("import clash_controllers: %w", err)
+		}
+		if disableWithoutCredential {
+			if err := tx.Model(&item).UpdateColumn("enabled", false).Error; err != nil {
+				return fmt.Errorf("disable imported clash controller without credential: %w", err)
+			}
+			item.Enabled = false
 		}
 		idMap[oldID] = item.ID
 		result.RowsAffected["clash_controllers"]++
 	}
 	return nil
+}
+
+func appendMissingClashCredentialWarning(result *model.DBImportResult, name string) {
+	if result == nil {
+		return
+	}
+	result.Warnings = append(result.Warnings, model.DBImportWarning{
+		Code:         "credential_not_restored",
+		ResourceType: "clash_controller",
+		ResourceName: name,
+		Message:      "controller was disabled because ordinary backups do not contain its secret",
+	})
 }
 
 func importSiteProxyPreferences(
@@ -824,23 +855,69 @@ func remapRelayLogsForImport(
 		if row.TokenSource == "" {
 			row.TokenSource = model.UsageValueSourceUnknown
 		}
-		row.ChannelId = remapRequiredID(row.ChannelId, channelIDMap)
-		row.RequestAPIKeyID = remapRequiredID(row.RequestAPIKeyID, apiKeyIDMap)
-		row.RouteCandidateID = remapRequiredID(row.RouteCandidateID, routeCandidateIDMap)
-		row.PriceQuoteID = remapRequiredID(row.PriceQuoteID, priceQuoteIDMap)
+		var err error
+		if row.ChannelId, err = remapImportID("relay_logs", "channel_id", row.ChannelId, channelIDMap); err != nil {
+			return nil, nil, err
+		}
+		if row.RequestAPIKeyID, err = remapImportID(
+			"relay_logs",
+			"request_api_key_id",
+			row.RequestAPIKeyID,
+			apiKeyIDMap,
+		); err != nil {
+			return nil, nil, err
+		}
+		if row.RouteCandidateID, err = remapImportID(
+			"relay_logs",
+			"route_candidate_id",
+			row.RouteCandidateID,
+			routeCandidateIDMap,
+		); err != nil {
+			return nil, nil, err
+		}
+		if row.PriceQuoteID, err = remapImportID(
+			"relay_logs",
+			"price_quote_id",
+			row.PriceQuoteID,
+			priceQuoteIDMap,
+		); err != nil {
+			return nil, nil, err
+		}
 		for attemptIndex := range row.Attempts {
 			attempt := &row.Attempts[attemptIndex]
-			attempt.ChannelID = remapRequiredID(attempt.ChannelID, channelIDMap)
-			attempt.ChannelKeyID = remapRequiredID(attempt.ChannelKeyID, channelKeyIDMap)
-			attempt.RouteCandidateID = remapRequiredID(
+			if attempt.ChannelID, err = remapImportID(
+				"relay_log_attempts",
+				"channel_id",
+				attempt.ChannelID,
+				channelIDMap,
+			); err != nil {
+				return nil, nil, err
+			}
+			if attempt.ChannelKeyID, err = remapImportID(
+				"relay_log_attempts",
+				"channel_key_id",
+				attempt.ChannelKeyID,
+				channelKeyIDMap,
+			); err != nil {
+				return nil, nil, err
+			}
+			if attempt.RouteCandidateID, err = remapImportID(
+				"relay_log_attempts",
+				"route_candidate_id",
 				attempt.RouteCandidateID,
 				routeCandidateIDMap,
-			)
+			); err != nil {
+				return nil, nil, err
+			}
 			if attempt.Usage != nil {
-				attempt.Usage.PriceQuoteID = remapRequiredID(
+				if attempt.Usage.PriceQuoteID, err = remapImportID(
+					"relay_log_attempt_usage",
+					"price_quote_id",
 					attempt.Usage.PriceQuoteID,
 					priceQuoteIDMap,
-				)
+				); err != nil {
+					return nil, nil, err
+				}
 			}
 		}
 		newID, err := resolveRelayLogImportID(tx, *row)
@@ -1045,6 +1122,10 @@ func usageRelayLogIDOccupied(tx *gorm.DB, relayLogID int64) (bool, error) {
 
 func usageRequestFactImportFingerprint(row model.UsageRequestFact) ([]byte, error) {
 	row.RelayLogID = 0
+	// AggregatedAt is worker-owned lifecycle state, not source identity. A
+	// restored fact must remain idempotent after the target aggregate worker
+	// marks it processed.
+	row.AggregatedAt = nil
 	if row.TokenSource == "" {
 		row.TokenSource = model.UsageValueSourceUnknown
 	}
@@ -1058,6 +1139,7 @@ func usageRequestFactImportFingerprint(row model.UsageRequestFact) ([]byte, erro
 
 func usageAttemptFactImportFingerprint(row model.UsageAttemptFact) ([]byte, error) {
 	row.RelayLogID = 0
+	row.AggregatedAt = nil
 	if row.TokenSource == "" {
 		row.TokenSource = model.UsageValueSourceUnknown
 	}
@@ -1153,7 +1235,7 @@ func importUsageTables(
 	routeCandidateIDMap map[int]int,
 	priceQuoteIDMap map[int]int,
 	relayLogIDMap map[int64]int64,
-	clearAggregatedAt bool,
+	sourceAggregateKeys map[string]struct{},
 ) error {
 	requestFacts := append([]model.UsageRequestFact(nil), dump.UsageRequestFacts...)
 	attemptFacts := append([]model.UsageAttemptFact(nil), dump.UsageAttemptFacts...)
@@ -1162,7 +1244,8 @@ func importUsageTables(
 	for index := range requestFacts {
 		row := &requestFacts[index]
 		sourceID := row.RelayLogID
-		remapUsageDimensions(
+		if err := remapUsageDimensions(
+			"usage_request_facts",
 			&row.SiteID,
 			&row.SiteAccountID,
 			&row.ChannelID,
@@ -1173,10 +1256,17 @@ func importUsageTables(
 			channelIDMap,
 			apiKeyIDMap,
 			routeCandidateIDMap,
-		)
-		row.PriceQuoteID = remapRequiredID(row.PriceQuoteID, priceQuoteIDMap)
-		if clearAggregatedAt {
-			row.AggregatedAt = nil
+		); err != nil {
+			return err
+		}
+		var err error
+		if row.PriceQuoteID, err = remapImportID(
+			"usage_request_facts",
+			"price_quote_id",
+			row.PriceQuoteID,
+			priceQuoteIDMap,
+		); err != nil {
+			return err
 		}
 		if remapped, ok := relayLogIDMap[row.RelayLogID]; ok {
 			row.RelayLogID = remapped
@@ -1192,7 +1282,8 @@ func importUsageTables(
 	for index := range attemptFacts {
 		row := &attemptFacts[index]
 		sourceID := row.RelayLogID
-		remapUsageDimensions(
+		if err := remapUsageDimensions(
+			"usage_attempt_facts",
 			&row.SiteID,
 			&row.SiteAccountID,
 			&row.ChannelID,
@@ -1203,10 +1294,17 @@ func importUsageTables(
 			channelIDMap,
 			apiKeyIDMap,
 			routeCandidateIDMap,
-		)
-		row.PriceQuoteID = remapRequiredID(row.PriceQuoteID, priceQuoteIDMap)
-		if clearAggregatedAt {
-			row.AggregatedAt = nil
+		); err != nil {
+			return err
+		}
+		var err error
+		if row.PriceQuoteID, err = remapImportID(
+			"usage_attempt_facts",
+			"price_quote_id",
+			row.PriceQuoteID,
+			priceQuoteIDMap,
+		); err != nil {
+			return err
 		}
 		if remapped, ok := relayLogIDMap[row.RelayLogID]; ok {
 			row.RelayLogID = remapped
@@ -1221,10 +1319,21 @@ func importUsageTables(
 	}
 	for index := range aggregates {
 		row := &aggregates[index]
-		row.SiteID = remapRequiredID(row.SiteID, siteIDMap)
-		row.SiteAccountID = remapRequiredID(row.SiteAccountID, accountIDMap)
-		row.ChannelID = remapRequiredID(row.ChannelID, channelIDMap)
-		row.APIKeyID = remapRequiredID(row.APIKeyID, apiKeyIDMap)
+		if err := remapUsageDimensions(
+			"usage_aggregates",
+			&row.SiteID,
+			&row.SiteAccountID,
+			&row.ChannelID,
+			&row.APIKeyID,
+			nil,
+			siteIDMap,
+			accountIDMap,
+			channelIDMap,
+			apiKeyIDMap,
+			nil,
+		); err != nil {
+			return err
+		}
 		row.AggregateKey = usageAggregateKey(
 			usageAggregateFact{
 				scope:          UsageMetricScope(row.MetricScope),
@@ -1239,6 +1348,55 @@ func importUsageTables(
 			row.Granularity,
 			row.BucketStart,
 		)
+		if _, duplicate := sourceAggregateKeys[row.AggregateKey]; duplicate {
+			return fmt.Errorf(
+				"import usage_aggregates: duplicate source aggregate key %s",
+				row.AggregateKey,
+			)
+		}
+		sourceAggregateKeys[row.AggregateKey] = struct{}{}
+	}
+
+	for index := range requestFacts {
+		row := &requestFacts[index]
+		if row.AggregatedAt == nil {
+			continue
+		}
+		preserve, err := importedFactHasCompleteAggregateSnapshot(
+			usageAggregateFactFromRequest(*row),
+			sourceAggregateKeys,
+		)
+		if err != nil {
+			return fmt.Errorf(
+				"import usage_request_facts: aggregate coverage for relay_log_id %d: %w",
+				row.RelayLogID,
+				err,
+			)
+		}
+		if !preserve {
+			row.AggregatedAt = nil
+		}
+	}
+	for index := range attemptFacts {
+		row := &attemptFacts[index]
+		if row.AggregatedAt == nil {
+			continue
+		}
+		preserve, err := importedFactHasCompleteAggregateSnapshot(
+			usageAggregateFactFromAttempt(*row),
+			sourceAggregateKeys,
+		)
+		if err != nil {
+			return fmt.Errorf(
+				"import usage_attempt_facts: aggregate coverage for %d/%d: %w",
+				row.RelayLogID,
+				row.AttemptNumber,
+				err,
+			)
+		}
+		if !preserve {
+			row.AggregatedAt = nil
+		}
 	}
 
 	for _, row := range requestFacts {
@@ -1261,7 +1419,7 @@ func importUsageTables(
 	} else {
 		result.RowsAffected["usage_attempt_facts"] += n
 	}
-	if n, err := createUpsertAll(tx, aggregates, []clause.Column{{Name: "aggregate_key"}}); err != nil {
+	if n, err := importUsageAggregateSnapshots(tx, aggregates); err != nil {
 		return fmt.Errorf("import usage_aggregates: %w", err)
 	} else {
 		result.RowsAffected["usage_aggregates"] += n
@@ -1269,7 +1427,124 @@ func importUsageTables(
 	return nil
 }
 
+func importedFactHasCompleteAggregateSnapshot(
+	fact usageAggregateFact,
+	sourceAggregateKeys map[string]struct{},
+) (bool, error) {
+	matches := 0
+	for _, granularity := range []model.UsageAggregateGranularity{
+		model.UsageAggregateHourly,
+		model.UsageAggregateDaily,
+	} {
+		bucketStart := usageAggregateBucketStart(fact.time, granularity)
+		key := usageAggregateKey(fact, granularity, bucketStart)
+		if _, ok := sourceAggregateKeys[key]; ok {
+			matches++
+		}
+	}
+	switch matches {
+	case 0:
+		return false, nil
+	case 2:
+		return true, nil
+	default:
+		return false, fmt.Errorf("snapshot must contain both hourly and daily aggregate rows")
+	}
+}
+
+func importUsageAggregateSnapshots(
+	tx *gorm.DB,
+	rows []model.UsageAggregate,
+) (int64, error) {
+	var inserted int64
+	for index := range rows {
+		row := rows[index]
+		var existing model.UsageAggregate
+		err := tx.First(&existing, "aggregate_key = ?", row.AggregateKey).Error
+		if err == nil {
+			if err := validateUsageAggregateSnapshotMatch(tx, existing, row); err != nil {
+				return inserted, err
+			}
+			continue
+		}
+		if !errors.Is(err, gorm.ErrRecordNotFound) {
+			return inserted, err
+		}
+		result := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&row)
+		if result.Error != nil {
+			return inserted, result.Error
+		}
+		if err := tx.First(&existing, "aggregate_key = ?", row.AggregateKey).Error; err != nil {
+			return inserted, err
+		}
+		if err := validateUsageAggregateSnapshotMatch(tx, existing, row); err != nil {
+			return inserted, err
+		}
+		if result.RowsAffected == 1 {
+			inserted++
+		}
+	}
+	return inserted, nil
+}
+
+func validateUsageAggregateSnapshotMatch(
+	tx *gorm.DB,
+	existing model.UsageAggregate,
+	incoming model.UsageAggregate,
+) error {
+	dialect := ""
+	if tx != nil && tx.Dialector != nil {
+		dialect = tx.Dialector.Name()
+	}
+	existingFingerprint, err := usageAggregateImportFingerprint(existing, dialect)
+	if err != nil {
+		return err
+	}
+	incomingFingerprint, err := usageAggregateImportFingerprint(incoming, dialect)
+	if err != nil {
+		return err
+	}
+	if bytes.Equal(existingFingerprint, incomingFingerprint) {
+		return nil
+	}
+	return fmt.Errorf(
+		"aggregate key %s conflicts with different destination metrics",
+		incoming.AggregateKey,
+	)
+}
+
+func usageAggregateImportFingerprint(
+	row model.UsageAggregate,
+	dialect string,
+) ([]byte, error) {
+	row.SiteName = ""
+	row.SiteAccountName = ""
+	row.ChannelName = ""
+	row.APIKeyName = ""
+	row.CreatedAt = time.Time{}
+	row.UpdatedAt = time.Time{}
+	if row.DurationHistogram == nil {
+		row.DurationHistogram = []uint64{}
+	}
+	if row.FTUTHistogram == nil {
+		row.FTUTHistogram = []uint64{}
+	}
+	if dialect == "postgres" {
+		// UsageAggregate.CostUSD is currently stored as PostgreSQL REAL
+		// (float4). Compare snapshots at the destination column precision so a
+		// repeat import does not conflict with the value rounded by PostgreSQL.
+		row.CostUSD = float64(float32(row.CostUSD))
+	}
+	payload, err := json.Marshal(row)
+	if err != nil {
+		return nil, fmt.Errorf("fingerprint aggregate %s: %w", row.AggregateKey, err)
+	}
+	sum := sha256.Sum256(payload)
+	return sum[:], nil
+}
+
 func remapUsageDimensions(
+	table string,
 	siteID *int,
 	accountID *int,
 	channelID *int,
@@ -1280,12 +1555,29 @@ func remapUsageDimensions(
 	channelIDMap map[int]int,
 	apiKeyIDMap map[int]int,
 	routeCandidateIDMap map[int]int,
-) {
-	*siteID = remapRequiredID(*siteID, siteIDMap)
-	*accountID = remapRequiredID(*accountID, accountIDMap)
-	*channelID = remapRequiredID(*channelID, channelIDMap)
-	*apiKeyID = remapRequiredID(*apiKeyID, apiKeyIDMap)
-	*routeCandidateID = remapRequiredID(*routeCandidateID, routeCandidateIDMap)
+) error {
+	fields := []struct {
+		name  string
+		value *int
+		idMap map[int]int
+	}{
+		{name: "site_id", value: siteID, idMap: siteIDMap},
+		{name: "site_account_id", value: accountID, idMap: accountIDMap},
+		{name: "channel_id", value: channelID, idMap: channelIDMap},
+		{name: "api_key_id", value: apiKeyID, idMap: apiKeyIDMap},
+		{name: "route_candidate_id", value: routeCandidateID, idMap: routeCandidateIDMap},
+	}
+	for _, field := range fields {
+		if field.value == nil {
+			continue
+		}
+		targetID, err := remapImportID(table, field.name, *field.value, field.idMap)
+		if err != nil {
+			return err
+		}
+		*field.value = targetID
+	}
+	return nil
 }
 
 func remapHeaderPolicyScopeID(
@@ -1358,14 +1650,16 @@ func normalizePriceQuoteBackup(item *model.SiteModelPriceQuote) {
 	item.RefreshIdentityKey()
 }
 
-func remapRequiredID(value int, idMap map[int]int) int {
+func remapImportID(
+	table string,
+	field string,
+	value int,
+	idMap map[int]int,
+) (int, error) {
 	if value <= 0 {
-		return 0
+		return 0, nil
 	}
-	if remapped, ok := idMap[value]; ok {
-		return remapped
-	}
-	return 0
+	return requireImportID(table, field, value, idMap)
 }
 
 func requireImportID(

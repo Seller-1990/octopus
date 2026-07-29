@@ -74,6 +74,7 @@ func sanitizeSiteAccountsForBackup(accounts []model.SiteAccount) {
 	for index := range accounts {
 		account := &accounts[index]
 		account.VerificationCookieEncrypted = ""
+		account.VerificationSessionFenceID = 0
 		account.VerificationUserAgent = ""
 		account.VerificationProxyConfigID = nil
 		account.VerificationClashNode = ""
@@ -81,18 +82,38 @@ func sanitizeSiteAccountsForBackup(accounts []model.SiteAccount) {
 	}
 }
 
+func sanitizeSettingsForBackup(settings []model.Setting) []model.Setting {
+	result := make([]model.Setting, 0, len(settings))
+	for _, setting := range settings {
+		switch setting.Key {
+		case model.SettingKeyJWTSecret, model.SettingKeyWebDAVPassword:
+			continue
+		default:
+			result = append(result, setting)
+		}
+	}
+	return result
+}
+
 func clashControllerBackupFromModel(item model.ClashController) model.ClashControllerBackup {
 	return model.ClashControllerBackup{
-		ID:              item.ID,
-		Name:            item.Name,
-		APIURL:          item.APIURL,
-		ProxyURL:        item.ProxyURL,
-		GroupName:       item.GroupName,
-		SecretEncrypted: item.SecretEncrypted,
-		Enabled:         item.Enabled,
-		CreatedAt:       item.CreatedAt,
-		UpdatedAt:       item.UpdatedAt,
+		ID:        item.ID,
+		Name:      item.Name,
+		APIURL:    item.APIURL,
+		ProxyURL:  item.ProxyURL,
+		GroupName: item.GroupName,
+		Enabled:   item.Enabled,
+		CreatedAt: item.CreatedAt,
+		UpdatedAt: item.UpdatedAt,
 	}
+}
+
+func writeZipSettings(ctx context.Context, zw *zip.Writer, conn *gorm.DB) error {
+	var settings []model.Setting
+	if err := conn.WithContext(ctx).Find(&settings).Error; err != nil {
+		return fmt.Errorf("zip read settings.json: %w", err)
+	}
+	return writeZipJSON(zw, "settings.json", sanitizeSettingsForBackup(settings))
 }
 
 func writeZipExtendedCoreTables(

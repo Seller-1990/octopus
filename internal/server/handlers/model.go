@@ -249,7 +249,7 @@ func previewModelRoute(c *gin.Context) {
 		resp.InvalidJSON(c)
 		return
 	}
-	canonical, ok := op.CatalogResolveRequest(request.Model)
+	canonical, ok := op.CatalogResolveIdentity(request.Model)
 	groupName := request.Model
 	if ok {
 		groupName = canonical.Name

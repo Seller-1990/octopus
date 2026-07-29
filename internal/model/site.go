@@ -213,51 +213,54 @@ func (s *Site) UnmarshalJSON(data []byte) error {
 }
 
 type SiteAccount struct {
-	ID                          int                  `json:"id" gorm:"primaryKey"`
-	SiteID                      int                  `json:"site_id" gorm:"index;not null"`
-	Name                        string               `json:"name" gorm:"not null"`
-	CredentialType              SiteCredentialType   `json:"credential_type" gorm:"type:varchar(32);not null"`
-	Username                    string               `json:"username"`
-	Password                    string               `json:"password"`
-	AccessToken                 string               `json:"access_token"`
-	APIKey                      string               `json:"api_key"`
-	RefreshToken                string               `json:"refresh_token"`
-	TokenExpiresAt              int64                `json:"token_expires_at" gorm:"default:0"`
-	PlatformUserID              *int                 `json:"platform_user_id"`
-	ProxyMode                   ProxyUsageMode       `json:"proxy_mode" gorm:"type:varchar(16);not null;default:'inherit'"`
-	ProxyConfigID               *int                 `json:"proxy_config_id"`
-	AutoProxyRecovery           *bool                `json:"auto_proxy_recovery,omitempty"`
-	PreferredProxyConfigID      *int                 `json:"preferred_proxy_config_id,omitempty"`
-	PreferredClashNode          string               `json:"preferred_clash_node,omitempty" gorm:"size:191"`
-	VerificationCookieEncrypted string               `json:"-" gorm:"type:text"`
-	VerificationUserAgent       string               `json:"verification_user_agent,omitempty" gorm:"type:text"`
-	VerificationProxyConfigID   *int                 `json:"verification_proxy_config_id,omitempty"`
-	VerificationClashNode       string               `json:"verification_clash_node,omitempty" gorm:"size:191"`
-	VerificationExpiresAt       *time.Time           `json:"verification_expires_at,omitempty"`
-	AccountProxy                *string              `json:"-" gorm:"column:account_proxy"`
-	Enabled                     bool                 `json:"enabled" gorm:"default:true"`
-	EnabledSet                  bool                 `json:"-" gorm:"-"`
-	AutoSync                    bool                 `json:"auto_sync" gorm:"default:true"`
-	AutoSyncSet                 bool                 `json:"-" gorm:"-"`
-	AutoCheckin                 bool                 `json:"auto_checkin" gorm:"default:true"`
-	AutoCheckinSet              bool                 `json:"-" gorm:"-"`
-	RandomCheckin               bool                 `json:"random_checkin" gorm:"default:false"`
-	CheckinIntervalHours        int                  `json:"checkin_interval_hours" gorm:"default:24"`
-	CheckinRandomWindowMinutes  int                  `json:"checkin_random_window_minutes" gorm:"default:120"`
-	Balance                     float64              `json:"balance" gorm:"default:0"`
-	BalanceUsed                 float64              `json:"balance_used" gorm:"default:0"`
-	TodayIncome                 float64              `json:"today_income" gorm:"default:0"`
-	NextAutoCheckinAt           *time.Time           `json:"next_auto_checkin_at"`
-	LastSyncAt                  *time.Time           `json:"last_sync_at"`
-	LastCheckinAt               *time.Time           `json:"last_checkin_at"`
-	LastSyncStatus              SiteExecutionStatus  `json:"last_sync_status" gorm:"type:varchar(16);default:'idle'"`
-	LastCheckinStatus           SiteExecutionStatus  `json:"last_checkin_status" gorm:"type:varchar(16);default:'idle'"`
-	LastSyncMessage             string               `json:"last_sync_message"`
-	LastCheckinMessage          string               `json:"last_checkin_message"`
-	Tokens                      []SiteToken          `json:"tokens,omitempty" gorm:"foreignKey:SiteAccountID"`
-	UserGroups                  []SiteUserGroup      `json:"user_groups,omitempty" gorm:"foreignKey:SiteAccountID"`
-	Models                      []SiteModel          `json:"models,omitempty" gorm:"foreignKey:SiteAccountID"`
-	ChannelBindings             []SiteChannelBinding `json:"channel_bindings,omitempty" gorm:"foreignKey:SiteAccountID"`
+	ID                          int                `json:"id" gorm:"primaryKey"`
+	SiteID                      int                `json:"site_id" gorm:"index;not null"`
+	Name                        string             `json:"name" gorm:"not null"`
+	CredentialType              SiteCredentialType `json:"credential_type" gorm:"type:varchar(32);not null"`
+	Username                    string             `json:"username"`
+	Password                    string             `json:"password"`
+	AccessToken                 string             `json:"access_token"`
+	APIKey                      string             `json:"api_key"`
+	RefreshToken                string             `json:"refresh_token"`
+	TokenExpiresAt              int64              `json:"token_expires_at" gorm:"default:0"`
+	PlatformUserID              *int               `json:"platform_user_id"`
+	ProxyMode                   ProxyUsageMode     `json:"proxy_mode" gorm:"type:varchar(16);not null;default:'inherit'"`
+	ProxyConfigID               *int               `json:"proxy_config_id"`
+	AutoProxyRecovery           *bool              `json:"auto_proxy_recovery,omitempty"`
+	PreferredProxyConfigID      *int               `json:"preferred_proxy_config_id,omitempty"`
+	PreferredClashNode          string             `json:"preferred_clash_node,omitempty" gorm:"size:191"`
+	VerificationCookieEncrypted string             `json:"-" gorm:"type:text"`
+	// VerificationSessionFenceID is a monotonic high-water mark. It is retained
+	// when credentials are cleared so an older session cannot reinstall them.
+	VerificationSessionFenceID int64                `json:"-" gorm:"not null;default:0;index"`
+	VerificationUserAgent      string               `json:"verification_user_agent,omitempty" gorm:"type:text"`
+	VerificationProxyConfigID  *int                 `json:"verification_proxy_config_id,omitempty"`
+	VerificationClashNode      string               `json:"verification_clash_node,omitempty" gorm:"size:191"`
+	VerificationExpiresAt      *time.Time           `json:"verification_expires_at,omitempty"`
+	AccountProxy               *string              `json:"-" gorm:"column:account_proxy"`
+	Enabled                    bool                 `json:"enabled" gorm:"default:true"`
+	EnabledSet                 bool                 `json:"-" gorm:"-"`
+	AutoSync                   bool                 `json:"auto_sync" gorm:"default:true"`
+	AutoSyncSet                bool                 `json:"-" gorm:"-"`
+	AutoCheckin                bool                 `json:"auto_checkin" gorm:"default:true"`
+	AutoCheckinSet             bool                 `json:"-" gorm:"-"`
+	RandomCheckin              bool                 `json:"random_checkin" gorm:"default:false"`
+	CheckinIntervalHours       int                  `json:"checkin_interval_hours" gorm:"default:24"`
+	CheckinRandomWindowMinutes int                  `json:"checkin_random_window_minutes" gorm:"default:120"`
+	Balance                    float64              `json:"balance" gorm:"default:0"`
+	BalanceUsed                float64              `json:"balance_used" gorm:"default:0"`
+	TodayIncome                float64              `json:"today_income" gorm:"default:0"`
+	NextAutoCheckinAt          *time.Time           `json:"next_auto_checkin_at"`
+	LastSyncAt                 *time.Time           `json:"last_sync_at"`
+	LastCheckinAt              *time.Time           `json:"last_checkin_at"`
+	LastSyncStatus             SiteExecutionStatus  `json:"last_sync_status" gorm:"type:varchar(16);default:'idle'"`
+	LastCheckinStatus          SiteExecutionStatus  `json:"last_checkin_status" gorm:"type:varchar(16);default:'idle'"`
+	LastSyncMessage            string               `json:"last_sync_message"`
+	LastCheckinMessage         string               `json:"last_checkin_message"`
+	Tokens                     []SiteToken          `json:"tokens,omitempty" gorm:"foreignKey:SiteAccountID"`
+	UserGroups                 []SiteUserGroup      `json:"user_groups,omitempty" gorm:"foreignKey:SiteAccountID"`
+	Models                     []SiteModel          `json:"models,omitempty" gorm:"foreignKey:SiteAccountID"`
+	ChannelBindings            []SiteChannelBinding `json:"channel_bindings,omitempty" gorm:"foreignKey:SiteAccountID"`
 }
 
 func (a *SiteAccount) UnmarshalJSON(data []byte) error {

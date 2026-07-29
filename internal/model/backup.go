@@ -50,8 +50,9 @@ type DBDump struct {
 	SiteOperationAttempts []SiteOperationAttempt `json:"site_operation_attempts,omitempty"`
 }
 
-// ClashControllerBackup includes the encrypted controller secret without
-// exposing it through the normal ClashController API representation.
+// ClashControllerBackup is the portable controller configuration. New
+// ordinary exports intentionally omit the encrypted secret; legacy imports
+// may still carry it and are rewrapped by the import security gate.
 type ClashControllerBackup struct {
 	ID              int       `json:"id"`
 	Name            string    `json:"name"`
@@ -66,5 +67,13 @@ type ClashControllerBackup struct {
 
 type DBImportResult struct {
 	// RowsAffected contains the rows affected for each table operation (insert/upsert depending on table).
-	RowsAffected map[string]int64 `json:"rows_affected"`
+	RowsAffected map[string]int64  `json:"rows_affected"`
+	Warnings     []DBImportWarning `json:"warnings,omitempty"`
+}
+
+type DBImportWarning struct {
+	Code         string `json:"code"`
+	ResourceType string `json:"resource_type"`
+	ResourceName string `json:"resource_name"`
+	Message      string `json:"message"`
 }

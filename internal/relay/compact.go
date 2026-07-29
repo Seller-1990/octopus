@@ -74,7 +74,11 @@ func HandleResponsesCompact(c *gin.Context) {
 	requestModel := compactReq.Model
 	routingModel := requestModel
 	var canonicalModel *dbmodel.CanonicalModel
-	if canonical, ok := op.CatalogResolveRequest(requestModel); ok {
+	if canonical, ok := op.CatalogResolveIdentity(requestModel); ok {
+		if !canonical.Enabled {
+			resp.ErrorWithCode(c, http.StatusServiceUnavailable, CodeRelayNoAvailableChannel, "model disabled")
+			return
+		}
 		routingModel = canonical.Name
 		canonicalModel = &canonical
 	}
@@ -205,9 +209,7 @@ func HandleResponsesCompact(c *gin.Context) {
 			decision.AllowLossy,
 			decision.Warnings,
 		)
-		if len(decision.Warnings) > 0 {
-			c.Header("X-Octopus-Warning", strings.Join(decision.Warnings, "; "))
-		}
+		setProtocolWarningHeader(c, decision.Warnings)
 
 		selectOpts := dbmodel.ChannelKeySelectOptions{
 			ExcludeKeyIDs:  make(map[int]struct{}),
@@ -261,6 +263,8 @@ func HandleResponsesCompact(c *gin.Context) {
 				usedKey,
 				attemptBody,
 				item.ModelName,
+				metrics.CanonicalModelID,
+				candidateID,
 			)
 			if attemptErr == nil {
 				success = true
@@ -329,6 +333,8 @@ func forwardResponsesCompact(
 	usedKey dbmodel.ChannelKey,
 	requestBody []byte,
 	actualModel string,
+	canonicalModelID int,
+	routeCandidateID int,
 ) (int, time.Duration, error) {
 	span := iter.StartAttempt(channel.ID, usedKey.ID, channel.Name)
 	span.SetRouteCandidateID(metrics.RouteCandidateID)
@@ -338,7 +344,19 @@ func forwardResponsesCompact(
 		return 0, 0, fmt.Errorf("failed to create compact request: %w", err)
 	}
 	metrics.SetTransportRequestPayload(requestBody, metrics.RequestModel)
-	copyProxyHeaders(c.Request.Context(), c.Request.Header, channel, request.Header)
+	policy := copyProxyHeaders(
+		c.Request.Context(),
+		c.Request.Header,
+		channel,
+		request.Header,
+		canonicalModelID,
+		routeCandidateID,
+	)
+	if len(policy.Trace) > 0 {
+		if payload, marshalErr := json.Marshal(policy.Trace); marshalErr == nil {
+			metrics.HeaderPolicyTrace = string(payload)
+		}
+	}
 
 	response, err := sendCompactRequest(channel, request)
 	if err != nil {
@@ -407,8 +425,20 @@ func buildResponsesCompactRequest(ctx context.Context, channel *dbmodel.Channel,
 	return req, nil
 }
 
-func copyProxyHeaders(ctx context.Context, src http.Header, channel *dbmodel.Channel, dst http.Header) {
-	policy, err := op.ResolveHeaderPolicy(ctx, channel.ID, 0, 0)
+func copyProxyHeaders(
+	ctx context.Context,
+	src http.Header,
+	channel *dbmodel.Channel,
+	dst http.Header,
+	canonicalModelID int,
+	routeCandidateID int,
+) dbmodel.ResolvedHeaderPolicy {
+	policy, err := op.ResolveHeaderPolicy(
+		ctx,
+		channel.ID,
+		canonicalModelID,
+		routeCandidateID,
+	)
 	if err != nil {
 		log.Warnf("resolve compact header policy failed (channel=%d): %v", channel.ID, err)
 		policy = op.HeaderPolicyFailureFallback()
@@ -419,6 +449,7 @@ func copyProxyHeaders(ctx context.Context, src http.Header, channel *dbmodel.Cha
 	if dst.Get("User-Agent") == "" {
 		dst.Set("User-Agent", "")
 	}
+	return policy
 }
 
 func copyProxyResponseHeaders(dst http.Header, src http.Header) {

@@ -9,6 +9,7 @@ const (
 	ProtocolOpenAIResponses ProtocolName = "openai_responses"
 	ProtocolAnthropic       ProtocolName = "anthropic"
 	ProtocolGemini          ProtocolName = "gemini"
+	ProtocolVolcengine      ProtocolName = "volcengine"
 	ProtocolOpenAIEmbedding ProtocolName = "openai_embedding"
 	ProtocolUnknown         ProtocolName = "unknown"
 )

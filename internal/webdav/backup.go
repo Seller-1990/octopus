@@ -2,6 +2,8 @@ package webdav
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -31,6 +33,10 @@ type BackupInfo struct {
 }
 
 func RunBackup(ctx context.Context) error {
+	return runBackupWithLimit(ctx, maxWebDAVBackupFileSize)
+}
+
+func runBackupWithLimit(ctx context.Context, maxSize int64) error {
 	cfg, err := LoadConfig()
 	if err != nil {
 		return err
@@ -52,6 +58,9 @@ func RunBackup(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("failed to stat temporary backup: %w", err)
 	}
+	if stat.Size() > maxSize {
+		return fmt.Errorf("backup exceeds upload size limit")
+	}
 	if _, err := temp.Seek(0, io.SeekStart); err != nil {
 		return fmt.Errorf("failed to rewind temporary backup: %w", err)
 	}
@@ -62,7 +71,7 @@ func RunBackup(ctx context.Context) error {
 	}
 	_ = c.MkdirAll(cfg.BackupPath, 0755)
 
-	filename := backupPrefix + time.Now().Format("20060102150405") + backupZipSuffix
+	filename := backupFilename()
 	remotePath := path.Join(cfg.BackupPath, filename)
 
 	if err := c.WriteStreamWithLength(remotePath, temp, stat.Size(), 0644); err != nil {
@@ -73,6 +82,17 @@ func RunBackup(ctx context.Context) error {
 
 	enforceRetention(c, cfg.BackupPath, cfg.RetentionCount)
 	return nil
+}
+
+func backupFilename() string {
+	var suffix [4]byte
+	if _, err := rand.Read(suffix[:]); err != nil {
+		return backupPrefix + time.Now().UTC().Format("20060102150405.000000000") + backupZipSuffix
+	}
+	return backupPrefix +
+		time.Now().UTC().Format("20060102150405.000000000") +
+		"-" + hex.EncodeToString(suffix[:]) +
+		backupZipSuffix
 }
 
 func ListBackups(ctx context.Context) ([]BackupInfo, error) {
@@ -155,7 +175,15 @@ func RestoreFromBackup(ctx context.Context, filename string) (*model.DBImportRes
 		result, err = op.DBImportZip(ctx, temp, written)
 	} else {
 		var dump model.DBDump
-		if err := json.NewDecoder(temp).Decode(&dump); err != nil {
+		decoder := json.NewDecoder(temp)
+		if err := decoder.Decode(&dump); err != nil {
+			return nil, fmt.Errorf("failed to parse backup: %w", err)
+		}
+		var trailing any
+		if err := decoder.Decode(&trailing); err != io.EOF {
+			if err == nil {
+				return nil, fmt.Errorf("failed to parse backup: trailing JSON value")
+			}
 			return nil, fmt.Errorf("failed to parse backup: %w", err)
 		}
 		result, err = op.DBImportIncremental(ctx, &dump)
