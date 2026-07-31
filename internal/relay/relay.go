@@ -673,7 +673,7 @@ func (ra *relayAttempt) attempt() attemptResult {
 	// 注意：熔断器记录已移至 Handler() 的同通道重试循环外，
 	// 避免重试期间过早触发熔断
 
-	firstTokenTimeout := isFirstTokenTimeout(nil, fwdErr)
+	firstTokenTimeout := errors.Is(fwdErr, errFirstTokenTimeout)
 	return attemptResult{
 		Success:              false,
 		Written:              written,
@@ -883,7 +883,9 @@ func (ra *relayAttempt) forwardViaWS(ctx context.Context) (int, error) {
 				return http.StatusConflict, fmt.Errorf("upstream continuation transport unavailable; please restart the conversation")
 			}
 		}
-		wsUpstreamPool.RecordWSFailure(ra.channel.ID)
+		if shouldRecordWSHealthFailure(ctx, err) {
+			wsUpstreamPool.RecordWSFailure(ra.channel.ID)
+		}
 		return -1, nil // fall through to HTTP
 	}
 
@@ -912,7 +914,7 @@ func (ra *relayAttempt) forwardViaWS(ctx context.Context) (int, error) {
 			balancer.DeleteSticky(ra.apiKeyID, ra.requestModel)
 			return http.StatusConflict, fmt.Errorf("upstream continuation transport unavailable; please restart the conversation")
 		}
-		if ra.requestContext().Err() == nil {
+		if shouldRecordWSHealthFailure(ra.requestContext(), err) {
 			wsUpstreamPool.RecordWSFailure(ra.channel.ID)
 		}
 		return reader.StatusCode(), err
@@ -950,7 +952,9 @@ func (ra *relayAttempt) retryViaFreshUpstreamWS(ctx context.Context, reqBody []b
 		log.Warnf("upstream WS redial send failed for channel %s: %v", ra.channel.Name, retryErr)
 		log.Debugf("fresh upstream WS redial send failed (channel=%s, key=%d, err=%v)", ra.channel.Name, ra.usedKey.ID, retryErr)
 		wsUpstreamPool.RemoveConn(redialed)
-		wsUpstreamPool.RecordWSFailure(ra.channel.ID)
+		if shouldRecordWSHealthFailure(ctx, retryErr) {
+			wsUpstreamPool.RecordWSFailure(ra.channel.ID)
+		}
 		if requiresUpstreamWSContinuation(ra.internalRequest) {
 			balancer.DeleteSticky(ra.apiKeyID, ra.requestModel)
 			return http.StatusConflict, fmt.Errorf("upstream continuation transport unavailable; please restart the conversation"), true
@@ -975,7 +979,7 @@ func (ra *relayAttempt) retryViaFreshUpstreamWS(ctx context.Context, reqBody []b
 			balancer.DeleteSticky(ra.apiKeyID, ra.requestModel)
 			return http.StatusConflict, fmt.Errorf("upstream continuation transport unavailable; please restart the conversation"), true
 		}
-		if ra.requestContext().Err() == nil {
+		if shouldRecordWSHealthFailure(ra.requestContext(), streamErr) {
 			wsUpstreamPool.RecordWSFailure(ra.channel.ID)
 		}
 		return reader.StatusCode(), streamErr, true

@@ -99,7 +99,9 @@ func (ra *relayAttempt) forwardViaWSPassthrough(ctx context.Context) (int, error
 				return http.StatusConflict, fmt.Errorf("upstream continuation transport unavailable; please restart the conversation")
 			}
 		}
-		wsUpstreamPool.RecordWSFailure(ra.channel.ID)
+		if shouldRecordWSHealthFailure(ctx, err) {
+			wsUpstreamPool.RecordWSFailure(ra.channel.ID)
+		}
 		return -1, nil
 	}
 
@@ -122,7 +124,7 @@ func (ra *relayAttempt) forwardViaWSPassthrough(ctx context.Context) (int, error
 		if continuation && isContinuationTransportFailure(err) {
 			return http.StatusConflict, fmt.Errorf("upstream continuation transport unavailable; please restart the conversation")
 		}
-		if ra.requestContext().Err() == nil {
+		if shouldRecordWSHealthFailure(ra.requestContext(), err) {
 			wsUpstreamPool.RecordWSFailure(ra.channel.ID)
 		}
 		return http.StatusBadGateway, err
@@ -154,7 +156,9 @@ func (ra *relayAttempt) retryViaFreshUpstreamWSPassthrough(ctx context.Context, 
 	}
 	if err := wsUpstreamPool.SendRaw(ctx, redialed, payload); err != nil {
 		wsUpstreamPool.RemoveConn(redialed)
-		wsUpstreamPool.RecordWSFailure(ra.channel.ID)
+		if shouldRecordWSHealthFailure(ctx, err) {
+			wsUpstreamPool.RecordWSFailure(ra.channel.ID)
+		}
 		if requiresUpstreamWSContinuation(ra.internalRequest) {
 			return http.StatusConflict, fmt.Errorf("upstream continuation transport unavailable; please restart the conversation"), true
 		}
@@ -174,7 +178,7 @@ func (ra *relayAttempt) retryViaFreshUpstreamWSPassthrough(ctx context.Context, 
 		if requiresUpstreamWSContinuation(ra.internalRequest) && isContinuationTransportFailure(err) {
 			return http.StatusConflict, fmt.Errorf("upstream continuation transport unavailable; please restart the conversation"), true
 		}
-		if ra.requestContext().Err() == nil {
+		if shouldRecordWSHealthFailure(ra.requestContext(), err) {
 			wsUpstreamPool.RecordWSFailure(ra.channel.ID)
 		}
 		return http.StatusBadGateway, err, true

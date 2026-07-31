@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 	"unicode"
+	"unicode/utf8"
 
 	"github.com/bestruirui/octopus/internal/op"
 	"github.com/bestruirui/octopus/internal/server/resp"
@@ -190,11 +191,9 @@ func sanitizeUsageCSVCell(value string) string {
 	if trimmed == "" {
 		return value
 	}
-	for _, first := range trimmed {
-		if strings.ContainsRune("=+-@", first) {
-			return "'" + value
-		}
-		break
+	first, _ := utf8.DecodeRuneInString(trimmed)
+	if strings.ContainsRune("=+-@", first) {
+		return "'" + value
 	}
 	return value
 }

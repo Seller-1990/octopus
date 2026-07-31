@@ -19,6 +19,7 @@ import {
 import { createPortal } from 'react-dom';
 import { cn } from '@/lib/utils';
 import { XIcon } from 'lucide-react';
+import { useTranslations } from 'next-intl';
 import useClickOutside from '@/hooks/useClickOutside';
 
 const PORTAL_IGNORED_SLOTS = [
@@ -517,6 +518,7 @@ function MorphingDialogClose({
   variants,
 }: MorphingDialogCloseProps) {
   const { setIsOpen, uniqueId } = useMorphingDialog();
+  const t = useTranslations('common');
 
   const handleClose = useCallback(() => {
     setIsOpen(false);
@@ -526,7 +528,8 @@ function MorphingDialogClose({
     <motion.button
       onClick={handleClose}
       type='button'
-      aria-label='Close dialog'
+      aria-label={t('close')}
+      title={t('close')}
       key={`dialog-close-${uniqueId}`}
       className={cn('absolute top-6 right-6', className)}
       initial='initial'
