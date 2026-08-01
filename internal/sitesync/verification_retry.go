@@ -30,6 +30,29 @@ func retryVerificationSession(
 	if err != nil || work == nil {
 		return err
 	}
+	if work.Session.Source == "browser" {
+		if work.Task.PairingID == nil || *work.Task.PairingID <= 0 {
+			return finishVerificationRetryFailure(
+				work,
+				fmt.Errorf("browser verification retry has no pairing binding"),
+			)
+		}
+		if deadline, ok := ctx.Deadline(); !ok || work.Session.ExpiresAt.Before(deadline) {
+			var cancel context.CancelFunc
+			ctx, cancel = context.WithDeadline(ctx, work.Session.ExpiresAt)
+			defer cancel()
+		}
+		ctx = withVerificationBrowserTransport(
+			ctx,
+			op.VerificationBrowserBinding{
+				PairingID: *work.Task.PairingID,
+				TaskID:    work.Task.ID,
+				SessionID: work.Session.ID,
+				TargetURL: work.Task.TargetURL,
+			},
+			op.VerificationBrowserRequest,
+		)
+	}
 
 	success := false
 	message := ""
@@ -94,4 +117,22 @@ func retryVerificationSession(
 		return fmt.Errorf("%s", message)
 	}
 	return nil
+}
+
+func finishVerificationRetryFailure(
+	work *op.VerificationRetryWork,
+	runErr error,
+) error {
+	finishCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if finishErr := op.VerificationRetryFinish(
+		finishCtx,
+		work.Task.ID,
+		work.Token,
+		model.VerificationRetryFailed,
+		sanitizeSiteStatusMessage(runErr),
+	); finishErr != nil {
+		return fmt.Errorf("%v; persist verification retry result: %w", runErr, finishErr)
+	}
+	return runErr
 }

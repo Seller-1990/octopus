@@ -27,7 +27,7 @@ func VerificationRetryTask() {
 		return
 	}
 	for _, sessionID := range sessionIDs {
-		runCtx, runCancel := context.WithTimeout(ctx, 90*time.Second)
+		runCtx, runCancel := context.WithTimeout(ctx, 3*time.Minute)
 		err := sitesync.RetryVerificationSession(runCtx, sessionID)
 		runCancel()
 		if err != nil {

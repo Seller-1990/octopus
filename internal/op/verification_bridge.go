@@ -101,7 +101,7 @@ func VerificationBridgePairingRevoke(ctx context.Context, id int64) error {
 		return fmt.Errorf("pairing id is required")
 	}
 	now := time.Now()
-	return db.GetDB().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	err := db.GetDB().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		result := tx.Model(&model.VerificationBridgePairing{}).
 			Where("id = ? AND revoked_at IS NULL", id).
 			Update("revoked_at", now)
@@ -113,6 +113,13 @@ func VerificationBridgePairingRevoke(ctx context.Context, id int64) error {
 		}
 		return releaseVerificationTasksForPairing(tx, id, now)
 	})
+	if err == nil {
+		defaultVerificationBrowserBroker.cancelPairing(
+			id,
+			fmt.Errorf("verification bridge pairing was revoked"),
+		)
+	}
+	return err
 }
 
 func VerificationTaskList(

@@ -13,7 +13,7 @@ import (
 )
 
 const (
-	verificationRetryStaleAfter = 2 * time.Minute
+	verificationRetryStaleAfter = 5 * time.Minute
 	verificationRetryMessageMax = 2048
 )
 

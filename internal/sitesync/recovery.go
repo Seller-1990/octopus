@@ -96,9 +96,21 @@ func runSiteOperationWithRecovery[T any](
 	recoveryCtx, cancel := context.WithTimeout(ctx, siteRecoveryBudget)
 	defer cancel()
 
-	paths, err := buildSiteRecoveryPaths(recoveryCtx, siteRecord, account)
-	if err != nil {
-		return zero, err
+	var paths []siteRecoveryPath
+	if _, browserRetry := verificationBrowserTransportFromContext(ctx); browserRetry {
+		proxyMode, proxyConfigID := resolveSiteAccountProxy(siteRecord, account)
+		paths = []siteRecoveryPath{{
+			proxyMode:     proxyMode,
+			proxyConfigID: cloneInt(proxyConfigID),
+			clashNode:     account.PreferredClashNode,
+			label:         "verification-browser",
+		}}
+	} else {
+		var err error
+		paths, err = buildSiteRecoveryPaths(recoveryCtx, siteRecord, account)
+		if err != nil {
+			return zero, err
+		}
 	}
 	if len(paths) == 0 {
 		paths = []siteRecoveryPath{{proxyMode: model.ProxyUsageModeDirect, label: "direct"}}

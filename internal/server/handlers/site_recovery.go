@@ -47,13 +47,18 @@ func init() {
 		Use(middleware.RequireJSON()).
 		AddRoute(router.NewRoute("/verification", http.MethodPost).Handle(createVerificationSession)).
 		AddRoute(router.NewRoute("/verification/:id/complete", http.MethodPost).Handle(manualCompleteVerificationSession)).
-		AddRoute(router.NewRoute("/verification/pairings", http.MethodPost).Handle(createVerificationPairing))
+		AddRoute(router.NewRoute("/verification/pairings", http.MethodPost).Handle(createVerificationPairing)).
+		AddRoute(router.NewRoute("/verification/pairings/:id/rotate", http.MethodPost).Handle(rotateVerificationPairing))
 
 	router.NewGroupRouter("/api/v1/site/recovery/verification/bridge").
 		Use(middleware.RequireJSON()).
+		AddRoute(router.NewRoute("/identify", http.MethodPost).Handle(identifyVerificationBridge)).
 		AddRoute(router.NewRoute("/claim", http.MethodPost).Handle(claimVerificationTask)).
 		AddRoute(router.NewRoute("/release", http.MethodPost).Handle(releaseVerificationTask)).
-		AddRoute(router.NewRoute("/complete", http.MethodPost).Handle(completeVerificationTask))
+		AddRoute(router.NewRoute("/complete", http.MethodPost).Handle(completeVerificationTask)).
+		AddRoute(router.NewRoute("/browser/ready", http.MethodPost).Handle(readyVerificationBrowser)).
+		AddRoute(router.NewRoute("/browser/request/claim", http.MethodPost).Handle(claimVerificationBrowserRequest)).
+		AddRoute(router.NewRoute("/browser/request/complete", http.MethodPost).Handle(completeVerificationBrowserRequest))
 }
 
 func listClashControllers(c *gin.Context) {
@@ -273,6 +278,20 @@ func revokeVerificationPairing(c *gin.Context) {
 	resp.Success(c, nil)
 }
 
+func rotateVerificationPairing(c *gin.Context) {
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil || id <= 0 {
+		resp.InvalidParam(c)
+		return
+	}
+	item, err := op.VerificationBridgePairingRotate(c.Request.Context(), id)
+	if err != nil {
+		resp.Error(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	resp.Success(c, item)
+}
+
 func listVerificationTasks(c *gin.Context) {
 	accountID, ok := optionalPositiveIntQuery(c, "account_id")
 	if !ok {
@@ -296,6 +315,25 @@ func claimVerificationTask(c *gin.Context) {
 		return
 	}
 	item, err := op.VerificationTaskClaim(c.Request.Context(), request.PairingToken)
+	if err != nil {
+		resp.Error(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	resp.Success(c, item)
+}
+
+func identifyVerificationBridge(c *gin.Context) {
+	var request struct {
+		PairingToken string `json:"pairing_token" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&request); err != nil {
+		resp.InvalidJSON(c)
+		return
+	}
+	item, err := op.VerificationBridgeIdentify(
+		c.Request.Context(),
+		request.PairingToken,
+	)
 	if err != nil {
 		resp.Error(c, http.StatusBadRequest, err.Error())
 		return
@@ -342,6 +380,70 @@ func releaseVerificationTask(c *gin.Context) {
 		c.Request.Context(),
 		request.PairingToken,
 		request.TaskToken,
+	); err != nil {
+		resp.Error(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	resp.Success(c, nil)
+}
+
+func readyVerificationBrowser(c *gin.Context) {
+	var request struct {
+		PairingToken string `json:"pairing_token" binding:"required"`
+		TaskToken    string `json:"task_token" binding:"required"`
+		UserAgent    string `json:"user_agent,omitempty"`
+	}
+	if err := c.ShouldBindJSON(&request); err != nil {
+		resp.InvalidJSON(c)
+		return
+	}
+	item, err := op.VerificationTaskBrowserReady(
+		c.Request.Context(),
+		request.PairingToken,
+		request.TaskToken,
+		request.UserAgent,
+	)
+	if err != nil {
+		resp.Error(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	scheduleVerificationRetry(item.Session.ID)
+	resp.Success(c, item)
+}
+
+func claimVerificationBrowserRequest(c *gin.Context) {
+	var request struct {
+		PairingToken string `json:"pairing_token" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&request); err != nil {
+		resp.InvalidJSON(c)
+		return
+	}
+	item, err := op.VerificationBrowserRequestClaim(
+		c.Request.Context(),
+		request.PairingToken,
+	)
+	if err != nil {
+		resp.Error(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	resp.Success(c, item)
+}
+
+func completeVerificationBrowserRequest(c *gin.Context) {
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 5<<20)
+	var request struct {
+		PairingToken string `json:"pairing_token" binding:"required"`
+		op.VerificationBrowserRequestCompletion
+	}
+	if err := c.ShouldBindJSON(&request); err != nil {
+		resp.InvalidJSON(c)
+		return
+	}
+	if err := op.VerificationBrowserRequestComplete(
+		c.Request.Context(),
+		request.PairingToken,
+		request.VerificationBrowserRequestCompletion,
 	); err != nil {
 		resp.Error(c, http.StatusBadRequest, err.Error())
 		return
@@ -416,7 +518,7 @@ func scheduleVerificationRetry(sessionID int64) {
 		return
 	}
 	safe.Go("site-verification-retry", func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 		defer cancel()
 		if err := sitesync.RetryVerificationSession(ctx, sessionID); err != nil {
 			log.Warnw(

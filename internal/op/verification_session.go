@@ -217,7 +217,7 @@ func VerificationSessionRevoke(ctx context.Context, id int64) error {
 	if id <= 0 {
 		return fmt.Errorf("verification session id is required")
 	}
-	return db.GetDB().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	err := db.GetDB().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var session model.VerificationSession
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&session, id).Error; err != nil {
 			return fmt.Errorf("verification session not found")
@@ -244,19 +244,26 @@ func VerificationSessionRevoke(ctx context.Context, id int64) error {
 			).
 			Updates(clearedVerificationCredentialFields()).Error
 	})
+	if err == nil {
+		defaultVerificationBrowserBroker.cancelSession(
+			id,
+			fmt.Errorf("verification session was revoked"),
+		)
+	}
+	return err
 }
 
 func VerificationSessionClearAccount(ctx context.Context, accountID int) error {
 	if accountID <= 0 {
 		return fmt.Errorf("site account id is required")
 	}
-	return db.GetDB().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	var sessionIDs []int64
+	err := db.GetDB().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var account model.SiteAccount
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
 			First(&account, accountID).Error; err != nil {
 			return fmt.Errorf("site account not found")
 		}
-		var sessionIDs []int64
 		if err := tx.Model(&model.VerificationSession{}).
 			Where("site_account_id = ? AND status IN ?", accountID, []model.VerificationSessionStatus{
 				model.VerificationSessionPending,
@@ -303,6 +310,15 @@ func VerificationSessionClearAccount(ctx context.Context, accountID int) error {
 			Where("id = ?", accountID).
 			Updates(fields).Error
 	})
+	if err == nil {
+		for _, sessionID := range sessionIDs {
+			defaultVerificationBrowserBroker.cancelSession(
+				sessionID,
+				fmt.Errorf("verification account session was cleared"),
+			)
+		}
+	}
+	return err
 }
 
 func VerificationHeadersForAccount(
@@ -467,6 +483,7 @@ func expireVerificationSession(tx *gorm.DB, session *model.VerificationSession, 
 
 func VerificationSessionCleanup(ctx context.Context, now time.Time) (int64, error) {
 	var cleaned int64
+	var expiredSessionIDs []int64
 	err := db.GetDB().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if err := refreshVerificationTaskClaims(tx, now); err != nil {
 			return err
@@ -489,10 +506,19 @@ func VerificationSessionCleanup(ctx context.Context, now time.Time) (int64, erro
 			if err := expireVerificationSession(tx, &sessions[index], now); err != nil {
 				return err
 			}
+			expiredSessionIDs = append(expiredSessionIDs, sessions[index].ID)
 			cleaned++
 		}
 		return nil
 	})
+	if err == nil {
+		for _, sessionID := range expiredSessionIDs {
+			defaultVerificationBrowserBroker.cancelSession(
+				sessionID,
+				fmt.Errorf("verification session expired"),
+			)
+		}
+	}
 	return cleaned, err
 }
 

@@ -54,21 +54,24 @@ func resolveSiteAccountProxy(siteRecord *model.Site, accounts ...*model.SiteAcco
 }
 
 func requestJSON(ctx context.Context, siteRecord *model.Site, method string, requestURL string, body any, headers map[string]string, accounts ...*model.SiteAccount) (map[string]any, error) {
-	httpClient, err := siteHTTPClient(ctx, siteRecord, accounts...)
-	if err != nil {
-		return nil, err
+	if siteRecord == nil {
+		return nil, fmt.Errorf("site is nil")
 	}
-
-	var bodyReader io.Reader
+	var payloadBytes []byte
+	var err error
 	if body != nil {
-		payload, marshalErr := json.Marshal(body)
-		if marshalErr != nil {
-			return nil, marshalErr
+		payloadBytes, err = json.Marshal(body)
+		if err != nil {
+			return nil, err
 		}
-		bodyReader = bytes.NewReader(payload)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, method, requestURL, bodyReader)
+	req, err := http.NewRequestWithContext(
+		ctx,
+		method,
+		requestURL,
+		bytes.NewReader(payloadBytes),
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -79,6 +82,28 @@ func requestJSON(ctx context.Context, siteRecord *model.Site, method string, req
 	verificationCookie, verificationUserAgent := siteVerificationHeaders(ctx, siteRecord, account)
 	applyTrustedSiteRequestHeaders(req.Header, headers, verificationCookie, verificationUserAgent)
 
+	if transport, ok := verificationBrowserTransportFromContext(ctx); ok {
+		response, err := transport.request(ctx, op.VerificationBrowserRequestInput{
+			Binding: transport.binding,
+			Method:  req.Method,
+			URL:     req.URL.String(),
+			Headers: verificationBrowserHeaders(req.Header),
+			Body:    string(payloadBytes),
+		})
+		if err != nil {
+			return nil, err
+		}
+		return parseSiteJSONResponse(
+			response.Status,
+			verificationBrowserResponseHeader(response.Headers),
+			[]byte(response.Body),
+		)
+	}
+
+	httpClient, err := siteHTTPClient(ctx, siteRecord, accounts...)
+	if err != nil {
+		return nil, err
+	}
 	resp, err := httpClient.Do(req)
 	if err != nil {
 		return nil, err
@@ -89,19 +114,28 @@ func requestJSON(ctx context.Context, siteRecord *model.Site, method string, req
 	if err != nil {
 		return nil, err
 	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, formatSiteHTTPError(resp.StatusCode, resp.Header, bodyBytes)
+	return parseSiteJSONResponse(resp.StatusCode, resp.Header, bodyBytes)
+}
+
+func parseSiteJSONResponse(
+	statusCode int,
+	header http.Header,
+	bodyBytes []byte,
+) (map[string]any, error) {
+	if statusCode < 200 || statusCode >= 300 {
+		return nil, formatSiteHTTPError(statusCode, header, bodyBytes)
 	}
 	if len(bodyBytes) == 0 {
 		return map[string]any{}, nil
 	}
-
 	var payload map[string]any
 	if err := json.Unmarshal(bodyBytes, &payload); err != nil {
-		if IsCloudflareProtectionResponse(resp.StatusCode, resp.Header, bodyBytes) {
-			return nil, wrapCloudflareProtectionError(newCloudflareProtectionError(resp.StatusCode, resp.Header))
+		if IsCloudflareProtectionResponse(statusCode, header, bodyBytes) {
+			return nil, wrapCloudflareProtectionError(
+				newCloudflareProtectionError(statusCode, header),
+			)
 		}
-		return nil, formatSiteDecodeError(resp.Header.Get("Content-Type"), bodyBytes, err)
+		return nil, formatSiteDecodeError(header.Get("Content-Type"), bodyBytes, err)
 	}
 	return payload, nil
 }

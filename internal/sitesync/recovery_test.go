@@ -427,6 +427,99 @@ func TestRetryVerificationSessionRunsOriginalOperation(t *testing.T) {
 	}
 }
 
+func TestRetryVerificationSessionInjectsBrowserTransport(t *testing.T) {
+	ctx := setupProjectTestDB(t)
+	siteRecord, account := createRecoveryFixture(t, ctx)
+	now := time.Now()
+	pairingID := int64(77)
+	session := model.VerificationSession{
+		SiteID:        siteRecord.ID,
+		SiteAccountID: account.ID,
+		Status:        model.VerificationSessionCompleted,
+		ExpiresAt:     now.Add(time.Hour),
+		CompletedAt:   &now,
+		Source:        "browser",
+	}
+	if err := dbpkg.GetDB().WithContext(ctx).Create(&session).Error; err != nil {
+		t.Fatalf("create browser verification session: %v", err)
+	}
+	task := model.VerificationTask{
+		SessionID:   session.ID,
+		PairingID:   &pairingID,
+		Status:      model.VerificationTaskCompleted,
+		TargetURL:   siteRecord.BaseURL,
+		TargetHost:  "api.example.com",
+		ExpiresAt:   session.ExpiresAt,
+		CompletedAt: &now,
+		Operation:   model.SiteOperationCheckin,
+		RetryStatus: model.VerificationRetryPending,
+	}
+	if err := dbpkg.GetDB().WithContext(ctx).Create(&task).Error; err != nil {
+		t.Fatalf("create browser verification task: %v", err)
+	}
+
+	err := retryVerificationSession(ctx, session.ID, verificationRetryRunner{
+		checkinAccount: func(runCtx context.Context, accountID int) (*model.SiteCheckinResult, error) {
+			transport, ok := verificationBrowserTransportFromContext(runCtx)
+			if !ok ||
+				transport.binding.PairingID != pairingID ||
+				transport.binding.TaskID != task.ID ||
+				transport.binding.SessionID != session.ID ||
+				transport.binding.TargetURL != siteRecord.BaseURL {
+				t.Fatalf("browser transport binding missing from retry context: %+v", transport)
+			}
+			return &model.SiteCheckinResult{
+				AccountID: accountID,
+				SiteID:    siteRecord.ID,
+				Status:    model.SiteExecutionStatusSuccess,
+				Message:   "browser checkin restored",
+			}, nil
+		},
+	})
+	if err != nil {
+		t.Fatalf("retry browser verification: %v", err)
+	}
+}
+
+func TestRunSiteOperationWithBrowserTransportDoesNotDuplicateRequests(t *testing.T) {
+	ctx := setupProjectTestDB(t)
+	siteRecord, account := createRecoveryFixture(t, ctx)
+	ctx = withVerificationBrowserTransport(
+		ctx,
+		op.VerificationBrowserBinding{
+			PairingID: 1,
+			TaskID:    2,
+			SessionID: 3,
+			TargetURL: siteRecord.BaseURL,
+		},
+		nil,
+	)
+	calls := 0
+	_, err := runSiteOperationWithRecovery(
+		ctx,
+		&siteRecord,
+		&account,
+		model.SiteOperationCheckin,
+		func(context.Context, *model.Site, *model.SiteAccount) (string, error) {
+			calls++
+			return "", newSiteHTTPError(http.StatusBadGateway, "browser request failed")
+		},
+	)
+	if err == nil {
+		t.Fatal("expected browser recovery operation to fail")
+	}
+	if calls != 1 {
+		t.Fatalf("browser request was automatically reissued %d times", calls)
+	}
+	var attempts []model.SiteOperationAttempt
+	if err := dbpkg.GetDB().WithContext(ctx).Find(&attempts).Error; err != nil {
+		t.Fatalf("load browser recovery attempts: %v", err)
+	}
+	if len(attempts) != 1 || attempts[0].PathLabel != "verification-browser" {
+		t.Fatalf("unexpected browser recovery attempts: %+v", attempts)
+	}
+}
+
 func createRecoveryFixture(t *testing.T, ctx context.Context) (model.Site, model.SiteAccount) {
 	t.Helper()
 	siteRecord := model.Site{
