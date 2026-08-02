@@ -74,6 +74,8 @@ export type CanonicalModel = {
     id: number;
     name: string;
     normalized_name: string;
+    vendor: string;
+    vendor_manual: boolean;
     routing_strategy: RoutingStrategy;
     protocol_policy: Exclude<ProtocolPolicy, 'inherit'>;
     allow_lossy: boolean;
@@ -88,7 +90,7 @@ export type CanonicalModel = {
 export type CanonicalModelUpdate = Pick<
     CanonicalModel,
     'id' | 'routing_strategy' | 'protocol_policy' | 'allow_lossy' | 'enabled'
->;
+> & { vendor?: string };
 
 export type RouteCandidateUpdate = Pick<
     RouteCandidate,
@@ -109,6 +111,52 @@ export type CatalogSyncResult = {
     archived: number;
     groups_created: number;
     group_items_created: number;
+    skipped: number;
+};
+
+export type DiscoveredModelStatus = 'ungrouped' | 'grouped' | 'mapped';
+
+export type DiscoveredModel = {
+    name: string;
+    normalized_name: string;
+    vendor: string;
+    vendor_manual: boolean;
+    status: DiscoveredModelStatus;
+    canonical_model_id?: number;
+    canonical_name?: string;
+    group_id?: number;
+    group_name?: string;
+    channel_count: number;
+    channel_ids: number[];
+    site_names?: string[];
+    endpoint_types?: string[];
+};
+
+export type CatalogProvisionRequest = {
+    models: string[];
+    target_name?: string;
+    delete_empty_source_groups?: boolean;
+};
+
+export type CatalogProvisionResult = {
+    canonicals_created: number;
+    groups_created: number;
+    aliases_created: number;
+    canonicals_merged: number;
+    groups_deleted: number;
+    group_items_created: number;
+};
+
+export type CatalogUnprovisionRequest = {
+    models: string[];
+    delete_group?: boolean;
+};
+
+export type CatalogUnprovisionResult = {
+    aliases_removed: number;
+    canonicals_removed: number;
+    groups_deleted: number;
+    group_items_removed: number;
 };
 
 export type FeatureCapability = 'native' | 'transformed' | 'degraded' | 'unsupported';
@@ -167,6 +215,40 @@ function invalidateCatalog(queryClient: ReturnType<typeof useQueryClient>) {
     queryClient.invalidateQueries({ queryKey: ['header-policies'] });
 }
 
+// 供给/回收会改动分组本身，除目录缓存外还要让分组与发现列表失效。
+function invalidateProvisioning(queryClient: ReturnType<typeof useQueryClient>) {
+    invalidateCatalog(queryClient);
+    queryClient.invalidateQueries({ queryKey: ['models', 'discovered'] });
+    queryClient.invalidateQueries({ queryKey: ['groups'] });
+}
+
+export function useDiscoveredModels() {
+    return useQuery({
+        queryKey: ['models', 'discovered'],
+        queryFn: () => apiClient.get<DiscoveredModel[]>('/api/v1/model/catalog/discovered'),
+        select: (items) => items ?? [],
+        refetchInterval: 30000,
+    });
+}
+
+export function useProvisionModels() {
+    const queryClient = useQueryClient();
+    return useMutation({
+        mutationFn: (payload: CatalogProvisionRequest) =>
+            apiClient.post<CatalogProvisionResult>('/api/v1/model/catalog/provision', payload),
+        onSuccess: () => invalidateProvisioning(queryClient),
+    });
+}
+
+export function useUnprovisionModels() {
+    const queryClient = useQueryClient();
+    return useMutation({
+        mutationFn: (payload: CatalogUnprovisionRequest) =>
+            apiClient.post<CatalogUnprovisionResult>('/api/v1/model/catalog/unprovision', payload),
+        onSuccess: () => invalidateProvisioning(queryClient),
+    });
+}
+
 export function useModelCatalog() {
     return useQuery({
         queryKey: ['models', 'catalog'],
@@ -185,7 +267,7 @@ export function useSyncModelCatalog() {
     const queryClient = useQueryClient();
     return useMutation({
         mutationFn: () => apiClient.post<CatalogSyncResult>('/api/v1/model/catalog/sync', {}),
-        onSuccess: () => invalidateCatalog(queryClient),
+        onSuccess: () => invalidateProvisioning(queryClient),
     });
 }
 

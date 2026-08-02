@@ -52,6 +52,10 @@ func init() {
 				Handle(listModelCatalog),
 		).
 		AddRoute(
+			router.NewRoute("/catalog/discovered", http.MethodGet).
+				Handle(listDiscoveredModels),
+		).
+		AddRoute(
 			router.NewRoute("/prices", http.MethodGet).
 				Handle(listSiteModelPrices),
 		).
@@ -67,6 +71,8 @@ func init() {
 		Use(middleware.Auth()).
 		Use(middleware.RequireJSON()).
 		AddRoute(router.NewRoute("/catalog/sync", http.MethodPost).Handle(syncModelCatalog)).
+		AddRoute(router.NewRoute("/catalog/provision", http.MethodPost).Handle(provisionModelCatalog)).
+		AddRoute(router.NewRoute("/catalog/unprovision", http.MethodPost).Handle(unprovisionModelCatalog)).
 		AddRoute(router.NewRoute("/catalog/alias", http.MethodPost).Handle(upsertModelAlias)).
 		AddRoute(router.NewRoute("/catalog/canonical", http.MethodPost).Handle(updateCanonicalModel)).
 		AddRoute(router.NewRoute("/catalog/candidate", http.MethodPost).Handle(updateRouteCandidate)).
@@ -175,6 +181,43 @@ func syncModelCatalog(c *gin.Context) {
 	result, err := op.CatalogSync(c.Request.Context())
 	if err != nil {
 		resp.Error(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+	resp.Success(c, result)
+}
+
+func listDiscoveredModels(c *gin.Context) {
+	items, err := op.CatalogDiscoveredModels(c.Request.Context())
+	if err != nil {
+		resp.Error(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+	resp.Success(c, items)
+}
+
+func provisionModelCatalog(c *gin.Context) {
+	var request model.CatalogProvisionRequest
+	if err := c.ShouldBindJSON(&request); err != nil {
+		resp.InvalidJSON(c)
+		return
+	}
+	result, err := op.CatalogProvision(c.Request.Context(), request)
+	if err != nil {
+		resp.ErrorWithAppError(c, http.StatusInternalServerError, err)
+		return
+	}
+	resp.Success(c, result)
+}
+
+func unprovisionModelCatalog(c *gin.Context) {
+	var request model.CatalogUnprovisionRequest
+	if err := c.ShouldBindJSON(&request); err != nil {
+		resp.InvalidJSON(c)
+		return
+	}
+	result, err := op.CatalogUnprovision(c.Request.Context(), request)
+	if err != nil {
+		resp.ErrorWithAppError(c, http.StatusInternalServerError, err)
 		return
 	}
 	resp.Success(c, result)

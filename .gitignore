@@ -14,3 +14,4 @@ docs/*
 docs/adr/*
 !docs/adr/*.md
 .impeccable.md
+.DS_Store

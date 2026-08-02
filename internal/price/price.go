@@ -12,11 +12,22 @@ import (
 	"github.com/bestruirui/octopus/internal/client"
 	"github.com/bestruirui/octopus/internal/globalprice"
 	"github.com/bestruirui/octopus/internal/model"
+	"github.com/bestruirui/octopus/internal/modelvendor"
 	"github.com/bestruirui/octopus/internal/op"
 	"github.com/bestruirui/octopus/internal/utils/log"
 )
 
 const llmPriceUrl = "https://models.dev/api.json"
+
+// registryModel 是 models.dev 中单个模型条目，只取本项目用得到的字段。
+type registryModel struct {
+	ID   string         `json:"id"`
+	Cost model.LLMPrice `json:"cost"`
+}
+
+type registryProvider struct {
+	Models map[string]registryModel `json:"models"`
+}
 
 var Provider = []string{
 	"openai",     // GPT 系列
@@ -56,12 +67,7 @@ func UpdateLLMPrice(ctx context.Context) error {
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("failed to fetch LLM info: %s", resp.Status)
 	}
-	var rawPrice map[string]struct {
-		Models map[string]struct {
-			ID   string         `json:"id"`
-			Cost model.LLMPrice `json:"cost"`
-		} `json:"models"`
-	}
+	var rawPrice map[string]registryProvider
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return fmt.Errorf("failed to read response body: %w", err)
@@ -77,8 +83,28 @@ func UpdateLLMPrice(ctx context.Context) error {
 		}
 	}
 	globalprice.Replace(prices)
+	modelvendor.ReplaceIndex(vendorIndex(rawPrice))
 	lastUpdateTime = time.Now()
 	return nil
+}
+
+// vendorIndex 把 models.dev 的 provider→models 结构翻成「模型名 → provider」索引。
+// 这里刻意不套用 Provider 价格白名单：厂商识别需要更宽的覆盖面，
+// 由 modelvendor.ReplaceIndex 负责裁掉 openrouter/groq 这类托管方。
+func vendorIndex(raw map[string]registryProvider) map[string]string {
+	index := make(map[string]string)
+	for provider, entry := range raw {
+		for key, item := range entry.Models {
+			for _, name := range []string{key, item.ID} {
+				name = strings.ToLower(strings.TrimSpace(name))
+				if name == "" {
+					continue
+				}
+				index[name] = provider
+			}
+		}
+	}
+	return index
 }
 
 func GetLastUpdateTime() time.Time {

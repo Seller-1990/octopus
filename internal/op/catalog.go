@@ -11,9 +11,9 @@ import (
 
 	"github.com/bestruirui/octopus/internal/db"
 	"github.com/bestruirui/octopus/internal/model"
+	"github.com/bestruirui/octopus/internal/modelvendor"
 	"github.com/bestruirui/octopus/internal/transformer/outbound"
 	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 )
 
 const routeCandidateArchiveAfter = 30 * 24 * time.Hour
@@ -124,14 +124,17 @@ func CatalogSync(ctx context.Context) (model.CatalogSyncResult, error) {
 		}
 	}
 
+	provisioning := CatalogGroupProvisioningMode()
 	err := db.GetDB().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var canonicals []model.CanonicalModel
 		if err := tx.Find(&canonicals).Error; err != nil {
 			return err
 		}
 		canonicalByName := make(map[string]*model.CanonicalModel, len(canonicals))
+		canonicalByRecordID := make(map[int]*model.CanonicalModel, len(canonicals))
 		for i := range canonicals {
 			canonicalByName[canonicals[i].NormalizedName] = &canonicals[i]
+			canonicalByRecordID[canonicals[i].ID] = &canonicals[i]
 		}
 
 		var groups []model.Group
@@ -221,6 +224,8 @@ func CatalogSync(ctx context.Context) (model.CatalogSyncResult, error) {
 		})
 
 		seenCandidateIDs := make(map[int]struct{})
+		// 同一个模型可能来自多个渠道，跳过数按模型去重，与界面「N 个模型未选中」的口径一致。
+		skippedModels := make(map[string]struct{})
 		for _, item := range sources {
 			normalized := NormalizeModelIdentity(item.canonicalName)
 			if normalized == "" {
@@ -230,22 +235,25 @@ func CatalogSync(ctx context.Context) (model.CatalogSyncResult, error) {
 			canonical := canonicalByName[normalized]
 			if canonical == nil {
 				if canonicalID := aliasCanonical[normalized]; canonicalID > 0 {
-					for i := range canonicals {
-						if canonicals[i].ID == canonicalID {
-							canonical = &canonicals[i]
-							break
-						}
-					}
+					canonical = canonicalByRecordID[canonicalID]
 				}
 			}
+			namedGroup := groupByNormalized[normalized]
 			if canonical == nil {
+				// 手动供给模式下只接纳用户已经建好分组的模型，其余留给「模型发现」界面挑选，
+				// 否则接一个聚合站就会凭空冒出几百个分组。
+				if provisioning == model.CatalogGroupProvisioningManual && namedGroup == nil {
+					skippedModels[normalized] = struct{}{}
+					continue
+				}
 				displayName := strings.TrimSpace(item.canonicalName)
-				if group := groupByNormalized[normalized]; group != nil {
-					displayName = group.Name
+				if namedGroup != nil {
+					displayName = namedGroup.Name
 				}
 				created := model.CanonicalModel{
 					Name:            displayName,
 					NormalizedName:  normalized,
+					Vendor:          modelvendor.Detect(displayName),
 					RoutingStrategy: model.RoutingStrategyBalanced,
 					ProtocolPolicy:  model.ProtocolPolicyAuto,
 					Enabled:         true,
@@ -253,14 +261,26 @@ func CatalogSync(ctx context.Context) (model.CatalogSyncResult, error) {
 				if err := tx.Create(&created).Error; err != nil {
 					return err
 				}
-				canonicals = append(canonicals, created)
-				canonical = &canonicals[len(canonicals)-1]
+				canonical = &created
 				canonicalByName[normalized] = canonical
+				canonicalByRecordID[created.ID] = canonical
 				result.CanonicalCreated++
+			} else if canonical.Vendor == "" && !canonical.VendorManual {
+				if vendor := modelvendor.Detect(canonical.Name); vendor != "" {
+					if err := tx.Model(&model.CanonicalModel{}).Where("id = ?", canonical.ID).
+						Update("vendor", vendor).Error; err != nil {
+						return err
+					}
+					canonical.Vendor = vendor
+				}
 			}
 
 			group := groupByNormalized[NormalizeModelIdentity(canonical.Name)]
 			if group == nil {
+				if provisioning == model.CatalogGroupProvisioningManual {
+					skippedModels[normalized] = struct{}{}
+					continue
+				}
 				created := model.Group{
 					Name:              canonical.Name,
 					Mode:              model.GroupModeRoundRobin,
@@ -271,96 +291,42 @@ func CatalogSync(ctx context.Context) (model.CatalogSyncResult, error) {
 				if err := tx.Create(&created).Error; err != nil {
 					return err
 				}
-				groups = append(groups, created)
-				group = &groups[len(groups)-1]
+				group = &created
 				groupByNormalized[NormalizeModelIdentity(created.Name)] = group
 				result.GroupsCreated++
 			}
 
-			hasGroupItem := false
-			for _, groupItem := range group.Items {
-				if groupItem.ChannelID == item.channel.ID &&
-					groupItem.ModelName == item.upstreamName {
-					hasGroupItem = true
-					break
-				}
-			}
-			if !hasGroupItem {
-				groupItem := model.GroupItem{
-					GroupID:   group.ID,
-					ChannelID: item.channel.ID,
-					ModelName: item.upstreamName,
-					Priority:  len(group.Items) + 1,
-					Weight:    1,
-				}
-				if err := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&groupItem).Error; err != nil {
-					return err
-				}
-				group.Items = append(group.Items, groupItem)
-				item.priority = groupItem.Priority
-				item.weight = groupItem.Weight
-				result.GroupItemsCreated++
-			}
-
-			status := model.RouteCandidateActive
-			if !item.channel.Enabled {
-				status = model.RouteCandidateDisabled
-			}
-			candidate := model.RouteCandidate{
-				CanonicalModelID:  canonical.ID,
-				ChannelID:         item.channel.ID,
-				UpstreamModelName: item.upstreamName,
-				Status:            status,
-				Priority:          item.priority,
-				Weight:            item.weight,
-				LastSeenAt:        now,
+			wiring := catalogWiring{
+				canonical:    canonical,
+				group:        group,
+				channel:      item.channel,
+				upstreamName: item.upstreamName,
+				priority:     item.priority,
+				weight:       item.weight,
+				now:          now,
 			}
 			if binding, ok := bindingByChannel[item.channel.ID]; ok {
-				siteID := binding.SiteID
-				accountID := binding.SiteAccountID
-				baseGroup, _ := model.ParseSiteChannelBindingKey(binding.GroupKey)
-				candidate.SiteID = &siteID
-				candidate.SiteAccountID = &accountID
-				candidate.SiteGroupKey = baseGroup
+				wiring.binding = &binding
 			}
-
-			var existing model.RouteCandidate
-			err := tx.Where(
-				"canonical_model_id = ? AND channel_id = ? AND upstream_model_name = ?",
-				candidate.CanonicalModelID,
-				candidate.ChannelID,
-				candidate.UpstreamModelName,
-			).First(&existing).Error
-			switch {
-			case err == nil:
-				updates := map[string]any{
-					"site_id":           candidate.SiteID,
-					"site_account_id":   candidate.SiteAccountID,
-					"site_group_key":    candidate.SiteGroupKey,
-					"last_seen_at":      now,
-					"unavailable_since": nil,
-					"archived_at":       nil,
-				}
-				if !existing.Manual {
-					updates["status"] = projectedRouteCandidateStatus(existing.Status, status, false)
-					updates["priority"] = candidate.Priority
-					updates["weight"] = candidate.Weight
-				}
-				if err := tx.Model(&existing).Updates(updates).Error; err != nil {
-					return err
-				}
-				seenCandidateIDs[existing.ID] = struct{}{}
-				result.CandidatesUpdated++
-			case err == gorm.ErrRecordNotFound:
-				if err := tx.Create(&candidate).Error; err != nil {
-					return err
-				}
-				seenCandidateIDs[candidate.ID] = struct{}{}
-				result.CandidatesCreated++
-			default:
+			wired, err := catalogEnsureWiring(tx, wiring)
+			if err != nil {
 				return err
 			}
+			if wired.groupItemCreated {
+				result.GroupItemsCreated++
+			}
+			if wired.candidateCreated {
+				result.CandidatesCreated++
+			}
+			if wired.candidateUpdated {
+				result.CandidatesUpdated++
+			}
+			if wired.candidateID > 0 {
+				seenCandidateIDs[wired.candidateID] = struct{}{}
+			}
 		}
+
+		result.Skipped = len(skippedModels)
 
 		var existingCandidates []model.RouteCandidate
 		query := tx.Where("manual = ?", false)
@@ -659,6 +625,11 @@ func CatalogCanonicalUpdate(ctx context.Context, request model.CanonicalModel) (
 		"allow_lossy":      request.AllowLossy,
 		"enabled":          request.Enabled,
 		"manual":           true,
+	}
+	// 厂商留空表示不修改，交回自动识别；显式填写则锁定为人工维护。
+	if vendor := strings.TrimSpace(request.Vendor); vendor != "" {
+		updates["vendor"] = strings.ToLower(vendor)
+		updates["vendor_manual"] = true
 	}
 	if err := db.GetDB().WithContext(ctx).Model(&model.CanonicalModel{}).Where("id = ?", request.ID).Updates(updates).Error; err != nil {
 		return nil, err

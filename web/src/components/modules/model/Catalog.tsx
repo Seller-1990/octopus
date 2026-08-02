@@ -11,6 +11,7 @@ import { Button } from '@/components/ui/button';
 import { useSearchStore } from '@/components/modules/toolbar';
 import { cn } from '@/lib/utils';
 import { CatalogDetail } from './CatalogDetail';
+import { VendorBadge } from './VendorBadge';
 
 function errorMessage(error: unknown) {
     return error instanceof Error ? error.message : String(error);
@@ -172,7 +173,12 @@ function CatalogListItem({
                 selected ? 'bg-primary text-primary-foreground' : 'hover:bg-muted',
             )}
         >
-            <span className="block truncate text-sm font-medium">{model.name}</span>
+            <span className="flex items-center gap-2">
+                <span className="min-w-0 flex-1 truncate text-sm font-medium">{model.name}</span>
+                {model.vendor ? (
+                    <VendorBadge vendor={model.vendor} unknownLabel="" className="shrink-0" />
+                ) : null}
+            </span>
             <span className={cn('block text-xs', selected ? 'text-primary-foreground/75' : 'text-muted-foreground')}>
                 {model.route_candidates.length} / {model.aliases.length}
             </span>

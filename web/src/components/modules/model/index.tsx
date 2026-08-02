@@ -1,17 +1,19 @@
 'use client';
 
 import { useState } from 'react';
-import { Boxes, DollarSign, ShieldCheck } from 'lucide-react';
+import { Boxes, DollarSign, PackageSearch, ShieldCheck } from 'lucide-react';
 import { useTranslations } from 'next-intl';
 import { cn } from '@/lib/utils';
 import { ModelCatalog } from './Catalog';
+import { ModelDiscovery } from './Discovery';
 import { HeaderPolicies } from './HeaderPolicies';
 import { LegacyPrices } from './LegacyPrices';
 
-type ModelView = 'catalog' | 'headers' | 'global-prices';
+type ModelView = 'catalog' | 'discovery' | 'headers' | 'global-prices';
 
 const VIEWS = [
     { id: 'catalog', icon: Boxes },
+    { id: 'discovery', icon: PackageSearch },
     { id: 'headers', icon: ShieldCheck },
     { id: 'global-prices', icon: DollarSign },
 ] as const;
@@ -80,6 +82,7 @@ export function Model() {
                 className="min-h-0 flex-1 overflow-hidden pb-24 md:pb-0"
             >
                 {view === 'catalog' ? <ModelCatalog /> : null}
+                {view === 'discovery' ? <ModelDiscovery /> : null}
                 {view === 'headers' ? <HeaderPolicies /> : null}
                 {view === 'global-prices' ? <LegacyPrices /> : null}
             </div>

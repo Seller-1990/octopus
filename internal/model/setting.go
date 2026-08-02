@@ -28,6 +28,7 @@ const (
 	SettingKeySSEPreStreamHeartbeatDelay       SettingKey = "sse_pre_stream_heartbeat_delay"       // SSE 上游流建立前心跳首次延迟（秒），0 表示禁用
 	SettingKeyGroupHealthEnabled               SettingKey = "group_health_enabled"                 // 是否启用分组健康检查功能
 	SettingKeyProjectedChannelAutoGroupEnabled SettingKey = "projected_channel_auto_group_enabled" // 全局站点投影渠道自动分组模式（0关闭/1模糊/2精确/3正则，兼容旧 true/false）
+	SettingKeyCatalogGroupProvisioning         SettingKey = "catalog_group_provisioning"           // 目录同步建组策略：manual 只为已有分组建目录/auto 每个上游模型自动建分组
 	SettingKeyJWTSecret                        SettingKey = "jwt_secret"                           // JWT 签名密钥（自动生成）
 	SettingKeyStatsSiteModelBackfilled         SettingKey = "stats_site_model_backfilled"          // 站点渠道小时聚合是否已回填历史日志
 	SettingKeyOutlierRetireEnabled             SettingKey = "outlier_retire_enabled"               // 被动离群退役(POR)总开关
@@ -63,25 +64,26 @@ type Setting struct {
 func DefaultSettings() []Setting {
 	return []Setting{
 		{Key: SettingKeyProxyURL, Value: ""},
-		{Key: SettingKeyStatsSaveInterval, Value: "10"},               // 默认10分钟保存一次统计信息
-		{Key: SettingKeyCORSAllowOrigins, Value: ""},                  // CORS 默认不允许跨域，设置为 "*" 才允许所有来源
-		{Key: SettingKeyModelInfoUpdateInterval, Value: "24"},         // 默认24小时更新一次模型信息
-		{Key: SettingKeySyncLLMInterval, Value: "24"},                 // 默认24小时同步一次LLM
-		{Key: SettingKeySiteSyncInterval, Value: "12"},                // 默认12小时同步一次站点账号信息
-		{Key: SettingKeySiteCheckinInterval, Value: "24"},             // 默认24小时自动签到一次
-		{Key: SettingKeyRelayLogKeepPeriod, Value: "7"},               // 默认日志保存7天
-		{Key: SettingKeyRelayLogKeepEnabled, Value: "true"},           // 默认保留历史日志
-		{Key: SettingKeyUsageHourlyRetentionDays, Value: "90"},        // 默认保留90天小时聚合
-		{Key: SettingKeyCircuitBreakerThreshold, Value: "5"},          // 默认连续失败5次触发熔断
-		{Key: SettingKeyCircuitBreakerCooldown, Value: "60"},          // 默认基础冷却60秒
-		{Key: SettingKeyCircuitBreakerMaxCooldown, Value: "600"},      // 默认最大冷却600秒（10分钟）
-		{Key: SettingKeyResponsesWSEnabled, Value: "false"},           // 默认关闭 OpenAI Responses WS 新路径
-		{Key: SettingKeyResponsesWSDefaultMode, Value: "passthrough"}, // 启用后默认使用协议保真的 passthrough
-		{Key: SettingKeySSEHeartbeatInterval, Value: "0"},             // 默认禁用 SSE 流式心跳
-		{Key: SettingKeySSEPreStreamHeartbeatDelay, Value: "0"},       // 默认禁用 SSE 上游流建立前心跳
-		{Key: SettingKeyGroupHealthEnabled, Value: "false"},           // 默认不显示/运行分组健康检查，避免打扰主界面
-		{Key: SettingKeyProjectedChannelAutoGroupEnabled, Value: "0"}, // 默认不强制站点投影渠道自动分组
-		{Key: SettingKeyJWTSecret, Value: ""},                         // 为空时自动生成
+		{Key: SettingKeyStatsSaveInterval, Value: "10"},                                          // 默认10分钟保存一次统计信息
+		{Key: SettingKeyCORSAllowOrigins, Value: ""},                                             // CORS 默认不允许跨域，设置为 "*" 才允许所有来源
+		{Key: SettingKeyModelInfoUpdateInterval, Value: "24"},                                    // 默认24小时更新一次模型信息
+		{Key: SettingKeySyncLLMInterval, Value: "24"},                                            // 默认24小时同步一次LLM
+		{Key: SettingKeySiteSyncInterval, Value: "12"},                                           // 默认12小时同步一次站点账号信息
+		{Key: SettingKeySiteCheckinInterval, Value: "24"},                                        // 默认24小时自动签到一次
+		{Key: SettingKeyRelayLogKeepPeriod, Value: "7"},                                          // 默认日志保存7天
+		{Key: SettingKeyRelayLogKeepEnabled, Value: "true"},                                      // 默认保留历史日志
+		{Key: SettingKeyUsageHourlyRetentionDays, Value: "90"},                                   // 默认保留90天小时聚合
+		{Key: SettingKeyCircuitBreakerThreshold, Value: "5"},                                     // 默认连续失败5次触发熔断
+		{Key: SettingKeyCircuitBreakerCooldown, Value: "60"},                                     // 默认基础冷却60秒
+		{Key: SettingKeyCircuitBreakerMaxCooldown, Value: "600"},                                 // 默认最大冷却600秒（10分钟）
+		{Key: SettingKeyResponsesWSEnabled, Value: "false"},                                      // 默认关闭 OpenAI Responses WS 新路径
+		{Key: SettingKeyResponsesWSDefaultMode, Value: "passthrough"},                            // 启用后默认使用协议保真的 passthrough
+		{Key: SettingKeySSEHeartbeatInterval, Value: "0"},                                        // 默认禁用 SSE 流式心跳
+		{Key: SettingKeySSEPreStreamHeartbeatDelay, Value: "0"},                                  // 默认禁用 SSE 上游流建立前心跳
+		{Key: SettingKeyGroupHealthEnabled, Value: "false"},                                      // 默认不显示/运行分组健康检查，避免打扰主界面
+		{Key: SettingKeyProjectedChannelAutoGroupEnabled, Value: "0"},                            // 默认不强制站点投影渠道自动分组
+		{Key: SettingKeyCatalogGroupProvisioning, Value: string(CatalogGroupProvisioningManual)}, // 默认不自动为上游模型建分组，由「模型发现」界面挑选
+		{Key: SettingKeyJWTSecret, Value: ""},                                                    // 为空时自动生成
 		{Key: SettingKeyStatsSiteModelBackfilled, Value: "false"},
 		{Key: SettingKeyOutlierRetireEnabled, Value: "false"},        // 默认关闭被动离群退役，保守上线
 		{Key: SettingKeyOutlierRetireInterval, Value: "2"},           // 默认每 2 分钟评估一次
@@ -137,6 +139,11 @@ func (s *Setting) Validate() error {
 	case SettingKeyProjectedChannelAutoGroupEnabled:
 		if _, ok := ParseAutoGroupSettingValue(s.Value); !ok {
 			return fmt.Errorf("setting value must be one of 0, 1, 2, 3, true, false")
+		}
+		return nil
+	case SettingKeyCatalogGroupProvisioning:
+		if _, ok := ParseCatalogGroupProvisioning(s.Value); !ok {
+			return fmt.Errorf("setting value must be one of manual, auto")
 		}
 		return nil
 	case SettingKeyResponsesWSDefaultMode:

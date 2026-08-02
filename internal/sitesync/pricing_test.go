@@ -100,6 +100,17 @@ func TestParseSitePricingQuotesPreservesPerRequestAndSiteCreditUnits(t *testing.
 
 func TestSyncAccountBindsFirstPricingRefreshToProjectedCandidate(t *testing.T) {
 	ctx := setupProjectTestDB(t)
+	// 目录默认改为手动建组后，未选中的模型不会产生路由候选；
+	// 本用例验证的是「有候选时价格必须绑定」，所以显式沿用自动建组。
+	if err := op.SettingRefreshCache(ctx); err != nil {
+		t.Fatalf("refresh setting cache: %v", err)
+	}
+	if err := op.SettingSetString(
+		model.SettingKeyCatalogGroupProvisioning,
+		string(model.CatalogGroupProvisioningAuto),
+	); err != nil {
+		t.Fatalf("enable auto catalog provisioning: %v", err)
+	}
 	const (
 		accessToken = "sync-pricing-access-token"
 		modelName   = "gpt-sync-pricing"

@@ -9,8 +9,22 @@ import (
 	"github.com/bestruirui/octopus/internal/model"
 )
 
+// useAutoCatalogProvisioning 让测试沿用「每个上游模型自动建组」的旧行为。
+// 生产默认值已改为 manual，由「模型发现」界面挑选要建组的模型。
+func useAutoCatalogProvisioning(t *testing.T) {
+	t.Helper()
+	settingCache.Set(
+		model.SettingKeyCatalogGroupProvisioning,
+		string(model.CatalogGroupProvisioningAuto),
+	)
+	t.Cleanup(func() {
+		settingCache.Del(model.SettingKeyCatalogGroupProvisioning)
+	})
+}
+
 func TestCatalogSyncPreservesCandidateForNonAuthoritativeManagedGroup(t *testing.T) {
 	ctx := setupBackupTestDB(t)
+	useAutoCatalogProvisioning(t)
 	site, account, channel := createCatalogManagedFixture(t, ctx, true)
 
 	if _, err := CatalogSync(ctx); err != nil {
@@ -56,6 +70,7 @@ func TestCatalogSyncPreservesCandidateForNonAuthoritativeManagedGroup(t *testing
 
 func TestCatalogSyncArchivesAndRestoresUnseenCandidate(t *testing.T) {
 	ctx := setupBackupTestDB(t)
+	useAutoCatalogProvisioning(t)
 	channel := model.Channel{Name: "catalog-lifecycle", Model: "lifecycle-model", Enabled: true}
 	if err := ChannelCreate(&channel, ctx); err != nil {
 		t.Fatalf("ChannelCreate failed: %v", err)
@@ -121,6 +136,7 @@ func TestCatalogSyncArchivesAndRestoresUnseenCandidate(t *testing.T) {
 
 func TestCatalogProjectionPreservesHealthOwnedStatuses(t *testing.T) {
 	ctx := setupBackupTestDB(t)
+	useAutoCatalogProvisioning(t)
 	channel := model.Channel{Name: "catalog-health-status", Model: "health-status-model", Enabled: true}
 	if err := ChannelCreate(&channel, ctx); err != nil {
 		t.Fatalf("ChannelCreate failed: %v", err)
@@ -179,6 +195,7 @@ func TestCatalogProjectionPreservesHealthOwnedStatuses(t *testing.T) {
 
 func TestChannelDeleteArchivesRouteCandidates(t *testing.T) {
 	ctx := setupBackupTestDB(t)
+	useAutoCatalogProvisioning(t)
 	channel := model.Channel{Name: "catalog-delete", Model: "delete-model", Enabled: true}
 	if err := ChannelCreate(&channel, ctx); err != nil {
 		t.Fatalf("ChannelCreate failed: %v", err)
@@ -231,6 +248,7 @@ func TestCatalogAliasUpsertRejectsCanonicalAndAliasConflicts(t *testing.T) {
 
 func TestCatalogCaseFoldMapsGLMAndPreservesUpstreamName(t *testing.T) {
 	ctx := setupBackupTestDB(t)
+	useAutoCatalogProvisioning(t)
 	canonical := model.CanonicalModel{
 		Name:            "glm-5.1",
 		NormalizedName:  "glm-5.1",
@@ -262,6 +280,7 @@ func TestCatalogCaseFoldMapsGLMAndPreservesUpstreamName(t *testing.T) {
 
 func TestCatalogCanonicalUpdateRejectsNameChanges(t *testing.T) {
 	ctx := setupBackupTestDB(t)
+	useAutoCatalogProvisioning(t)
 	channel := model.Channel{Name: "catalog-stable-name", Model: "stable-model", Enabled: true}
 	if err := ChannelCreate(&channel, ctx); err != nil {
 		t.Fatalf("ChannelCreate failed: %v", err)
@@ -387,6 +406,7 @@ func TestCatalogPlanGroupExcludesItemsWithoutCanonicalRouteCandidate(t *testing.
 
 func TestGroupItemWritesCreateRouteCandidatesImmediately(t *testing.T) {
 	ctx := setupBackupTestDB(t)
+	useAutoCatalogProvisioning(t)
 	seed := model.Channel{Name: "catalog-seed", Model: "governed-model", Enabled: true}
 	if err := ChannelCreate(&seed, ctx); err != nil {
 		t.Fatalf("create seed channel: %v", err)
@@ -902,6 +922,7 @@ func TestRouteCandidateHealthRefreshDegradesAndRecoversAutomaticCandidates(t *te
 
 func TestGroupDeleteRetiresAutomaticCandidatesAndPreservesManualCandidates(t *testing.T) {
 	ctx := setupBackupTestDB(t)
+	useAutoCatalogProvisioning(t)
 	channel := model.Channel{Name: "catalog-group-delete", Model: "group-delete-model", Enabled: true}
 	if err := ChannelCreate(&channel, ctx); err != nil {
 		t.Fatalf("create channel: %v", err)

@@ -144,6 +144,8 @@ type CanonicalModel struct {
 	ID              int              `json:"id" gorm:"primaryKey"`
 	Name            string           `json:"name" gorm:"size:191;not null"`
 	NormalizedName  string           `json:"normalized_name" gorm:"size:191;uniqueIndex;not null"`
+	Vendor          string           `json:"vendor" gorm:"size:64;index"`                 // 厂商 ID，自动识别或人工指定，空表示未知
+	VendorManual    bool             `json:"vendor_manual" gorm:"not null;default:false"` // 人工指定后不再被自动识别覆盖
 	RoutingStrategy RoutingStrategy  `json:"routing_strategy" gorm:"type:varchar(32);not null;default:'balanced'"`
 	ProtocolPolicy  ProtocolPolicy   `json:"protocol_policy" gorm:"type:varchar(32);not null;default:'auto'"`
 	AllowLossy      bool             `json:"allow_lossy" gorm:"not null;default:false"`
@@ -195,6 +197,7 @@ type CatalogSyncResult struct {
 	Archived          int `json:"archived"`
 	GroupsCreated     int `json:"groups_created"`
 	GroupItemsCreated int `json:"group_items_created"`
+	Skipped           int `json:"skipped"` // 手动供给模式下跳过的未选中模型数
 }
 
 type RouteDecisionReason struct {
