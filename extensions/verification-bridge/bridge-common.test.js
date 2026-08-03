@@ -9,6 +9,7 @@ const {
   isCloudflareChallengePage,
   isPairingTerminalBridgeError,
   shouldAutoHandleTask,
+  taskTabCreateProperties,
 } = globalThis.OctopusBridgeCommon;
 const now = Date.parse("2026-08-02T01:00:00+08:00");
 const claim = {
@@ -129,5 +130,26 @@ test("only invalidates the pairing for pairing-level bridge failures", () => {
   assert.equal(
     isPairingTerminalBridgeError("verification task was already consumed"),
     false,
+  );
+});
+
+test("opens automatic verification work in an inactive normal tab", () => {
+  assert.deepEqual(
+    taskTabCreateProperties("https://api.example.com", false, 42),
+    {
+      url: "https://api.example.com",
+      active: false,
+      windowId: 42,
+    },
+  );
+});
+
+test("manual verification can foreground a tab without a target window", () => {
+  assert.deepEqual(
+    taskTabCreateProperties("https://api.example.com", true, null),
+    {
+      url: "https://api.example.com",
+      active: true,
+    },
   );
 });

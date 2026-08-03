@@ -27,6 +27,15 @@
     }
   }
 
+  function taskTabCreateProperties(targetURL, foreground, windowId) {
+    const properties = {
+      url: String(targetURL || ""),
+      active: Boolean(foreground),
+    };
+    if (Number.isInteger(windowId)) properties.windowId = windowId;
+    return properties;
+  }
+
   function isClaimActive(claim, pairingID, latestTask, now = Date.now()) {
     const claimExpiresAt = new Date(claim?.claim_expires_at).getTime();
     return (
@@ -128,5 +137,6 @@
     originPattern,
     sameOrigin,
     shouldAutoHandleTask,
+    taskTabCreateProperties,
   });
 })(globalThis);

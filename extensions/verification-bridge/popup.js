@@ -7,7 +7,7 @@ const BRIDGE_STATE_KEY = "octopusVerificationBridgeV2";
 const LEGACY_BRIDGE_STATE_KEY = "octopusVerificationBridge";
 const RUNTIME_REVISION_KEY = "octopusVerificationBridgeRuntimeRevision";
 // Bump when an upgrade must replace an already-registered service worker.
-const RUNTIME_REVISION = "0.2.3";
+const RUNTIME_REVISION = "0.2.4";
 
 const elements = {
   pairingList: document.querySelector("#pairing-list"),

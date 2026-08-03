@@ -9,6 +9,7 @@ const {
   originPattern,
   sameOrigin,
   shouldAutoHandleTask,
+  taskTabCreateProperties,
 } = OctopusBridgeCommon;
 const STATE_KEY = "octopusVerificationBridgeV2";
 const LEGACY_KEY = "octopusVerificationBridge";
@@ -304,18 +305,17 @@ async function performTaskClaim(record) {
 async function openTaskWindow(key) {
   const state = await loadState();
   const record = requirePairing(state, key);
-  await openTaskWindowForRecord(record);
+  await openTaskWindowForRecord(record, true);
   await persistState();
 }
 
-async function openTaskWindowForRecord(record) {
+async function openTaskWindowForRecord(record, foreground = false) {
   const task = requireClaimedTask(record);
   if (record.tabId !== null) {
     try {
       const tab = await chrome.tabs.get(record.tabId);
       if (tab?.id && tab.url && sameOrigin(tab.url, task.target_url)) {
-        await chrome.windows.update(tab.windowId, {focused: true});
-        await chrome.tabs.update(tab.id, {active: true});
+        if (foreground) await focusTaskTab(tab);
         return;
       }
     } catch {
@@ -327,25 +327,44 @@ async function openTaskWindowForRecord(record) {
   if (existing?.id) {
     record.windowId = null;
     record.tabId = existing.id;
-    await chrome.windows.update(existing.windowId, {focused: true});
-    await chrome.tabs.update(existing.id, {active: true});
-    record.lastMessage = "已复用打开的站点页面。";
+    if (foreground) await focusTaskTab(existing);
+    record.lastMessage = foreground
+      ? "已打开验证页面。"
+      : "已在后台复用站点页面。";
     record.tone = "success";
     record.updatedAt = new Date().toISOString();
     return;
   }
-  const created = await chrome.windows.create({
-    url: task.target_url,
-    type: "popup",
-    width: 1120,
-    height: 820,
-    focused: true,
-  });
-  record.windowId = created.id ?? null;
-  record.tabId = created.tabs?.[0]?.id ?? null;
-  record.lastMessage = "验证窗口已打开。";
+  const targetWindow = await preferredNormalWindow();
+  if (!foreground && !targetWindow) {
+    throw new Error("没有可用的浏览器窗口，已暂停自动验证。");
+  }
+  const created = await chrome.tabs.create(taskTabCreateProperties(
+    task.target_url,
+    foreground,
+    targetWindow?.id,
+  ));
+  record.windowId = null;
+  record.tabId = created.id ?? null;
+  if (foreground) await focusTaskTab(created);
+  record.lastMessage = foreground
+    ? "已打开验证页面。"
+    : "验证页面已在后台打开，不会打断当前操作。";
   record.tone = "success";
   record.updatedAt = new Date().toISOString();
+}
+
+async function preferredNormalWindow() {
+  const windows = await chrome.windows.getAll({windowTypes: ["normal"]});
+  return windows.find((item) => item.focused) || windows[0] || null;
+}
+
+async function focusTaskTab(tab) {
+  if (!tab?.id) return;
+  if (Number.isInteger(tab.windowId)) {
+    await chrome.windows.update(tab.windowId, {focused: true});
+  }
+  await chrome.tabs.update(tab.id, {active: true});
 }
 
 async function startBrowserTask(key) {
@@ -441,7 +460,7 @@ async function automateTask(key) {
     await persistState();
     return;
   }
-  await openTaskWindowForRecord(record);
+  await openTaskWindowForRecord(record, false);
   record.phase = "waiting";
   record.lastMessage = "等待目标站点完成 Cloudflare 验证。";
   record.tone = "";
@@ -484,7 +503,7 @@ function hasClaimForTask(record, taskID) {
 
 async function recoverTaskWindow(record) {
   await closeTaskWindow(record);
-  await openTaskWindowForRecord(record);
+  await openTaskWindowForRecord(record, false);
   await persistState();
 }
 
@@ -508,7 +527,7 @@ async function waitForVerificationPage(record, task) {
         return true;
       }
       const message = challenged
-        ? "请在验证窗口完成 Cloudflare 验证，扩展会自动继续。"
+        ? "站点需要人工验证。扩展不会切换窗口，请点击扩展图标后打开验证页面。"
         : "等待目标站点加载完成。";
       if (record.lastMessage !== message || record.phase !== "waiting") {
         record.phase = "waiting";
@@ -522,7 +541,7 @@ async function waitForVerificationPage(record, task) {
     }
     await sleep(AUTO_PAGE_POLL_MS);
   }
-  throw new Error("等待 Cloudflare 验证超时，请在打开的站点窗口完成验证。");
+  throw new Error("等待 Cloudflare 验证超时，请点击扩展图标后打开验证页面。");
 }
 
 async function hasOriginPermission(value) {
@@ -684,11 +703,11 @@ async function readTabUserAgent(tabId) {
 
 async function requireTargetTab(record, targetURL) {
   if (!Number.isInteger(record.tabId)) {
-    throw new Error("请先打开验证窗口。");
+    throw new Error("请先打开验证页面。");
   }
   const tab = await chrome.tabs.get(record.tabId);
   if (!tab?.id || !tab.url || !sameOrigin(tab.url, targetURL)) {
-    throw new Error("验证窗口当前不在任务目标站点。");
+    throw new Error("验证页面当前不在任务目标站点。");
   }
   return tab;
 }
@@ -845,9 +864,21 @@ function requireClaimedTask(record) {
 async function updateBadge() {
   const state = stateCache;
   if (!state) return;
-  const activeCount = state.pairings.filter((record) =>
-    ["claimed", "waiting", "permission_required", "running"].includes(record.phase)
+  const attentionCount = state.pairings.filter((record) =>
+    ["claimed", "waiting", "permission_required"].includes(record.phase)
   ).length;
-  await chrome.action.setBadgeBackgroundColor({color: "#176b51"});
-  await chrome.action.setBadgeText({text: activeCount ? String(activeCount) : ""});
+  const activeCount = state.pairings.filter((record) =>
+    record.phase === "running"
+  ).length;
+  await chrome.action.setBadgeBackgroundColor({
+    color: attentionCount ? "#b45309" : "#176b51",
+  });
+  await chrome.action.setBadgeText({
+    text: attentionCount ? "!" : (activeCount ? String(activeCount) : ""),
+  });
+  await chrome.action.setTitle({
+    title: attentionCount
+      ? `Octopus 验证桥：${attentionCount} 个站点需要处理`
+      : "Octopus 验证桥",
+  });
 }
