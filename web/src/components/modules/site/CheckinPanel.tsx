@@ -29,13 +29,15 @@ const FILTERS: Array<{
     | "filters.success"
     | "filters.failed"
     | "filters.idle"
-    | "filters.disabled";
+    | "filters.disabled"
+    | "filters.reserve";
 }> = [
   { key: "all", labelKey: "filters.all" },
   { key: "success", labelKey: "filters.success" },
   { key: "failed", labelKey: "filters.failed" },
   { key: "idle", labelKey: "filters.idle" },
   { key: "disabled", labelKey: "filters.disabled" },
+  { key: "reserve", labelKey: "filters.reserve" },
 ];
 
 function filterTone(status: CheckinFilterStatus, active: boolean) {
@@ -49,6 +51,8 @@ function filterTone(status: CheckinFilterStatus, active: boolean) {
         return "border-border bg-foreground text-background";
       case "disabled":
         return "border-slate-500/30 bg-slate-700 text-white dark:bg-slate-200 dark:text-slate-900";
+      case "reserve":
+        return "border-amber-500/30 bg-amber-500 text-white";
       case "all":
       default:
         return "border-primary/30 bg-primary text-primary-foreground";
@@ -64,6 +68,8 @@ function filterTone(status: CheckinFilterStatus, active: boolean) {
       return "border-border bg-muted/40 text-muted-foreground";
     case "disabled":
       return "border-slate-500/20 bg-slate-500/10 text-slate-700 dark:text-slate-300";
+    case "reserve":
+      return "border-amber-500/20 bg-amber-500/10 text-amber-700 dark:text-amber-300";
     case "all":
     default:
       return "border-border bg-background text-foreground";
