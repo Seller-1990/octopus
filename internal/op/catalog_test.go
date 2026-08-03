@@ -2,6 +2,8 @@ package op
 
 import (
 	"context"
+	"fmt"
+	"slices"
 	"testing"
 	"time"
 
@@ -1096,4 +1098,187 @@ func findCatalogCandidate(t *testing.T, channelID int, upstreamModel string) mod
 		t.Fatalf("find route candidate failed: %v", err)
 	}
 	return candidate
+}
+
+func TestCatalogPlanGroupSortsByReserveBalanceAndRate(t *testing.T) {
+	ctx := setupBackupTestDB(t)
+	site := model.Site{
+		Name: "sort-site", Platform: model.SitePlatformNewAPI,
+		BaseURL: "https://sort.example.com", Enabled: true,
+	}
+	if err := dbpkg.GetDB().WithContext(ctx).Create(&site).Error; err != nil {
+		t.Fatalf("create site failed: %v", err)
+	}
+	accountBalances := []float64{50, 10, 30, 5}
+	accounts := make([]model.SiteAccount, len(accountBalances))
+	for index, balance := range accountBalances {
+		accounts[index] = model.SiteAccount{
+			SiteID: site.ID, Name: fmt.Sprintf("sort-account-%d", index),
+			CredentialType: model.SiteCredentialTypeAccessToken, AccessToken: fmt.Sprintf("sort-token-%d", index),
+			Enabled: true, Balance: balance,
+		}
+		if err := dbpkg.GetDB().WithContext(ctx).Create(&accounts[index]).Error; err != nil {
+			t.Fatalf("create account %d failed: %v", index, err)
+		}
+	}
+	canonical := model.CanonicalModel{
+		Name:            "sort-model",
+		NormalizedName:  "sort-model",
+		RoutingStrategy: model.RoutingStrategyManual,
+		ProtocolPolicy:  model.ProtocolPolicyAuto,
+		Enabled:         true,
+	}
+	if err := dbpkg.GetDB().WithContext(ctx).Create(&canonical).Error; err != nil {
+		t.Fatalf("create canonical failed: %v", err)
+	}
+	channelIsReserve := []bool{false, false, true, true}
+	upstreamNames := []string{"sort-upstream-a", "sort-upstream-b", "sort-upstream-c", "sort-upstream-d"}
+	ratePerQuote := []float64{2, 1, 3, 0.5}
+	channels := make([]model.Channel, 4)
+	candidates := make([]model.RouteCandidate, 4)
+	for index := range channels {
+		channels[index] = model.Channel{
+			Name: fmt.Sprintf("sort-channel-%d", index), Model: upstreamNames[index],
+			Enabled: true, IsReserve: channelIsReserve[index],
+		}
+		if err := ChannelCreate(&channels[index], ctx); err != nil {
+			t.Fatalf("create channel %d failed: %v", index, err)
+		}
+		binding := model.SiteChannelBinding{
+			SiteID: site.ID, SiteAccountID: accounts[index].ID,
+			GroupKey: model.SiteDefaultGroupKey, ChannelID: channels[index].ID,
+		}
+		if err := dbpkg.GetDB().WithContext(ctx).Create(&binding).Error; err != nil {
+			t.Fatalf("create binding %d failed: %v", index, err)
+		}
+		candidates[index] = model.RouteCandidate{
+			CanonicalModelID: canonical.ID, ChannelID: channels[index].ID,
+			UpstreamModelName: upstreamNames[index],
+			SiteID:            &site.ID, SiteAccountID: &accounts[index].ID,
+			SiteGroupKey: model.SiteDefaultGroupKey, Status: model.RouteCandidateActive,
+			Priority: 1, Weight: 1, LastSeenAt: time.Now(),
+		}
+		if err := dbpkg.GetDB().WithContext(ctx).Create(&candidates[index]).Error; err != nil {
+			t.Fatalf("create candidate %d failed: %v", index, err)
+		}
+		quotes := []model.SiteModelPriceQuote{{
+			RouteCandidateID: &candidates[index].ID,
+			SiteID:           site.ID, SiteAccountID: &accounts[index].ID,
+			GroupKey: model.SiteDefaultGroupKey, ModelName: upstreamNames[index],
+			Source: model.PriceQuoteSourceSiteExact, Unit: model.PriceUnitPerMillionTokens,
+			Currency: "USD", Input: ratePerQuote[index] / 2, Output: ratePerQuote[index] / 2,
+			GroupMultiplier: 1, ExchangeRateToUSD: 1, ObservedAt: time.Now(),
+		}}
+		if err := SiteModelPriceQuotesUpsert(ctx, quotes); err != nil {
+			t.Fatalf("create quote %d failed: %v", index, err)
+		}
+	}
+	if err := catalogRefreshCache(ctx); err != nil {
+		t.Fatalf("refresh catalog cache failed: %v", err)
+	}
+	group := model.Group{
+		Name: "sort-model",
+		Mode: model.GroupModeFailover,
+		Items: []model.GroupItem{
+			{ChannelID: channels[3].ID, ModelName: upstreamNames[3], Priority: 1, Weight: 1},
+			{ChannelID: channels[0].ID, ModelName: upstreamNames[0], Priority: 1, Weight: 1},
+			{ChannelID: channels[2].ID, ModelName: upstreamNames[2], Priority: 1, Weight: 1},
+			{ChannelID: channels[1].ID, ModelName: upstreamNames[1], Priority: 1, Weight: 1},
+		},
+	}
+	planned, _, _, err := CatalogPlanGroup(ctx, group.Name, model.ProtocolRouteRequirements{
+		InboundProtocol: model.ProtocolOpenAIChat,
+	}, group)
+	if err != nil {
+		t.Fatalf("CatalogPlanGroup failed: %v", err)
+	}
+	got := make([]int, 0, len(planned.Items))
+	for _, item := range planned.Items {
+		got = append(got, item.ChannelID)
+	}
+	want := []int{channels[0].ID, channels[1].ID, channels[3].ID, channels[2].ID}
+	if !slices.Equal(got, want) {
+		t.Fatalf("sort order mismatch: got %v, want %v", got, want)
+	}
+}
+
+func TestCatalogPlanGroupTierFallsBackToSiteReserve(t *testing.T) {
+	ctx := setupBackupTestDB(t)
+	site := model.Site{
+		Name: "reserve-fallback-site", Platform: model.SitePlatformNewAPI,
+		BaseURL: "https://reserve-fallback.example.com", Enabled: true, IsReserve: true,
+	}
+	if err := dbpkg.GetDB().WithContext(ctx).Create(&site).Error; err != nil {
+		t.Fatalf("create site failed: %v", err)
+	}
+	account := model.SiteAccount{
+		SiteID: site.ID, Name: "reserve-fallback-account",
+		CredentialType: model.SiteCredentialTypeAccessToken, AccessToken: "reserve-fallback-token",
+		Enabled: true, Balance: 100,
+	}
+	if err := dbpkg.GetDB().WithContext(ctx).Create(&account).Error; err != nil {
+		t.Fatalf("create account failed: %v", err)
+	}
+	canonical := model.CanonicalModel{
+		Name:            "reserve-fallback-model",
+		NormalizedName:  "reserve-fallback-model",
+		RoutingStrategy: model.RoutingStrategyManual,
+		ProtocolPolicy:  model.ProtocolPolicyAuto,
+		Enabled:         true,
+	}
+	if err := dbpkg.GetDB().WithContext(ctx).Create(&canonical).Error; err != nil {
+		t.Fatalf("create canonical failed: %v", err)
+	}
+	normal := model.Channel{Name: "reserve-fallback-normal", Model: "fallback-normal-upstream", Enabled: true}
+	if err := ChannelCreate(&normal, ctx); err != nil {
+		t.Fatalf("create normal channel failed: %v", err)
+	}
+	relay := model.Channel{Name: "reserve-fallback-relay", Model: "fallback-relay-upstream", Enabled: true}
+	if err := ChannelCreate(&relay, ctx); err != nil {
+		t.Fatalf("create relay channel failed: %v", err)
+	}
+	candidates := []model.RouteCandidate{
+		{
+			CanonicalModelID: canonical.ID, ChannelID: normal.ID,
+			UpstreamModelName: "fallback-normal-upstream", Status: model.RouteCandidateActive,
+			Priority: 1, Weight: 1, LastSeenAt: time.Now(),
+		},
+		{
+			CanonicalModelID: canonical.ID, ChannelID: relay.ID,
+			UpstreamModelName: "fallback-relay-upstream", Status: model.RouteCandidateActive,
+			SiteID: &site.ID, SiteAccountID: &account.ID, SiteGroupKey: model.SiteDefaultGroupKey,
+			Priority: 1, Weight: 1, LastSeenAt: time.Now(),
+		},
+	}
+	for index := range candidates {
+		if err := dbpkg.GetDB().WithContext(ctx).Create(&candidates[index]).Error; err != nil {
+			t.Fatalf("create candidate %d failed: %v", index, err)
+		}
+	}
+	if err := dbpkg.GetDB().WithContext(ctx).Create(&model.SiteChannelBinding{
+		SiteID: site.ID, SiteAccountID: account.ID,
+		GroupKey: model.SiteDefaultGroupKey, ChannelID: relay.ID,
+	}).Error; err != nil {
+		t.Fatalf("create binding failed: %v", err)
+	}
+	if err := catalogRefreshCache(ctx); err != nil {
+		t.Fatalf("refresh catalog cache failed: %v", err)
+	}
+	group := model.Group{
+		Name: "reserve-fallback-model",
+		Mode: model.GroupModeFailover,
+		Items: []model.GroupItem{
+			{ChannelID: relay.ID, ModelName: "fallback-relay-upstream", Priority: 1, Weight: 1},
+			{ChannelID: normal.ID, ModelName: "fallback-normal-upstream", Priority: 1, Weight: 1},
+		},
+	}
+	planned, _, _, err := CatalogPlanGroup(ctx, group.Name, model.ProtocolRouteRequirements{
+		InboundProtocol: model.ProtocolOpenAIChat,
+	}, group)
+	if err != nil {
+		t.Fatalf("CatalogPlanGroup failed: %v", err)
+	}
+	if len(planned.Items) != 2 || planned.Items[0].ChannelID != normal.ID || planned.Items[1].ChannelID != relay.ID {
+		t.Fatalf("fallback reserve tier not applied: got %+v", planned.Items)
+	}
 }

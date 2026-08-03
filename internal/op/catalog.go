@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/bestruirui/octopus/internal/db"
+	"github.com/bestruirui/octopus/internal/globalprice"
 	"github.com/bestruirui/octopus/internal/model"
 	"github.com/bestruirui/octopus/internal/modelvendor"
 	"github.com/bestruirui/octopus/internal/transformer/outbound"
@@ -693,12 +694,57 @@ func CatalogCandidateFor(ctx context.Context, canonicalModelID, channelID int, u
 }
 
 // siteReserveTierByChannel 返回 channel_id -> 备用层标志（1=中转/备用，0=公益）。
-// 中转站点排在同协议公益站点之后，作为 Failover 降级目标。
+// 中转渠道排在同协议公益渠道之后，作为 Failover 降级目标。
+// 优先使用渠道自身的 is_reserve（普通渠道也可标记中转）；对老数据回退到站点绑定。
 func siteReserveTierByChannel(ctx context.Context, items []model.GroupItem) map[int]int {
 	result := make(map[int]int, len(items))
-	if len(items) == 0 {
+	channelIDs := distinctChannelIDs(items)
+	if len(channelIDs) == 0 {
 		return result
 	}
+	var channelRows []struct {
+		ID        int  `gorm:"column:id"`
+		IsReserve bool `gorm:"column:is_reserve"`
+	}
+	if err := db.GetDB().WithContext(ctx).
+		Table("channels").
+		Select("id, is_reserve").
+		Where("id IN ?", channelIDs).
+		Scan(&channelRows).Error; err == nil {
+		for _, row := range channelRows {
+			if row.IsReserve {
+				result[row.ID] = 1
+			}
+		}
+	}
+	missing := make([]int, 0, len(channelIDs))
+	for _, channelID := range channelIDs {
+		if result[channelID] != 1 {
+			missing = append(missing, channelID)
+		}
+	}
+	if len(missing) > 0 {
+		var rows []struct {
+			ChannelID int  `gorm:"column:channel_id"`
+			IsReserve bool `gorm:"column:is_reserve"`
+		}
+		if err := db.GetDB().WithContext(ctx).
+			Table("site_channel_bindings AS b").
+			Select("b.channel_id AS channel_id, s.is_reserve AS is_reserve").
+			Joins("JOIN sites AS s ON s.id = b.site_id").
+			Where("b.channel_id IN ?", missing).
+			Scan(&rows).Error; err == nil {
+			for _, row := range rows {
+				if row.IsReserve {
+					result[row.ChannelID] = 1
+				}
+			}
+		}
+	}
+	return result
+}
+
+func distinctChannelIDs(items []model.GroupItem) []int {
 	channelIDs := make([]int, 0, len(items))
 	seen := make(map[int]struct{}, len(items))
 	for _, item := range items {
@@ -711,26 +757,144 @@ func siteReserveTierByChannel(ctx context.Context, items []model.GroupItem) map[
 		seen[item.ChannelID] = struct{}{}
 		channelIDs = append(channelIDs, item.ChannelID)
 	}
+	return channelIDs
+}
+
+// channelBalanceByChannel 返回 channel_id -> 绑定账号余额（无绑定时为 0）。
+func channelBalanceByChannel(ctx context.Context, items []model.GroupItem) map[int]float64 {
+	result := make(map[int]float64, len(items))
+	channelIDs := distinctChannelIDs(items)
 	if len(channelIDs) == 0 {
 		return result
 	}
 	var rows []struct {
-		ChannelID int  `gorm:"column:channel_id"`
-		IsReserve bool `gorm:"column:is_reserve"`
+		ChannelID int     `gorm:"column:channel_id"`
+		Balance   float64 `gorm:"column:balance"`
 	}
 	if err := db.GetDB().WithContext(ctx).
 		Table("site_channel_bindings AS b").
-		Select("b.channel_id, s.is_reserve").
-		Joins("JOIN sites AS s ON s.id = b.site_id").
+		Select("b.channel_id AS channel_id, a.balance AS balance").
+		Joins("JOIN site_accounts AS a ON a.id = b.site_account_id").
 		Where("b.channel_id IN ?", channelIDs).
 		Scan(&rows).Error; err == nil {
 		for _, row := range rows {
-			if row.IsReserve {
-				result[row.ChannelID] = 1
-			}
+			result[row.ChannelID] = row.Balance
 		}
 	}
 	return result
+}
+
+// candidateRateByCandidate 返回 candidate_id -> 倍率（每百万 token USD，Input+Output 折算）。
+// 优先站点报价，回退全局价格；未知价格返回 +Inf（排序时排最后）。
+func candidateRateByCandidate(ctx context.Context, candidates []model.RouteCandidate) map[int]float64 {
+	result := make(map[int]float64, len(candidates))
+	if len(candidates) == 0 {
+		return result
+	}
+	quotes, err := batchPriceQuotesForCandidates(ctx, candidates)
+	if err != nil {
+		return result
+	}
+	now := time.Now()
+	for _, candidate := range candidates {
+		best := pickBestPriceQuote(quotes[candidate.ID], candidate, now)
+		globalRate := math.Inf(1)
+		if candidate.ID > 0 {
+			if global, ok := globalprice.Get(strings.ToLower(strings.TrimSpace(candidate.UpstreamModelName))); ok {
+				globalRate = global.Input + global.Output
+			}
+		}
+		switch {
+		case best != nil && best.Unit != model.PriceUnitPerRequest && best.PerRequest == 0:
+			result[candidate.ID] = (best.Input + best.Output) * best.ExchangeRateToUSD
+		default:
+			result[candidate.ID] = globalRate
+		}
+	}
+	return result
+}
+
+// batchPriceQuotesForCandidates 一次性获取所有候选渠道的站点价格报价。
+func batchPriceQuotesForCandidates(ctx context.Context, candidates []model.RouteCandidate) (map[int][]model.SiteModelPriceQuote, error) {
+	result := make(map[int][]model.SiteModelPriceQuote, len(candidates))
+	candidateIDs := make([]int, 0, len(candidates))
+	siteIDs := make([]int, 0, len(candidates))
+	modelSet := make(map[string]struct{}, len(candidates))
+	seenCandidate := make(map[int]struct{}, len(candidates))
+	seenSite := make(map[int]struct{}, len(candidates))
+	for _, candidate := range candidates {
+		if candidate.ID > 0 {
+			if _, ok := seenCandidate[candidate.ID]; !ok {
+				seenCandidate[candidate.ID] = struct{}{}
+				candidateIDs = append(candidateIDs, candidate.ID)
+			}
+		}
+		if candidate.SiteID != nil && *candidate.SiteID > 0 {
+			if _, ok := seenSite[*candidate.SiteID]; !ok {
+				seenSite[*candidate.SiteID] = struct{}{}
+				siteIDs = append(siteIDs, *candidate.SiteID)
+			}
+		}
+		if name := strings.TrimSpace(candidate.UpstreamModelName); name != "" {
+			modelSet[strings.ToLower(name)] = struct{}{}
+		}
+	}
+	if len(candidateIDs) == 0 && len(siteIDs) == 0 {
+		return result, nil
+	}
+	modelNames := make([]string, 0, len(modelSet))
+	for name := range modelSet {
+		modelNames = append(modelNames, name)
+	}
+	query := db.GetDB().WithContext(ctx).
+		Where("status = ?", model.PriceQuoteStatusValid)
+	if len(candidateIDs) > 0 {
+		query = query.Where("route_candidate_id IN ? OR site_id IN ?", candidateIDs, siteIDs)
+	} else {
+		query = query.Where("site_id IN ?", siteIDs)
+	}
+	if len(modelNames) > 0 {
+		query = query.Where("LOWER(model_name) IN ?", modelNames)
+	}
+	var quotes []model.SiteModelPriceQuote
+	if err := query.Find(&quotes).Error; err != nil {
+		return nil, err
+	}
+	for _, candidate := range candidates {
+		for _, quote := range quotes {
+			if priceQuoteMatchesCandidate(quote, candidate) {
+				result[candidate.ID] = append(result[candidate.ID], quote)
+			}
+		}
+	}
+	return result, nil
+}
+
+func pickBestPriceQuote(quotes []model.SiteModelPriceQuote, candidate model.RouteCandidate, now time.Time) *model.SiteModelPriceQuote {
+	eligible := quotes[:0]
+	for _, quote := range quotes {
+		if (quote.ManualOverride || quote.Source == model.PriceQuoteSourceManualOverride) &&
+			quote.ValidUntil != nil &&
+			!quote.ValidUntil.After(now) {
+			continue
+		}
+		eligible = append(eligible, quote)
+	}
+	if len(eligible) == 0 {
+		return nil
+	}
+	sort.SliceStable(eligible, func(i, j int) bool {
+		leftRank := priceQuoteRank(eligible[i], candidate, now)
+		rightRank := priceQuoteRank(eligible[j], candidate, now)
+		if leftRank == rightRank {
+			if eligible[i].ObservedAt.Equal(eligible[j].ObservedAt) {
+				return eligible[i].ID > eligible[j].ID
+			}
+			return eligible[i].ObservedAt.After(eligible[j].ObservedAt)
+		}
+		return leftRank > rightRank
+	})
+	return &eligible[0]
 }
 
 func CatalogPlanGroup(
@@ -791,14 +955,19 @@ func CatalogPlanGroup(
 
 	type scoredItem struct {
 		item              model.GroupItem
+		decision          model.RouteDecisionReason
 		score             float64
 		scoreKnown        bool
 		rank              int
 		candidatePriority int
 		candidateWeight   int
 		tier              int
+		balance           float64
+		rate              float64
 	}
 	tierByChannel := siteReserveTierByChannel(ctx, group.Items)
+	balanceByChannel := channelBalanceByChannel(ctx, group.Items)
+	rateByCandidate := candidateRateByCandidate(ctx, candidates)
 	included := make([]scoredItem, 0, len(group.Items))
 	for _, item := range group.Items {
 		decision := model.RouteDecisionReason{
@@ -881,12 +1050,15 @@ func CatalogPlanGroup(
 		preview.Decisions = append(preview.Decisions, decision)
 		included = append(included, scoredItem{
 			item:              item,
+			decision:          decision,
 			score:             score,
 			scoreKnown:        scoreKnown,
 			rank:              rank,
 			candidatePriority: candidatePriority,
 			candidateWeight:   candidateWeight,
 			tier:              tierByChannel[item.ChannelID],
+			balance:           balanceByChannel[item.ChannelID],
+			rate:              rateByCandidate[candidate.ID],
 		})
 	}
 
@@ -907,6 +1079,23 @@ func CatalogPlanGroup(
 		}
 		if left.tier != right.tier {
 			return left.tier < right.tier
+		}
+		// 同层内：非中转按账号余额降序（余额大优先），中转按倍率升序（倍率小优先）。
+		// 非中转余额相同 -> 倍率升序；中转倍率相同 -> 余额降序。
+		if left.tier == 0 {
+			if left.balance != right.balance {
+				return left.balance > right.balance
+			}
+			if left.rate != right.rate {
+				return left.rate < right.rate
+			}
+		} else {
+			if left.rate != right.rate {
+				return left.rate < right.rate
+			}
+			if left.balance != right.balance {
+				return left.balance > right.balance
+			}
 		}
 		if strategy == model.RoutingStrategyManual {
 			if left.candidatePriority != right.candidatePriority {
@@ -935,6 +1124,16 @@ func CatalogPlanGroup(
 		group.Items = append(group.Items, item.item)
 	}
 	group.Mode = model.GroupModeFailover
+	reorderedDecisions := make([]model.RouteDecisionReason, 0, len(preview.Decisions))
+	for _, item := range included {
+		reorderedDecisions = append(reorderedDecisions, item.decision)
+	}
+	for _, decision := range preview.Decisions {
+		if !decision.Included {
+			reorderedDecisions = append(reorderedDecisions, decision)
+		}
+	}
+	preview.Decisions = reorderedDecisions
 	return group, preview, canonical, nil
 }
 

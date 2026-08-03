@@ -77,6 +77,7 @@ export type Channel = {
     ws_mode: ChannelWSMode;
     protocol_policy: ChannelProtocolPolicy;
     allow_lossy: boolean;
+    is_reserve: boolean;
     param_override?: string | null;
     match_regex?: string | null;
     managed: boolean;
@@ -110,6 +111,7 @@ export type CreateChannelRequest = {
     ws_mode?: ChannelWSMode;
     protocol_policy?: ChannelProtocolPolicy;
     allow_lossy?: boolean;
+    is_reserve?: boolean;
     param_override?: string | null;
     match_regex?: string | null;
 };
@@ -133,6 +135,7 @@ export type UpdateChannelRequest = {
     ws_mode?: ChannelWSMode;
     protocol_policy?: ChannelProtocolPolicy;
     allow_lossy?: boolean;
+    is_reserve?: boolean;
     param_override?: string | null;
     match_regex?: string | null;
     // keys diff
@@ -178,6 +181,7 @@ export function useChannelList() {
                 ws_mode: item.ws_mode ?? 'inherit',
                 protocol_policy: item.protocol_policy ?? 'auto',
                 allow_lossy: item.allow_lossy ?? false,
+                is_reserve: item.is_reserve ?? false,
                 keys: item.keys ?? [],
                 proxy_mode: item.proxy_mode ?? 'direct',
                 proxy_config_id: item.proxy_config_id ?? null,

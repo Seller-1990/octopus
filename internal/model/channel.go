@@ -77,6 +77,7 @@ type Channel struct {
 	WSMode         ChannelWSMode         `json:"ws_mode" gorm:"type:varchar(16);not null;default:'inherit'"`
 	ProtocolPolicy ProtocolPolicy        `json:"protocol_policy" gorm:"type:varchar(32);not null;default:'auto'"`
 	AllowLossy     bool                  `json:"allow_lossy" gorm:"not null;default:false"`
+	IsReserve      bool                  `json:"is_reserve" gorm:"not null;default:false"`
 	ParamOverride  *string               `json:"param_override"`
 	ChannelProxy   *string               `json:"-" gorm:"column:channel_proxy"`
 	Stats          *StatsChannel         `json:"stats,omitempty" gorm:"foreignKey:ChannelID"`
@@ -155,6 +156,7 @@ type ChannelUpdateRequest struct {
 	WSMode         *ChannelWSMode         `json:"ws_mode,omitempty"`
 	ProtocolPolicy *ProtocolPolicy        `json:"protocol_policy,omitempty"`
 	AllowLossy     *bool                  `json:"allow_lossy,omitempty"`
+	IsReserve      *bool                  `json:"is_reserve,omitempty"`
 	ChannelProxy   *string                `json:"-"`
 	ParamOverride  *string                `json:"param_override,omitempty"`
 	MatchRegex     *string                `json:"match_regex,omitempty"`
