@@ -172,8 +172,9 @@ type Site struct {
 	SiteProxy              *string            `json:"-" gorm:"column:site_proxy"`
 	UseSystemProxy         bool               `json:"-" gorm:"default:false"`
 	ExternalCheckinURL     *string            `json:"external_checkin_url"`
-	IsPinned               bool               `json:"is_pinned" gorm:"default:false"`
-	SortOrder              int                `json:"sort_order" gorm:"default:0"`
+	IsPinned               bool                `json:"is_pinned" gorm:"default:false"`
+	IsReserve              bool                `json:"is_reserve" gorm:"default:false"`
+	SortOrder              int                 `json:"sort_order" gorm:"default:0"`
 	GlobalWeight           float64            `json:"global_weight" gorm:"default:1"`
 	CustomHeader           []CustomHeader     `json:"custom_header" gorm:"serializer:json"`
 	RouteBaseURLs          []SiteRouteBaseURL `json:"route_base_urls" gorm:"serializer:json"`
@@ -367,6 +368,7 @@ type SiteUpdateRequest struct {
 	ExternalCheckinURL        *string             `json:"external_checkin_url,omitempty"`
 	ExternalCheckinSet        bool                `json:"-"`
 	IsPinned                  *bool               `json:"is_pinned,omitempty"`
+	IsReserve                 *bool               `json:"is_reserve,omitempty"`
 	SortOrder                 *int                `json:"sort_order,omitempty"`
 	GlobalWeight              *float64            `json:"global_weight,omitempty"`
 	CustomHeader              *[]CustomHeader     `json:"custom_header,omitempty"`

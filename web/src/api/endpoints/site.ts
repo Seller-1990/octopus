@@ -134,6 +134,7 @@ export type Site = {
   preferred_clash_node?: string;
   external_checkin_url?: string | null;
   is_pinned: boolean;
+  is_reserve: boolean;
   sort_order: number;
   global_weight: number;
   custom_header: CustomHeader[];
@@ -253,6 +254,7 @@ function normalizeSiteServerList(data: SiteServer[]): Site[] {
     preferred_clash_node: site.preferred_clash_node ?? "",
     external_checkin_url: site.external_checkin_url ?? null,
     is_pinned: site.is_pinned ?? false,
+    is_reserve: site.is_reserve ?? false,
     sort_order: typeof site.sort_order === "number" ? site.sort_order : 0,
     global_weight:
       typeof site.global_weight === "number" && site.global_weight > 0
