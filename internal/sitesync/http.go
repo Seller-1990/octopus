@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -164,6 +165,10 @@ func resolveSiteRequestHeaderPolicy(
 	policy, err := op.ResolveSiteHeaderPolicy(ctx, siteRecord.ID, accountID)
 	if err == nil {
 		return policy
+	}
+	// ctx 已超时/取消时失败是连锁反应而非独立故障，避免刷屏噪音
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return op.HeaderPolicyFailureFallback()
 	}
 	log.Warnf(
 		"resolve site header policy failed (site=%d account=%d): %v",
