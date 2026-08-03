@@ -158,6 +158,7 @@ func parseSitePricingQuotes(siteID, accountID int, payload map[string]any) []mod
 				Source:          source,
 				Unit:            unit,
 				Currency:        currency,
+				ModelMultiplier: modelRatio,
 				GroupMultiplier: groupMultiplier,
 				RawPayload:      string(raw),
 				ObservedAt:      now,

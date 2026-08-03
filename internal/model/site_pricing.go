@@ -50,6 +50,7 @@ type SiteModelPriceQuote struct {
 	CacheRead         float64          `json:"cache_read"`
 	CacheWrite        float64          `json:"cache_write"`
 	PerRequest        float64          `json:"per_request"`
+	ModelMultiplier   float64          `json:"model_multiplier" gorm:"not null;default:0"` // 模型倍率(如0.1x/1x)，0 表示未知
 	GroupMultiplier   float64          `json:"group_multiplier" gorm:"not null;default:1"`
 	ExchangeRateToUSD float64          `json:"exchange_rate_to_usd" gorm:"not null"`
 	RawPayload        string           `json:"raw_payload,omitempty" gorm:"type:text"`
