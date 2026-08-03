@@ -41,6 +41,7 @@ const (
 	SettingKeyOutlierRecoverStreak             SettingKey = "outlier_recover_streak"               // POR 连续探活成功恢复阈值
 	SettingKeyOutlierReapMinutes               SettingKey = "outlier_reap_minutes"                 // POR 窗口内存回收 TTL(分钟)
 	SettingKeyOutlierCFRecoverMinutes          SettingKey = "outlier_cf_recover_minutes"           // POR CF 退役渠道恢复探活冷却(分钟)
+	SettingKeyOutlierRecoverProbeMinutes       SettingKey = "outlier_recover_probe_minutes"        // POR 非 CF 退役渠道恢复探活冷却(分钟)
 	SettingKeyApiBaseUrl                       SettingKey = "api_base_url"                         // 对外服务基础地址，用于一键导出客户端配置，为空时不显示导出入口
 	SettingKeyWebDAVURL                        SettingKey = "webdav_url"                           // WebDAV 服务器地址
 	SettingKeyWebDAVUsername                   SettingKey = "webdav_username"                      // WebDAV 用户名
@@ -95,6 +96,7 @@ func DefaultSettings() []Setting {
 		{Key: SettingKeyOutlierRecoverStreak, Value: "2"},            // 连续探活成功 2 次恢复
 		{Key: SettingKeyOutlierReapMinutes, Value: "30"},             // 窗口 30 分钟无流量回收
 		{Key: SettingKeyOutlierCFRecoverMinutes, Value: "30"},        // CF 退役渠道 30 分钟后才探活恢复
+		{Key: SettingKeyOutlierRecoverProbeMinutes, Value: "30"},     // 非 CF 退役渠道 30 分钟后才探活恢复
 		{Key: SettingKeyApiBaseUrl, Value: ""},                       // 默认为空，不显示客户端导出入口
 		{Key: SettingKeyWebDAVURL, Value: ""},                        // 默认为空，未配置
 		{Key: SettingKeyWebDAVUsername, Value: ""},                   // 默认为空
@@ -125,7 +127,7 @@ func (s *Setting) Validate() error {
 		return validateIntRange(s.Value, 1, 100)
 	case SettingKeyOutlierRetireInterval, SettingKeyOutlierWindowMinutes, SettingKeyOutlierMinSamples,
 		SettingKeyOutlierConsecFails, SettingKeyOutlierRecoverStreak,
-		SettingKeyOutlierReapMinutes, SettingKeyOutlierCFRecoverMinutes,
+		SettingKeyOutlierReapMinutes, SettingKeyOutlierCFRecoverMinutes, SettingKeyOutlierRecoverProbeMinutes,
 		SettingKeyWebDAVRetentionCount, SettingKeyUsageHourlyRetentionDays:
 		// 时间窗/样本/连击/间隔等：0 或负值无意义，下限为 1。
 		return validateIntRange(s.Value, 1, maxRetentionDays)
