@@ -2,6 +2,7 @@ package op
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math"
 	"slices"
@@ -13,6 +14,7 @@ import (
 	dbpkg "github.com/bestruirui/octopus/internal/db"
 	"github.com/bestruirui/octopus/internal/model"
 	"github.com/bestruirui/octopus/internal/transformer/outbound"
+	"gorm.io/gorm"
 )
 
 func TestUsageAnalyticsSeparatesRequestsAndAttempts(t *testing.T) {
@@ -520,6 +522,15 @@ func TestUsageBreakdownExportPagesBoundHighCardinality(t *testing.T) {
 	if err != nil {
 		t.Fatalf("second high-cardinality export page: %v", err)
 	}
+	legacy, err := UsageAnalyticsBreakdownExportGet(
+		ctx, filter, "api_key", "", "request_count", false,
+	)
+	if err != nil {
+		t.Fatalf("bounded legacy export: %v", err)
+	}
+	if legacy.PageSize != usageBreakdownExportPageSize || len(legacy.Items) != usageBreakdownExportPageSize {
+		t.Fatalf("legacy export was not bounded: %+v", legacy)
+	}
 	if first.Total != factCount ||
 		first.PageSize != usageBreakdownExportPageSize ||
 		len(first.Items) != usageBreakdownExportPageSize ||
@@ -875,6 +886,51 @@ func TestUsageDailyAggregateSurvivesHourlyRetentionAndServesAnalytics(t *testing
 	}
 	if breakdown.Total != 0 || len(breakdown.Items) != 0 {
 		t.Fatalf("aggregate search did not filter rows: %+v", breakdown)
+	}
+}
+
+func TestUsageAggregateClaimRejectsStaleSelections(t *testing.T) {
+	ctx := setupSiteOpTestDB(t)
+	requestFact := model.UsageRequestFact{
+		RelayLogID: 70_001,
+		Time:       time.Now().Unix(),
+		Outcome:    model.RequestOutcomeSuccess,
+	}
+	attemptFact := model.UsageAttemptFact{
+		RelayLogID:    70_001,
+		AttemptNumber: 1,
+		Time:          requestFact.Time,
+		Outcome:       model.RequestOutcomeFailed,
+	}
+	if err := dbpkg.GetDB().WithContext(ctx).Create(&requestFact).Error; err != nil {
+		t.Fatalf("create request fact: %v", err)
+	}
+	if err := dbpkg.GetDB().WithContext(ctx).Create(&attemptFact).Error; err != nil {
+		t.Fatalf("create attempt fact: %v", err)
+	}
+	alreadyClaimedAt := time.Now().Add(-time.Second)
+	if err := dbpkg.GetDB().WithContext(ctx).Model(&model.UsageRequestFact{}).
+		Where("relay_log_id = ?", requestFact.RelayLogID).
+		Update("aggregated_at", alreadyClaimedAt).Error; err != nil {
+		t.Fatalf("preclaim request fact: %v", err)
+	}
+	if err := dbpkg.GetDB().WithContext(ctx).Model(&model.UsageAttemptFact{}).
+		Where("relay_log_id = ? AND attempt_number = ?", attemptFact.RelayLogID, attemptFact.AttemptNumber).
+		Update("aggregated_at", alreadyClaimedAt).Error; err != nil {
+		t.Fatalf("preclaim attempt fact: %v", err)
+	}
+
+	err := dbpkg.GetDB().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		return claimUsageRequestFacts(tx, []model.UsageRequestFact{requestFact}, time.Now())
+	})
+	if !errors.Is(err, errUsageAggregateClaimConflict) {
+		t.Fatalf("stale request selection claim error = %v", err)
+	}
+	err = dbpkg.GetDB().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		return claimUsageAttemptFacts(tx, []model.UsageAttemptFact{attemptFact}, time.Now())
+	})
+	if !errors.Is(err, errUsageAggregateClaimConflict) {
+		t.Fatalf("stale attempt selection claim error = %v", err)
 	}
 }
 

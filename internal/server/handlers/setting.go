@@ -119,7 +119,7 @@ func exportDB(c *gin.Context) {
 		resp.Error(c, http.StatusBadRequest, "invalid format")
 		return
 	}
-	if err := validateDBExportOptions(format, includeLogs); err != nil {
+	if err := validateDBExportOptions(format, includeLogs, includeStats); err != nil {
 		resp.Error(c, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -154,9 +154,12 @@ func exportDB(c *gin.Context) {
 	c.JSON(http.StatusOK, dump)
 }
 
-func validateDBExportOptions(format string, includeLogs bool) error {
+func validateDBExportOptions(format string, includeLogs, includeStats bool) error {
 	if format == "json" && includeLogs {
 		return fmt.Errorf("JSON exports cannot include logs; use ZIP format")
+	}
+	if format == "json" && includeStats {
+		return fmt.Errorf("JSON exports cannot include stats; use ZIP format")
 	}
 	return nil
 }
