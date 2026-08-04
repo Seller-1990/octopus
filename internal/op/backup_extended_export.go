@@ -223,13 +223,14 @@ func writeZipUsageAttemptFactsNDJSON(ctx context.Context, zw *zip.Writer, conn *
 	}
 	var lastRelayLogID int64
 	var lastAttemptNumber int
+	hasCursor := false
 	for {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
 		var batch []model.UsageAttemptFact
 		query := conn.WithContext(ctx)
-		if lastRelayLogID > 0 {
+		if hasCursor {
 			query = query.Where(
 				"relay_log_id > ? OR (relay_log_id = ? AND attempt_number > ?)",
 				lastRelayLogID,
@@ -254,6 +255,7 @@ func writeZipUsageAttemptFactsNDJSON(ctx context.Context, zw *zip.Writer, conn *
 		last := batch[len(batch)-1]
 		lastRelayLogID = last.RelayLogID
 		lastAttemptNumber = last.AttemptNumber
+		hasCursor = true
 		if len(batch) < dbExportLogBatchSize {
 			return nil
 		}
