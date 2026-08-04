@@ -1,6 +1,6 @@
 services:
   octopus:
-    image: hureru/octopus
+    image: ghcr.io/seller-1990/octopus:latest
     ports:
        - '8080:8080'
     volumes:      

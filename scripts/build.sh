@@ -16,10 +16,19 @@ readonly MAIN_DIR="./"
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 readonly OUTPUT_DIR="build"
 
+resolve_git_version() {
+    local exact_tag
+    if exact_tag="$(git describe --tags --exact-match 2>/dev/null)"; then
+        printf '%s' "${exact_tag}"
+        return
+    fi
+    printf 'v0.1.0-dev+%s' "$(git rev-parse --short HEAD 2>/dev/null || echo 'unknown')"
+}
+
 # Build metadata
 readonly BUILD_TIME="$(TZ='Asia/Shanghai' date +'%F %T %z')"
-readonly GIT_AUTHOR="hureru"
-readonly GIT_VERSION="$(git describe --tags --abbrev=0 2>/dev/null || echo 'dev')"
+readonly GIT_AUTHOR="Seller-1990"
+readonly GIT_VERSION="$(resolve_git_version)"
 readonly COMMIT_ID="$(git rev-parse --short HEAD 2>/dev/null || echo 'unknown')"
 
 # Build flags
@@ -367,8 +376,11 @@ package_installer() {
     fi
 
     mkdir -p "${installer_dir}"
-    cp "${desktop_bin}" "${work_dir}/octopus-desktop.exe"
-    cp LICENSE "${work_dir}/LICENSE" 2>/dev/null || true
+    if ! cp "${desktop_bin}" "${work_dir}/octopus-desktop.exe" || ! cp LICENSE "${work_dir}/LICENSE"; then
+        log_error "Failed to prepare installer inputs"
+        rm -rf "${work_dir}"
+        return 1
+    fi
 
     if ! (cd "${work_dir}" && makensis \
         -DVERSION="${version}" \
@@ -402,39 +414,54 @@ create_archives() {
 
     local archives_dir="${OUTPUT_DIR}/archives"
 
-    # Copy documentation files to archives directory
-    cp README.md LICENSE "${archives_dir}/" 2>/dev/null || log_info "Documentation files not found, skipping"
+    if ! cp README.md LICENSE "${archives_dir}/"; then
+        log_error "Failed to copy archive documentation"
+        return 1
+    fi
+
+    local archive_count=0
+    local failed=0
 
     # Archive all binaries (zip format for all platforms)
     while IFS= read -r -d '' file; do
         local basename_file
         basename_file=$(basename "$file")
-        local extension=""
+        local archive_entry="${APP_NAME}"
+        local archive_file="${basename_file}.zip"
 
-        # Add .exe extension for Windows binaries
-        if [[ "$basename_file" == *"-windows-"* ]]; then
-            extension=".exe"
+        # Preserve the Windows extension and the desktop default-mode signal.
+        if [[ "$basename_file" == "${APP_NAME}-desktop-"*.exe ]]; then
+            archive_entry="${APP_NAME}-desktop.exe"
+            archive_file="${basename_file%.exe}.zip"
+        elif [[ "$basename_file" == "${APP_NAME}-windows-"* || "$basename_file" == *.exe ]]; then
+            archive_entry="${APP_NAME}.exe"
         fi
 
-        if ! cp "$file" "${archives_dir}/${APP_NAME}${extension}" 2>/dev/null; then
-            log_error "Failed to copy $file to ${archives_dir}/${APP_NAME}${extension}"
+        if ! cp "$file" "${archives_dir}/${archive_entry}" 2>/dev/null; then
+            log_error "Failed to copy $file to ${archives_dir}/${archive_entry}"
+            failed=1
             continue
         fi
 
-        if (cd "${archives_dir}" && zip -q "${basename_file}.zip" "${APP_NAME}${extension}" README.md LICENSE 2>/dev/null); then
-            rm -f "${archives_dir}/${APP_NAME}${extension}"
-            log_success "Archived: archives/${basename_file}.zip"
+        if (cd "${archives_dir}" && zip -q "${archive_file}" "${archive_entry}" README.md LICENSE 2>/dev/null); then
+            rm -f "${archives_dir}/${archive_entry}"
+            archive_count=$((archive_count + 1))
+            log_success "Archived: archives/${archive_file}"
         else
-            log_error "Failed to create archive: ${basename_file}.zip"
-            rm -f "${archives_dir}/${APP_NAME}${extension}"
+            log_error "Failed to create archive: ${archive_file}"
+            rm -f "${archives_dir}/${archive_entry}"
+            failed=1
         fi
     done < <(find "${OUTPUT_DIR}/bin/" -name "${APP_NAME}-*" -type f -print0 2>/dev/null)
 
     # Cleanup documentation files from archives directory
     rm -f "${archives_dir}/README.md" "${archives_dir}/LICENSE"
 
-    if ! cd .. 2>/dev/null; then
-        log_error "Failed to return to parent directory"
+    if [ "${archive_count}" -eq 0 ]; then
+        log_error "No binaries were archived"
+        return 1
+    fi
+    if [ "${failed}" -ne 0 ]; then
         return 1
     fi
 
@@ -522,7 +549,7 @@ prepare_docker_binaries() {
         if [ -f "${OUTPUT_DIR}/bin/${binary_name}" ]; then
             if cp "${OUTPUT_DIR}/bin/${binary_name}" "${platform_dir}/${APP_NAME}" 2>/dev/null; then
                 log_success "Copied bin/${binary_name} → docker/${docker_platform}/${APP_NAME}"
-                ((copied_count++))
+                copied_count=$((copied_count + 1))
             else
                 log_error "Failed to copy bin/${binary_name} to ${platform_dir}/${APP_NAME}"
             fi
@@ -531,11 +558,11 @@ prepare_docker_binaries() {
         fi
     done
 
-    if [ $copied_count -gt 0 ]; then
-        log_success "Prepared ${copied_count} Docker binaries in ${docker_dir}/"
-    else
-        log_warning "No Docker binaries prepared"
+    if [ "${copied_count}" -ne "${#platforms[@]}" ]; then
+        log_error "Prepared ${copied_count}/${#platforms[@]} Docker binaries"
+        return 1
     fi
+    log_success "Prepared ${copied_count} Docker binaries in ${docker_dir}/"
 }
 
 # =============================================================================
@@ -548,6 +575,7 @@ show_usage() {
     echo "Commands:"
     echo "  release              Build all platforms and create distribution packages"
     echo "  build <os> <arch>    Build for specific OS and architecture"
+    echo "  desktop <arch>       Build the Windows desktop executable and installer"
     echo "  help                 Show this help message"
     echo ""
     echo "Supported OS:"
@@ -641,7 +669,7 @@ main() {
         log_success "Binary ready: ${OUTPUT_DIR}/bin/${APP_NAME}-${os}-${arch}"
         ;;
     "desktop")
-        if [ $# -lt 2 ]; then
+        if [ $# -ne 2 ]; then
             log_error "Desktop build requires architecture"
             log_error "Usage: $0 desktop [x86_64|arm64]"
             show_usage
@@ -677,7 +705,8 @@ main() {
 
         log_step "Packaging installer"
         if ! package_installer "${OUTPUT_DIR}/bin/${APP_NAME}-desktop-${arch}.exe" "${arch}"; then
-            log_warning "Installer packaging failed (NSIS), binary is still available"
+            log_error "Installer packaging failed (NSIS)"
+            exit 1
         fi
 
         log_step "Build completed"
@@ -713,48 +742,61 @@ main() {
         # Standard builds (pure Go, static binaries)
         if ! build_standard linux x86_64; then
             log_error "Failed to build Linux x86_64"
+            exit 1
         fi
         if ! build_standard linux arm64; then
             log_error "Failed to build Linux arm64"
+            exit 1
         fi
         if ! build_standard linux armv7; then
             log_error "Failed to build Linux armv7"
+            exit 1
         fi
         if ! build_standard linux x86; then
             log_error "Failed to build Linux x86"
+            exit 1
         fi
         if ! build_standard windows x86_64; then
             log_error "Failed to build Windows x86_64"
+            exit 1
         fi
         if ! build_standard windows x86; then
             log_error "Failed to build Windows x86"
+            exit 1
         fi
         if ! build_standard darwin arm64; then
             log_error "Failed to build Darwin arm64"
+            exit 1
         fi
         if ! build_standard darwin x86_64; then
-            log_error "Failed to build Darwin arm64"
+            log_error "Failed to build Darwin x86_64"
+            exit 1
         fi
 
         # Post-processing
         if ! prepare_docker_binaries; then
-            log_warning "Failed to prepare Docker binaries, but continuing..."
+            log_error "Failed to prepare Docker binaries"
+            exit 1
         fi
 
         # Desktop build + installer (Windows GUI, no console)
         if ! build_desktop x86_64; then
-            log_warning "Failed to build desktop x86_64, but continuing..."
+            log_error "Failed to build desktop x86_64"
+            exit 1
         fi
         if ! package_installer "${OUTPUT_DIR}/bin/${APP_NAME}-desktop-x86_64.exe" "x86_64"; then
-            log_warning "Failed to package installer, but continuing..."
+            log_error "Failed to package installer"
+            exit 1
         fi
 
         if ! generate_checksums; then
-            log_warning "Failed to generate checksums, but continuing..."
+            log_error "Failed to generate checksums"
+            exit 1
         fi
 
         if ! create_archives; then
-            log_warning "Failed to create archives, but continuing..."
+            log_error "Failed to create archives"
+            exit 1
         fi
 
         log_step "Build completed"

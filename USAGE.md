@@ -37,10 +37,12 @@
 
 Octopus is an **LLM API aggregation and load balancing service**. In simple terms, it unifies "a bunch of API relay sites with a bunch of Keys" into "one address + one Key + your own model names", then distributes requests to clients like Claude Code, Codex, Cherry Studio, Immersive Translate, and more.
 
-This project builds on the original [bestruirui/octopus](https://github.com/bestruirui/octopus), adding two capabilities that beginners care about most:
+This independently maintained fork builds on [Hureru/octopus](https://github.com/Hureru/octopus). All releases, images, update checks, and deployment files are owned by [Seller-1990/octopus](https://github.com/Seller-1990/octopus). Its two most visible additions are:
 
-1. **Site Module**: Manage your registered API relay sites, **auto-sync available models and auto check-in**, and project site groups/models into channels.
+1. **Site Module**: Import and manage API relay sites, synchronize groups / Keys / models / balances, and project usable site models into channels.
 2. **More Complete Protocol Conversion**: Use `OpenAI Response` or even `Gemini` format models in Claude Code.
+
+> **Check-in responsibility:** The intended deployment uses `all-api-hub` for site check-in. Octopus keeps compatible check-in controls, but they are not used in this maintained workflow. Do not enable check-in in both systems.
 
 > 💡 Key design philosophy: **"Group" is your externally exposed model name**. This is the biggest difference from other tools and the most common stumbling block for beginners — please read [Chapter III](#iii-6-core-concepts-you-must-understand) carefully.
 
@@ -49,7 +51,7 @@ The UI has 7 pages, listed in order of use:
 | Page | Purpose |
 |------|---------|
 | **Home** | Cost/request statistics, leaderboard, group health overview |
-| **Sites** | Manage relay site accounts, auto-sync + check-in (the main battlefield for aggregation users) |
+| **Sites** | Import and manage relay accounts, synchronize resources, set relay policy, and inspect projection status |
 | **Channels** | Site channels (auto-projected) + Manual channels (manually added), complete Keys here |
 | **Groups** | **Define external model names**, aggregate channels into one model |
 | **Pricing** | Model pricing management |
@@ -87,7 +89,7 @@ If your provider isn't a relay site but gave you a Base URL + Key directly (e.g.
 | Concept | One-Line Explanation | Common Misunderstanding |
 |---------|---------------------|------------------------|
 | **Site** | An API relay site, storing its **URL, platform type, proxy** | URL should be **domain only** — don't include `/v1` or similar paths |
-| **Account** | Login credentials under a site, responsible for **sync + check-in**; one site can have multiple accounts | Access Token goes in the **Account**, not the Site |
+| **Account** | Login credentials under a site, primarily responsible for **synchronization and projection**; one site can have multiple accounts | Access Token goes in the **Account**, not the Site |
 | **Managed / Projected Channel** | Channels **auto-generated** after site sync, maintained automatically with the site | They **don't appear** in the "Manual Channels" list — look under the "Site Channels" tab |
 | **Manual Channel** | Channels you **manually add** (when you have your own Base URL + Key) | Separate from site channels, they don't affect each other |
 | **Group** | **Your externally exposed model name** — the client's `model` must equal the group name | **You must create a group first**, otherwise there are no available models and you can't create API keys |
@@ -105,16 +107,16 @@ If your provider isn't a relay site but gave you a Base URL + Key directly (e.g.
 
 **Docker run:**
 ```bash
-docker run -d --name octopus -v /path/to/data:/app/data -p 8080:8080 hureru/octopus
+docker run -d --name octopus -v /path/to/data:/app/data -p 8080:8080 ghcr.io/seller-1990/octopus:latest
 ```
 
 **docker compose:**
 ```bash
-wget https://raw.githubusercontent.com/Hureru/octopus/refs/heads/dev/docker-compose.yml
+wget https://raw.githubusercontent.com/Seller-1990/octopus/refs/heads/dev/docker-compose.yml
 docker compose up -d
 ```
 
-> ⚠️ **You must use the `hureru/octopus` image** (the version with Site functionality). If you use `bestrui/octopus` or other upstream images, you won't see the "Sites" page. For Release binaries and building from source, see [README.md](README.md).
+> ⚠️ **The sole distribution source is `Seller-1990/octopus`**: use `ghcr.io/seller-1990/octopus`, this repository's compose file, and its Releases. Parent-fork images and deployment files do not contain the complete Site, multiplier, failure-filter, or desktop changes.
 
 ### 4.2 First Login
 
@@ -136,7 +138,7 @@ After logging in, go to **Settings → Account Settings → Change Password** (y
 
 ## V. Step 1: Add a Site and Sync (Site Page)
 
-Go to the **Sites** page. When empty, you'll see a "No sites yet → Add your first site" guide button. Add Site / Import / Archive / Full Sync / Full Check-in entries are in the **toolbar at the top-right of the Sites page**.
+Go to the **Sites** page. When empty, you will see a "No sites yet → Add your first site" guide button. Add Site / Import / Archive / Full Sync entries are in the **toolbar at the top-right of the Sites page**. Full Check-in is a retained optional action and is not part of the all-api-hub-based primary workflow.
 
 ### 5.1 Add a Site
 
@@ -168,7 +170,7 @@ Supported **Platform Types**:
 
 ### 5.2 Add an Account (Key Point: What to Fill for Access Token)
 
-After creating a site, the "Add Account" dialog opens automatically. **Sync and check-in are done by accounts** — credentials go here.
+After creating a site, the "Add Account" dialog opens automatically. **Accounts provide the credentials used for synchronization and projection**.
 
 **Credential types** (available options vary by platform): Username/Password, **Access Token** (recommended), API Key.
 
@@ -185,14 +187,14 @@ The way to fill in Access Token varies by platform — this is the biggest pitfa
 > Log in to the relay site → Profile Settings → Account Management → Security Settings → **System Access Token**. The generated string is the Access Token.
 > **Strongly discouraged: logging in with username/password** — many sites don't return an Access Token after login, resulting in `Site login succeeded but no Access Token returned`.
 >
-> 🔎 **What is Platform User ID?** New API needs it for syncing tokens, groups, and check-in (it's your user ID on the relay site, e.g., `11494`). The import feature tries to fill this automatically.
+> 🔎 **What is Platform User ID?** New API needs it for synchronizing tokens and groups (and for the optional Octopus check-in path). It is your user ID on the relay site, e.g. `11494`; import tries to fill it automatically.
 
 Account switches:
 
 - **Enable Account**: When off, this account doesn't participate in sync/projection.
 - **Auto Sync** (default on): Syncs automatically at the interval set in Settings.
-- **Auto Check-in** (default on): Checks in automatically on schedule.
-- **Random Check-in** (default off): When enabled, you can set "Minimum check-in interval (hours)" and "Random delay window (minutes)" to avoid predictable patterns.
+- **Auto Check-in**: Leave this disabled when all-api-hub owns check-in. Enable it only when you explicitly want Octopus to take over that responsibility.
+- **Random Check-in**: Optional scheduling controls for the Octopus-owned check-in path; unused in the recommended all-api-hub workflow.
 - **Proxy**: Can "Inherit Site Proxy" or be set independently.
 
 ### 5.3 Sync: What Gets Pulled
@@ -216,7 +218,7 @@ The site card displays: account count / key count / model count / balance / toda
   → Fix: Create Keys for those groups on the relay site, or complete Keys on the Octopus channel page (see [Chapter VI](#vi-step-2-complete-keys-on-the-channel-page-site-channels)), then re-sync to auto-recover.
 - **Failed · HTTP 401**: Token/cookie expired, get a new one.
 - **Cloudflare protection**: The site triggered CF. First verify the site is up in a browser (server down also shows CF); if it loads fine, try configuring a proxy for the account.
-- **Platform doesn't support check-in**: Not an error — this platform (e.g., sub2api) simply doesn't support check-in, API usage is unaffected.
+- **Platform does not support check-in**: Not an error. The recommended all-api-hub workflow does not ask Octopus to check in; API synchronization and usage are unaffected.
 
 ### 5.4 Batch Import (from All API Hub / Metapi)
 
@@ -227,6 +229,8 @@ Too many sites to add one by one? Use the **toolbar's "Import"** button:
 3. Click "Start Import" — sites are auto-created or reused based on platform + URL, showing counts for new/reused/updated/skipped and any warnings.
 
 > Note: Metapi import only migrates **sites, accounts, Keys, groups, models** — routing strategies and downstream Keys are skipped (this is intentional — the project aims to move away from Metapi's complex routing). For import errors, see [FAQ Q10](#q10-import-from-all-api-hub--metapi-fails).
+>
+> When importing from **all-api-hub**, keep site lifecycle tasks such as check-in in all-api-hub. Octopus is the aggregation, projection, routing, and downstream API layer; it should not duplicate that scheduler.
 
 ### 5.5 Archive & Delete
 
@@ -469,7 +473,7 @@ Each log entry can be expanded to see: error message, **time to first token**, t
 | **Passive Outlier Retirement** | Site projected channels only, disabled by default. Includes failure rate / min samples / consecutive failures / window parameters |
 | **Channel Sync** | Auto-sync interval (hours), manual sync |
 | **Model Pricing** | Auto-update interval (hours), manual update (data from models.dev) |
-| **Site Automation** | Site auto-sync interval (hours), auto check-in interval (hours), manual full sync / full check-in |
+| **Site Automation** | Site synchronization interval and manual full sync; check-in controls are compatibility options and should remain off when all-api-hub owns check-in |
 | **Log Settings** | Enable history logs, log retention days, clear history logs |
 | **Backup / Restore** | Export (optionally include logs/statistics; logs force ZIP), Import (incremental) |
 | **API Keys** | Create/manage `sk-octopus-*`, supports **per-Key RPM rate limiting** (see [Chapter VIII](#viii-step-4-create-an-api-key-and-connect-clients)) |
@@ -520,7 +524,7 @@ Not a bug. The log shows the model name from the **upstream response's `model` f
 - **401**: Token/cookie expired — get a new one.
 - **decode response failed**: Most likely the site URL has extra paths or the type is wrong. Confirm you've entered domain only and selected the correct type.
 - **Cloudflare protection**: First verify the site is up in a browser (Ctrl+F5) — server down also shows CF. If the site loads normally, try configuring a proxy for the account.
-- **Platform doesn't support check-in**: Not an error — platforms like sub2api that don't support check-in just skip it, API usage is unaffected.
+- **Platform does not support check-in**: Not an error. Leave Octopus check-in disabled when all-api-hub already owns it; synchronization and API usage are unaffected.
 
 ### Q10. Import from All API Hub / Metapi fails?
 - Confirm the import source is correct (don't swap All API Hub ↔ Metapi) and the JSON is complete.
@@ -542,6 +546,9 @@ Usually a brief lag on first load as the model list/groups are cached — it imp
 ### Q15. Vision/image models can't "see" images after distribution?
 First confirm the **upstream provider itself** is configured correctly (the same image works with the original API). There have also been cases where "can't see images" was actually the model "thinking it can't see" — retrying a few times resolved it. Prioritize checking provider and endpoint format configuration.
 
+### Q16. Do I need to enable site check-in in Octopus?
+No for the maintained deployment described here. **all-api-hub owns site check-in**, while Octopus imports inventory, synchronizes and projects models, routes requests, and exposes the downstream API. Keep Octopus check-in disabled to avoid duplicate check-ins unless you deliberately move that responsibility out of all-api-hub.
+
 ---
 
 ## XIV. Performance & Operations
@@ -550,12 +557,12 @@ First confirm the **upstream provider itself** is configured correctly (the same
 - **Statistics writes**: Statistics are held in memory first, then batch-written to the database at the "Statistics Save Interval".
   > ⚠️ **Always exit properly** (`Ctrl+C` or `SIGTERM` / `docker stop`) — **don't use `kill -9`**, or in-memory statistics will be lost.
 - **Upgrades**: Safe to upgrade. **When log data is large (thousands of entries or more), upgrades run database migrations that may take several minutes** — this is normal. Recommend exporting via "Settings → Backup" before updating.
-- **Background tasks**: Statistics persistence, model sync, price updates, site sync/check-in all run as scheduled background tasks (intervals configurable in Settings).
+- **Background tasks**: Statistics persistence, model sync, price updates, and site synchronization run on schedule. The optional Octopus check-in task runs only when explicitly enabled and is not used in the all-api-hub-based workflow.
 
 ---
 
 <div align="center">
 
-For questions not covered in this guide, feel free to open an [Issue on GitHub](https://github.com/Hureru/octopus) or discuss on the [LinuxDO thread](https://linux.do/t/topic/2160826).
+For questions not covered in this guide, feel free to open an [Issue on GitHub](https://github.com/Seller-1990/octopus) or discuss on the [LinuxDO thread](https://linux.do/t/topic/2160826).
 
 </div>

@@ -2,7 +2,7 @@
 ; 用法: makensis /DVERSION=x.y.z /DBIN_PATH=octopus-desktop.exe octopus.nsi
 
 !ifndef VERSION
-  !define VERSION "dev"
+  !define VERSION "v0.1.0"
 !endif
 !ifndef BIN_PATH
   !define BIN_PATH "octopus-desktop.exe"
@@ -32,25 +32,25 @@ UninstPage instfiles
 Section "Octopus 主程序" SEC_MAIN
   SectionIn RO
   SetOutPath "$INSTDIR"
-  File "${BIN_PATH}"
-  File "${LICENSE_PATH}"
+  File /oname=octopus-desktop.exe "${BIN_PATH}"
+  File /oname=LICENSE "${LICENSE_PATH}"
 
   ; 卸载器
   WriteUninstaller "$INSTDIR\uninstall.exe"
 
   ; 开始菜单
   CreateDirectory "$SMPROGRAMS\Octopus"
-  CreateShortcut "$SMPROGRAMS\Octopus\Octopus.lnk" "$INSTDIR\octopus-desktop.exe"
+  CreateShortcut "$SMPROGRAMS\Octopus\Octopus.lnk" "$INSTDIR\octopus-desktop.exe" "desktop"
   CreateShortcut "$SMPROGRAMS\Octopus\卸载 Octopus.lnk" "$INSTDIR\uninstall.exe"
   ; 桌面快捷方式
-  CreateShortcut "$DESKTOP\Octopus.lnk" "$INSTDIR\octopus-desktop.exe"
+  CreateShortcut "$DESKTOP\Octopus.lnk" "$INSTDIR\octopus-desktop.exe" "desktop"
 
   ; 注册卸载信息
   WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\Octopus" "DisplayName" "Octopus"
   WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\Octopus" "DisplayVersion" "${VERSION}"
-  WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\Octopus" "Publisher" "hureru"
-  WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\Octopus" "DisplayIcon" "$INSTDIR\octopus-desktop.exe"
-  WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\Octopus" "UninstallString" "$INSTDIR\uninstall.exe"
+  WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\Octopus" "Publisher" "Seller-1990"
+  WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\Octopus" "DisplayIcon" '"$INSTDIR\octopus-desktop.exe"'
+  WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\Octopus" "UninstallString" '"$INSTDIR\uninstall.exe"'
   WriteRegDWORD HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\Octopus" "NoModify" 1
   WriteRegDWORD HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\Octopus" "NoRepair" 1
   WriteRegStr HKCU "Software\Octopus" "InstallDir" "$INSTDIR"

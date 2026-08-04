@@ -10,7 +10,9 @@
 
 </div>
 
-> Forked from [bestruirui/octopus](https://github.com/bestruirui/octopus) — see [Differences from Upstream](#-differences-from-upstream) for what this fork changes.
+> This is an independently maintained fork of [Hureru/octopus](https://github.com/Hureru/octopus), whose Go module remains compatible with [bestruirui/octopus](https://github.com/bestruirui/octopus). Releases, images, update checks, and deployment files come only from [Seller-1990/octopus](https://github.com/Seller-1990/octopus).
+>
+> The intended workflow imports site data from `all-api-hub`, which remains responsible for check-in. Octopus retains compatible check-in controls, but this fork does not use them as its primary workflow; avoid enabling check-in in both systems.
 
 
 ## ✨ Features
@@ -36,24 +38,28 @@
 Run directly:
 
 ```bash
-docker run -d --name octopus -v /path/to/data:/app/data -p 8080:8080 hureru/octopus
+docker run -d --name octopus -v /path/to/data:/app/data -p 8080:8080 ghcr.io/seller-1990/octopus:latest
 ```
 
 Or use docker compose:
 
 ```bash
-wget https://raw.githubusercontent.com/Hureru/octopus/refs/heads/dev/docker-compose.yml
+wget https://raw.githubusercontent.com/Seller-1990/octopus/refs/heads/dev/docker-compose.yml
 docker compose up -d
 ```
 
 
+Use only **ghcr.io/seller-1990/octopus** and the compose file from this repository. Parent-fork images and deployment files do not contain the complete feature set.
+
 ### 📦 Download from Release
 
-Download the binary for your platform from [Releases](https://github.com/Hureru/octopus/releases), then run:
+Download the binary for your platform from [Releases](https://github.com/Seller-1990/octopus/releases), then run:
 
 ```bash
 ./octopus start
 ```
+
+Windows users can download **octopus-setup-version-x86_64.exe** for an installer with desktop and Start Menu shortcuts, or **octopus-desktop-x86_64.exe** for the portable desktop executable.
 
 ### 🛠️ Build from Source
 
@@ -64,7 +70,7 @@ Download the binary for your platform from [Releases](https://github.com/Hureru/
 
 ```bash
 # Clone the repository
-git clone https://github.com/Hureru/octopus.git
+git clone https://github.com/Seller-1990/octopus.git
 cd octopus
 # Build frontend
 cd web && pnpm install && pnpm run build && cd ..
@@ -379,11 +385,14 @@ Edit `~/.codex/auth.json`
 
 ## 🔀 Differences from Upstream
 
-Compatible with [bestruirui/octopus](https://github.com/bestruirui/octopus), ~180 commits ahead on `dev`.
+This repository is forked directly from [Hureru/octopus](https://github.com/Hureru/octopus) and is now released independently as **Seller-1990/octopus**. It keeps the original Go module path for source compatibility, but never checks the parent repository for application updates.
 
 ### 🏗️ New subsystems
 
-- **🌐 Site Management & Site Sync** — full new resource layer (backend `sitesync/` + dedicated frontend modules). Manages aggregator-site accounts: scheduled sync, check-in, balance / today's income, per-site pricing, archive/restore, AnyRouter, route probing, `sub2api`, and projected site channels.
+- **🌐 Site Management & Site Sync** — imports all-api-hub / Metapi data, syncs accounts, groups, Keys, models, balances and site pricing, classifies account-level failures, and projects usable groups into managed channels. Relay policy and proxy routing are managed in this repository's Sites workspace.
+- **🔑 Group-aware Key projection** — persists the multiplier bound to each upstream API Key group, shows it on group members, supports quick Key creation/completion, and suspends only projections that truly lack a usable group Key.
+- **🖥️ Windows desktop distribution** — no-console desktop executable, browser launch, system tray, autostart option, graceful shutdown, and NSIS installer.
+- **📦 Independent releases** — version metadata, update checks, GHCR images, documentation, and Windows packages all use Seller-1990/octopus; Windows and container deployments link to Releases instead of replacing themselves in place.
 - **🔌 WebSocket relay** — upstream WS connection pool with health backoff, client-facing WS, DB-backed response affinity, and opt-in OpenAI Responses passthrough for Codex tools.
 - **🖼️ OpenAI Images API forwarding** with body cache.
 - **🩹 Transformer overhaul** — native StreamEvent pipeline across all adapters, Anthropic patching layer, role-alternation normalization, plus a long tail of cross-format fidelity fixes.
@@ -397,9 +406,13 @@ Compatible with [bestruirui/octopus](https://github.com/bestruirui/octopus), ~18
 
 ### 🧬 Misc
 
-- Claude Opus 4.7 adaptive thinking; DB migrations 003–012; new Site Automation panel in Settings.
+- Claude Opus 4.7 adaptive thinking; DB migrations 003–012; site automation controls retained for compatibility.
 
-> Full diff: `git log upstream/dev..HEAD` after adding `https://github.com/bestruirui/octopus` as `upstream`.
+### Check-in responsibility
+
+The maintained deployment model uses **all-api-hub** for site check-in. Octopus focuses on importing site inventory, syncing and projecting models, routing requests, and exposing the downstream API gateway. Its check-in implementation is retained for compatibility but is not part of this actively used workflow.
+
+> For a complete source diff, compare this repository with its GitHub parent **Hureru/octopus**.
 
 ---
 
@@ -411,4 +424,3 @@ Compatible with [bestruirui/octopus](https://github.com/bestruirui/octopus), ~18
 ## 🔗 Friend Links
 
 - 🐧 [LinuxDO](https://linux.do) - A community for tech enthusiasts
-

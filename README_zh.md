@@ -10,7 +10,9 @@
 
 </div>
 
-> 本项目 Fork 自 [bestruirui/octopus](https://github.com/bestruirui/octopus)，与上游的差异见 [与上游的差异](#-与上游的差异)。
+> 本项目是 [Hureru/octopus](https://github.com/Hureru/octopus) 的独立维护二开，Go 模块路径继续兼容 [bestruirui/octopus](https://github.com/bestruirui/octopus)。Release、镜像、更新检查和部署文件只以 [Seller-1990/octopus](https://github.com/Seller-1990/octopus) 为准。
+>
+> 当前设想是从 `all-api-hub` 导入站点，并继续由 `all-api-hub` 负责签到。Octopus 保留兼容的签到开关与状态，但本二开的实际使用路径不依赖该能力；不要在两个系统里同时开启签到。
 
 
 ## ✨ 特性
@@ -36,24 +38,28 @@
 直接运行
 
 ```bash
-docker run -d --name octopus -v /path/to/data:/app/data -p 8080:8080 hureru/octopus
+docker run -d --name octopus -v /path/to/data:/app/data -p 8080:8080 ghcr.io/seller-1990/octopus:latest
 ```
 
 或者使用 docker compose 运行
 
 ```bash
-wget https://raw.githubusercontent.com/Hureru/octopus/refs/heads/dev/docker-compose.yml
+wget https://raw.githubusercontent.com/Seller-1990/octopus/refs/heads/dev/docker-compose.yml
 docker compose up -d
 ```
 
 
+只使用 **ghcr.io/seller-1990/octopus** 以及本仓库提供的 compose。父仓库或其他 fork 的镜像、部署文件不包含本二开的完整功能。
+
 ### 📦 从 Release 下载
 
-从 [Releases](https://github.com/Hureru/octopus/releases) 下载对应平台的二进制文件，然后运行：
+从 [Releases](https://github.com/Seller-1990/octopus/releases) 下载对应平台的二进制文件，然后运行：
 
 ```bash
 ./octopus start
 ```
+
+Windows 用户可下载 **octopus-setup-版本-x86_64.exe** 安装包（含桌面、开始菜单快捷方式），也可直接使用便携版 **octopus-desktop-x86_64.exe**。
 
 ### 🛠️ 源码运行
 
@@ -64,7 +70,7 @@ docker compose up -d
 
 ```bash
 # 克隆项目
-git clone https://github.com/Hureru/octopus.git
+git clone https://github.com/Seller-1990/octopus.git
 cd octopus
 # 构建前端
 cd web && pnpm install && pnpm run build && cd ..
@@ -381,11 +387,14 @@ base_url = "http://127.0.0.1:8080/v1"
 
 ## 🔀 与上游的差异
 
-兼容 [bestruirui/octopus](https://github.com/bestruirui/octopus)，`dev` 分支领先约 180 个提交。
+本仓库直接 Fork 自 [Hureru/octopus](https://github.com/Hureru/octopus)，现由 **Seller-1990/octopus** 独立维护和发布。为保持源码兼容，Go 模块路径仍沿用原始路径，但应用更新不会再查询父仓库。
 
 ### 🏗️ 新增子系统
 
-- **🌐 站点管理 & 站点同步** —— 全新资源层（后端 `sitesync/` + 独立前端模块）。管理聚合站点账号：定时同步、自动签到、余额与今日收益、按站点价格、归档/恢复、AnyRouter、路由探测、`sub2api`，以及把账号物化为渠道的 projected site channel。
+- **🌐 站点管理 & 站点同步** —— 导入 all-api-hub / Metapi 数据，同步账号、分组、Key、模型、余额和站点价格，按具体账号分类失败原因，并把可用分组投影为托管渠道；站点页可直接管理中转策略和代理路由。
+- **🔑 按 Key 分组投影** —— 持久化上游 API Key 所属分组的倍率，在分组成员中显示，支持快捷创建/补全 Key，只暂停真正缺少可用分组 Key 的投影。
+- **🖥️ Windows 桌面发行版** —— 无控制台桌面程序、自动打开浏览器、系统托盘、开机自启选项、优雅退出和 NSIS 安装包。
+- **📦 独立发布链路** —— 版本信息、更新检查、GHCR 镜像、文档和 Windows 包统一使用 Seller-1990/octopus；Windows 与容器部署通过 Release 更新，不执行不安全的原地自替换。
 - **🔌 WebSocket relay** —— 上游 WS 连接池（带健康退避）、面向客户端的 WS、DB-backed response affinity，以及面向 Codex 工具的可选 OpenAI Responses 直通。
 - **🖼️ OpenAI Images API 转发**（带 body 缓存）。
 - **🩹 Transformer 大重构** —— 三大适配器统一原生 StreamEvent 流水线、Anthropic patching 层、role 交替规范化，及大量跨格式保真修复。
@@ -399,9 +408,13 @@ base_url = "http://127.0.0.1:8080/v1"
 
 ### 🧬 杂项
 
-- 支持 Claude Opus 4.7 adaptive thinking；DB 迁移 003–012；设置页新增 Site Automation 面板。
+- 支持 Claude Opus 4.7 adaptive thinking；DB 迁移 003–012；保留站点自动化设置作为兼容能力。
 
-> 完整 diff：添加上游远端 `https://github.com/bestruirui/octopus` 后执行 `git log upstream/dev..HEAD`。
+### 签到职责边界
+
+当前维护和部署方案由 **all-api-hub** 负责站点签到。Octopus 的主要职责是导入站点资产、同步并投影模型、完成请求路由和对外 API 网关；项目内的签到实现仍保留，但不属于本二开实际使用和重点验证的主流程。
+
+> 完整源码差异可直接与 GitHub 父仓库 **Hureru/octopus** 对比。
 
 ---
 

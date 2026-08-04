@@ -12,6 +12,10 @@ export interface LatestInfo {
     message: string;
     /** 当前运行在容器中时后端置 true，前端据此禁用自动更新入口 */
     container?: boolean;
+    /** 当前发行形态支持安全原地更新时为 true */
+    auto_update?: boolean;
+    /** 当前 fork 的最新 Release 页面 */
+    release_url?: string;
 }
 
 /**
@@ -79,4 +83,3 @@ export function useUpdateCore() {
         },
     });
 }
-

@@ -19,10 +19,11 @@ export function SettingInfo() {
 
     // 前端版本与后端当前版本不一致 → 浏览器缓存问题
     const isCacheMismatch = !!backendNowVersion && backendNowVersion !== APP_VERSION;
-    // 最新版本与后端当前版本不一致 → 有新版本可更新（容器环境禁用自动更新）
-    const inContainer = latestInfoQuery.data?.container === true;
+    // Windows 构建和容器只提供 Release 下载，避免覆盖正在运行的 exe 或镜像内二进制。
+    const canAutoUpdate = latestInfoQuery.data?.auto_update === true;
+    const releaseURL = latestInfoQuery.data?.release_url || `${GITHUB_REPO}/releases/latest`;
     const hasNewVersion =
-        latestVersion && backendNowVersion && latestVersion !== backendNowVersion && !inContainer;
+        latestVersion && backendNowVersion && latestVersion !== backendNowVersion;
 
     const clearCacheAndReload = async () => {
         // 通知 Service Worker 清理缓存
@@ -158,24 +159,31 @@ export function SettingInfo() {
                                 {t('info.newVersionAvailable')}
                             </p>
                             <p className="text-xs text-muted-foreground">
-                                {t('info.newVersionAvailableHint')}
+                                {canAutoUpdate ? t('info.newVersionAvailableHint') : t('info.manualUpdateHint')}
                             </p>
                         </div>
                     </div>
                     <div className="flex justify-end">
-                        <Button
-                            variant="default"
-                            size="sm"
-                            onClick={handleUpdate}
-                            disabled={updateCore.isPending}
-                            className="rounded-xl"
-                        >
-                            {updateCore.isPending ? t('info.updating') : t('info.updateNow')}
-                        </Button>
+                        {canAutoUpdate ? (
+                            <Button
+                                variant="default"
+                                size="sm"
+                                onClick={handleUpdate}
+                                disabled={updateCore.isPending}
+                                className="rounded-xl"
+                            >
+                                {updateCore.isPending ? t('info.updating') : t('info.updateNow')}
+                            </Button>
+                        ) : (
+                            <Button asChild variant="default" size="sm" className="rounded-xl">
+                                <a href={releaseURL} target="_blank" rel="noopener noreferrer">
+                                    {t('info.downloadRelease')}
+                                </a>
+                            </Button>
+                        )}
                     </div>
                 </div>
             )}
         </div>
     );
 }
-

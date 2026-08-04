@@ -24,6 +24,16 @@ jobs:
           fetch-tags: true
           persist-credentials: false
 
+      - name: Resolve version
+        id: version
+        run: |
+          if VERSION="$(git describe --tags --exact-match 2>/dev/null)"; then
+            :
+          else
+            VERSION="v0.1.0-dev+$(git rev-parse --short HEAD)"
+          fi
+          echo "value=${VERSION}" >> "${GITHUB_OUTPUT}"
+
       - name: Setup Go
         uses: actions/setup-go@v6
         with:
@@ -44,9 +54,12 @@ jobs:
 
       - name: Build frontend
         working-directory: web
+        env:
+          OCTOPUS_VERSION: ${{ steps.version.outputs.value }}
+          NEXT_PUBLIC_GITHUB_REPO: https://github.com/Seller-1990/octopus
         run: |
           pnpm install --frozen-lockfile
-          NEXT_PUBLIC_APP_VERSION="$(git describe --tags --abbrev=0 2>/dev/null || echo 'dev')" pnpm build
+          NEXT_PUBLIC_APP_VERSION="${OCTOPUS_VERSION}" pnpm build
 
       - name: Embed frontend into static
         run: |
@@ -54,31 +67,58 @@ jobs:
           mv web/out static/out
 
       - name: Build binaries
+        env:
+          OCTOPUS_VERSION: ${{ steps.version.outputs.value }}
         run: |
           set -e
           mkdir -p build/bin build/docker/linux/amd64 build/docker/linux/arm64
           BUILD_TIME="$(TZ='Asia/Shanghai' date +'%F %T %z')"
-          GIT_VERSION="$(git describe --tags --abbrev=0 2>/dev/null || echo 'dev')"
+          GIT_VERSION="${OCTOPUS_VERSION}"
           COMMIT_ID="$(git rev-parse --short HEAD)"
           LDFLAGS="-X 'github.com/bestruirui/octopus/internal/conf.Version=${GIT_VERSION}' \
                    -X 'github.com/bestruirui/octopus/internal/conf.BuildTime=${BUILD_TIME}' \
-                   -X 'github.com/bestruirui/octopus/internal/conf.Author=hureru' \
+                   -X 'github.com/bestruirui/octopus/internal/conf.Author=Seller-1990' \
                    -X 'github.com/bestruirui/octopus/internal/conf.Commit=${COMMIT_ID}' \
                    -s -w"
 
           GOOS=linux   GOARCH=amd64 CGO_ENABLED=0 go build -o build/bin/octopus-linux-x86_64        -ldflags="${LDFLAGS}" -tags=jsoniter ./
           GOOS=linux   GOARCH=arm64 CGO_ENABLED=0 go build -o build/bin/octopus-linux-arm64         -ldflags="${LDFLAGS}" -tags=jsoniter ./
           GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -o build/bin/octopus-windows-x86_64.exe  -ldflags="${LDFLAGS}" -tags=jsoniter ./
+          GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -o build/bin/octopus-desktop-x86_64.exe  -ldflags="${LDFLAGS} -H windowsgui" -tags=jsoniter ./
           GOOS=darwin  GOARCH=arm64 CGO_ENABLED=0 go build -o build/bin/octopus-darwin-arm64        -ldflags="${LDFLAGS}" -tags=jsoniter ./
 
           cp build/bin/octopus-linux-x86_64 build/docker/linux/amd64/octopus
           cp build/bin/octopus-linux-arm64  build/docker/linux/arm64/octopus
+
+      - name: Build Windows installer
+        env:
+          OCTOPUS_VERSION: ${{ steps.version.outputs.value }}
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y nsis
+          mkdir -p build/installer
+          VERSION="${OCTOPUS_VERSION}"
+          makensis \
+            -DVERSION="${VERSION}" \
+            -DBIN_PATH="${GITHUB_WORKSPACE}/build/bin/octopus-desktop-x86_64.exe" \
+            -DLICENSE_PATH="${GITHUB_WORKSPACE}/LICENSE" \
+            -DOUT_PATH="${GITHUB_WORKSPACE}/build/installer/octopus-setup-${VERSION}-x86_64.exe" \
+            scripts/installer/windows/octopus.nsi
+          test -s "build/installer/octopus-setup-${VERSION}-x86_64.exe"
 
       - name: Upload binaries
         uses: actions/upload-artifact@v4
         with:
           name: octopus-binaries-${{ github.sha }}
           path: build/bin/
+          retention-days: 7
+          if-no-files-found: error
+
+      - name: Upload Windows installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: octopus-installer-${{ github.sha }}
+          path: build/installer/
           retention-days: 7
           if-no-files-found: error
 

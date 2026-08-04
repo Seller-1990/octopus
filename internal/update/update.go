@@ -18,21 +18,27 @@ import (
 	"github.com/bestruirui/octopus/internal/utils/log"
 )
 
-const (
-	updateUrl    = "https://github.com/Hureru/octopus/releases/latest/download"
-	updateApiUrl = "https://api.github.com/repos/Hureru/octopus/releases/latest"
-)
-
 type LatestInfo struct {
 	TagName     string `json:"tag_name"`
 	PublishedAt string `json:"published_at"`
 	Body        string `json:"body"`
 	Message     string `json:"message"`
+	ReleaseURL  string `json:"release_url"`
 	// Container 标记当前运行在容器中，前端据此禁用自动更新入口。
 	Container bool `json:"container"`
+	// AutoUpdate 标记当前发行形态是否支持安全的原地二进制更新。
+	AutoUpdate bool `json:"auto_update"`
 }
 
 var github_pat = os.Getenv(strings.ToUpper(conf.APP_NAME) + "_GITHUB_PAT")
+
+func latestReleaseAPIURL() string {
+	return "https://api.github.com/repos/" + conf.GitHubRepository + "/releases/latest"
+}
+
+func releaseDownloadURL(filename string) string {
+	return strings.TrimRight(conf.Repo, "/") + "/releases/latest/download/" + filename
+}
 
 // doRequestWithFallback performs an HTTP GET request, first without proxy, then with proxy if failed.
 func doRequestWithFallback(url string) ([]byte, error) {
@@ -79,7 +85,7 @@ func doRequest(url string, useProxy bool) ([]byte, error) {
 }
 
 func GetLatestInfo() (*LatestInfo, error) {
-	body, err := doRequestWithFallback(updateApiUrl)
+	body, err := doRequestWithFallback(latestReleaseAPIURL())
 	if err != nil {
 		return nil, err
 	}
@@ -93,6 +99,8 @@ func GetLatestInfo() (*LatestInfo, error) {
 		return nil, fmt.Errorf("failed to get latest info: %s", latestInfo.Message)
 	}
 	latestInfo.Container = InContainer()
+	latestInfo.AutoUpdate = AutoUpdateSupported()
+	latestInfo.ReleaseURL = strings.TrimRight(conf.Repo, "/") + "/releases/latest"
 	return &latestInfo, nil
 }
 

@@ -6,16 +6,18 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"syscall"
 
+	"github.com/bestruirui/octopus/internal/conf"
 	"github.com/bestruirui/octopus/internal/utils/log"
 	"github.com/bestruirui/octopus/internal/utils/shutdown"
 )
 
 func UpdateCore() error {
 	log.Infof("start update core")
-	if InContainer() {
-		err := fmt.Errorf("auto update is disabled inside container")
+	if !AutoUpdateSupported() {
+		err := fmt.Errorf("auto update is disabled on %s; install the latest release from %s/releases/latest", runtime.GOOS, strings.TrimRight(conf.Repo, "/"))
 		log.Warnf("update core failed: %v", err)
 		return err
 	}
@@ -26,7 +28,7 @@ func UpdateCore() error {
 		return err
 	}
 
-	downloadUrl := updateUrl + "/" + filename
+	downloadUrl := releaseDownloadURL(filename)
 	log.Infof("download url: %s", downloadUrl)
 	data, err := doRequestWithFallback(downloadUrl)
 	if err != nil {
@@ -48,6 +50,14 @@ func UpdateCore() error {
 	log.Infof("update core success")
 	go restartExecutable(execPath)
 	return nil
+}
+
+func AutoUpdateSupported() bool {
+	return autoUpdateSupported(runtime.GOOS, InContainer())
+}
+
+func autoUpdateSupported(goos string, inContainer bool) bool {
+	return !inContainer && goos != "windows"
 }
 
 func getDownloadFilename() (string, error) {
