@@ -46,6 +46,42 @@ func TestParseSitePricingQuotesAppliesGroupMultiplierOnlyInResolver(t *testing.T
 	}
 }
 
+func TestParseSitePricingQuotesPreservesExplicitZeroGroupMultiplier(t *testing.T) {
+	payload := map[string]any{
+		"group_ratio": map[string]any{"complimentary": 0.0},
+		"data": []any{
+			map[string]any{
+				"model_name":    "free-model",
+				"enable_groups": []any{"complimentary"},
+				"input_price":   1.0,
+			},
+		},
+	}
+
+	quotes := parseSitePricingQuotes(11, 22, payload)
+	if len(quotes) != 1 {
+		t.Fatalf("got %d quotes, want 1", len(quotes))
+	}
+	if quotes[0].GroupMultiplier != 0 || !quotes[0].GroupMultiplierKnown {
+		t.Fatalf("explicit zero group multiplier was replaced: %+v", quotes[0])
+	}
+}
+
+func TestParseSitePricingGroupMultipliersDoesNotRequireModelQuotes(t *testing.T) {
+	payload := map[string]any{
+		"group_ratio": map[string]any{
+			"default": 1.0,
+			"vip":     0.25,
+		},
+		"data": []any{},
+	}
+
+	multipliers := parseSitePricingGroupMultipliers(payload)
+	if len(multipliers) != 2 || multipliers["default"] != 1 || multipliers["vip"] != 0.25 {
+		t.Fatalf("unexpected group multipliers: %+v", multipliers)
+	}
+}
+
 func TestParseSitePricingQuotesPreservesPerRequestAndSiteCreditUnits(t *testing.T) {
 	payload := map[string]any{
 		"currency":    "credits",
@@ -128,7 +164,7 @@ func TestSyncAccountBindsFirstPricingRefreshToProjectedCandidate(t *testing.T) {
 			_, _ = w.Write([]byte(`{"data":[{"id":"` + modelName + `"}]}`))
 		case "/api/pricing":
 			pricingCalls++
-			_, _ = w.Write([]byte(`{"data":[{
+			_, _ = w.Write([]byte(`{"group_ratio":{"default":0.25},"data":[{
 				"model_name":"` + modelName + `",
 				"enable_groups":["default"],
 				"input_price":1.25,
@@ -194,6 +230,15 @@ func TestSyncAccountBindsFirstPricingRefreshToProjectedCandidate(t *testing.T) {
 	}
 	if unboundCount != 0 {
 		t.Fatalf("first sync left %d unbound pricing rows", unboundCount)
+	}
+	var group model.SiteUserGroup
+	if err := dbpkg.GetDB().WithContext(ctx).
+		Where("site_account_id = ? AND group_key = ?", account.ID, model.SiteDefaultGroupKey).
+		First(&group).Error; err != nil {
+		t.Fatalf("load synced group: %v", err)
+	}
+	if group.Multiplier == nil || *group.Multiplier != 0.25 {
+		t.Fatalf("pricing group multiplier was not persisted: %+v", group)
 	}
 }
 

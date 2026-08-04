@@ -26,6 +26,7 @@ func SiteModelPriceQuotesUpsert(ctx context.Context, quotes []model.SiteModelPri
 			if err := normalizeSiteModelPriceQuoteWithDB(ctx, tx, &quotes[i]); err != nil {
 				return err
 			}
+			preserveZeroGroupMultiplier := quotes[i].GroupMultiplierKnown && quotes[i].GroupMultiplier == 0
 			if err := tx.Clauses(clause.OnConflict{
 				Columns: []clause.Column{{Name: "identity_key"}},
 				DoUpdates: clause.AssignmentColumns([]string{
@@ -42,6 +43,7 @@ func SiteModelPriceQuotesUpsert(ctx context.Context, quotes []model.SiteModelPri
 					"cache_read",
 					"cache_write",
 					"per_request",
+					"model_multiplier",
 					"group_multiplier",
 					"exchange_rate_to_usd",
 					"raw_payload",
@@ -55,7 +57,34 @@ func SiteModelPriceQuotesUpsert(ctx context.Context, quotes []model.SiteModelPri
 			}).Create(&quotes[i]).Error; err != nil {
 				return err
 			}
+			if preserveZeroGroupMultiplier {
+				if err := tx.Model(&model.SiteModelPriceQuote{}).
+					Where("identity_key = ?", quotes[i].IdentityKey).
+					UpdateColumn("group_multiplier", 0).Error; err != nil {
+					return err
+				}
+				quotes[i].GroupMultiplier = 0
+			}
 			if err := deleteSupersededUnboundQuote(tx, quotes[i]); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
+func SiteUserGroupMultipliersUpdate(ctx context.Context, accountID int, multipliers map[string]float64) error {
+	if accountID <= 0 || len(multipliers) == 0 {
+		return nil
+	}
+	return db.GetDB().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		for groupKey, multiplier := range multipliers {
+			if multiplier < 0 || math.IsNaN(multiplier) || math.IsInf(multiplier, 0) {
+				continue
+			}
+			if err := tx.Model(&model.SiteUserGroup{}).
+				Where("site_account_id = ? AND group_key = ?", accountID, model.NormalizeSiteGroupKey(groupKey)).
+				Update("multiplier", multiplier).Error; err != nil {
 				return err
 			}
 		}
@@ -93,7 +122,7 @@ func normalizeSiteModelPriceQuoteWithDB(
 	if quote.Currency == "" {
 		quote.Currency = "USD"
 	}
-	if quote.GroupMultiplier == 0 {
+	if quote.GroupMultiplier == 0 && !quote.GroupMultiplierKnown {
 		quote.GroupMultiplier = 1
 	}
 	if quote.ExchangeRateToUSD == 0 {
@@ -515,7 +544,7 @@ func effectivePriceFromQuote(
 ) model.EffectivePrice {
 	observedAt := quote.ObservedAt
 	multiplier := quote.GroupMultiplier
-	if multiplier <= 0 {
+	if multiplier < 0 {
 		multiplier = 1
 	}
 	rate := quote.ExchangeRateToUSD

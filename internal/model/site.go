@@ -172,9 +172,9 @@ type Site struct {
 	SiteProxy              *string            `json:"-" gorm:"column:site_proxy"`
 	UseSystemProxy         bool               `json:"-" gorm:"default:false"`
 	ExternalCheckinURL     *string            `json:"external_checkin_url"`
-	IsPinned               bool                `json:"is_pinned" gorm:"default:false"`
-	IsReserve              bool                `json:"is_reserve" gorm:"default:false"`
-	SortOrder              int                 `json:"sort_order" gorm:"default:0"`
+	IsPinned               bool               `json:"is_pinned" gorm:"default:false"`
+	IsReserve              bool               `json:"is_reserve" gorm:"default:false"`
+	SortOrder              int                `json:"sort_order" gorm:"default:0"`
 	GlobalWeight           float64            `json:"global_weight" gorm:"default:1"`
 	CustomHeader           []CustomHeader     `json:"custom_header" gorm:"serializer:json"`
 	RouteBaseURLs          []SiteRouteBaseURL `json:"route_base_urls" gorm:"serializer:json"`
@@ -302,10 +302,13 @@ type SiteToken struct {
 	ValueStatus   SiteTokenValueStatus `json:"value_status" gorm:"type:varchar(32);not null;default:'ready'"`
 	GroupKey      string               `json:"group_key" gorm:"size:128;index"`
 	GroupName     string               `json:"group_name"`
-	Enabled       bool                 `json:"enabled" gorm:"default:true"`
-	Source        string               `json:"source"`
-	IsDefault     bool                 `json:"is_default" gorm:"default:false"`
-	LastSyncAt    *time.Time           `json:"last_sync_at"`
+	// GroupMultiplier is transient sync metadata from APIs that embed the
+	// owning group in each key. The durable source remains SiteUserGroup.
+	GroupMultiplier *float64   `json:"-" gorm:"-"`
+	Enabled         bool       `json:"enabled" gorm:"default:true"`
+	Source          string     `json:"source"`
+	IsDefault       bool       `json:"is_default" gorm:"default:false"`
+	LastSyncAt      *time.Time `json:"last_sync_at"`
 }
 
 type SiteUserGroup struct {
@@ -313,6 +316,7 @@ type SiteUserGroup struct {
 	SiteAccountID           int                      `json:"site_account_id" gorm:"uniqueIndex:idx_site_account_group;not null"`
 	GroupKey                string                   `json:"group_key" gorm:"size:128;uniqueIndex:idx_site_account_group;not null"`
 	Name                    string                   `json:"name"`
+	Multiplier              *float64                 `json:"group_multiplier,omitempty"` // API Key 所属分组倍率，nil 表示站点未提供
 	RawPayload              string                   `json:"raw_payload"`
 	ProjectionDisabled      bool                     `json:"projection_disabled" gorm:"default:false"`
 	ProjectionSuspended     bool                     `json:"projection_suspended" gorm:"default:false;index"`

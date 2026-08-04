@@ -28,6 +28,7 @@ import {
   useImportMetAPI,
   useRestoreSite,
   useSiteBatchAction,
+  useSiteBatchSummary,
   useSiteList,
   useSyncAllSites,
   useSyncSiteAccount,
@@ -68,7 +69,10 @@ import {
 import { cn } from "@/lib/utils";
 import { useSettingStore } from "@/stores/setting";
 import { CheckinPanel } from "./CheckinPanel";
-import { BatchSummaryPanel } from "./BatchSummaryPanel";
+import {
+  buildBatchFailureSiteIds,
+  type BatchFailureCategory,
+} from "./batch-failure";
 import { SiteEditDialog } from "./SiteEditDialog";
 import { BatchEditDialog } from "./BatchEditDialog";
 import { AccountEditDialog } from "./AccountEditDialog";
@@ -563,6 +567,8 @@ export function Site() {
   const tRecovery = useTranslations('siteRecovery');
   const locale = useSettingStore((state) => state.locale);
   const { data: sites, isLoading, error } = useSiteList();
+  const { data: syncBatchSummary } = useSiteBatchSummary("sync");
+  const { data: checkinBatchSummary } = useSiteBatchSummary("checkin");
   const updateSite = useUpdateSite();
   const enableSite = useEnableSite();
   const deleteSite = useDeleteSite();
@@ -656,6 +662,12 @@ export function Site() {
   );
   const setCheckinFilterStatuses = useSiteUIStore(
     (state) => state.setCheckinFilterStatuses,
+  );
+  const batchFailureFilters = useSiteUIStore(
+    (state) => state.batchFailureFilters,
+  );
+  const setBatchFailureFilters = useSiteUIStore(
+    (state) => state.setBatchFailureFilters,
   );
   const tagFilters = useSiteUIStore((state) => state.tagFilters);
   const setTagFilters = useSiteUIStore((state) => state.setTagFilters);
@@ -792,8 +804,23 @@ export function Site() {
     return Array.from(tags);
   }, [sites, selectedSiteIds]);
 
+  const batchFailureSiteIds = useMemo(
+    () => buildBatchFailureSiteIds([syncBatchSummary, checkinBatchSummary]),
+    [syncBatchSummary, checkinBatchSummary],
+  );
+  const batchFailureFilterCounts = useMemo(
+    () => ({
+      credential: batchFailureSiteIds.credential.size,
+      risk: batchFailureSiteIds.risk.size,
+      transient: batchFailureSiteIds.transient.size,
+      other: batchFailureSiteIds.other.size,
+    }),
+    [batchFailureSiteIds],
+  );
+
   const visibleSites = useMemo<VisibleSite[]>(() => {
     const hasSearch = normalizedQuery.length > 0;
+    const hasBatchFailureFilters = batchFailureFilters.length > 0;
 
     const list = (sites ?? []).flatMap((site) => {
       const summary = buildSiteSummary(site);
@@ -803,6 +830,16 @@ export function Site() {
         tagFilters.length > 0 &&
         !isForcedTarget &&
         !site.tags.some((tag) => tagFilters.includes(tag))
+      ) {
+        return [];
+      }
+
+      if (
+        hasBatchFailureFilters &&
+        !isForcedTarget &&
+        !batchFailureFilters.some((category) =>
+          batchFailureSiteIds[category].has(site.id),
+        )
       ) {
         return [];
       }
@@ -823,7 +860,8 @@ export function Site() {
         : site.accounts;
 
       let visibleAccounts = site.accounts;
-      let forceExpanded = hasCheckinFilters || isForcedTarget;
+      let forceExpanded =
+        hasCheckinFilters || hasBatchFailureFilters || isForcedTarget;
 
       if (hasCheckinFilters && !isForcedTarget) {
         visibleAccounts = visibleAccounts.filter((account) =>
@@ -888,6 +926,8 @@ export function Site() {
     sites,
     normalizedQuery,
     checkinFilterStatuses,
+    batchFailureFilters,
+    batchFailureSiteIds,
     tagFilters,
     forcedSiteId,
     siteSortField,
@@ -897,6 +937,7 @@ export function Site() {
   const hasActiveFilters =
     normalizedQuery.length > 0 ||
     checkinFilterStatuses.length > 0 ||
+    batchFailureFilters.length > 0 ||
     tagFilters.length > 0;
   const visibleAccountCount = visibleSites.reduce(
     (sum, item) => sum + item.visibleAccounts.length,
@@ -1207,7 +1248,11 @@ export function Site() {
         id: site.id,
         is_reserve: !site.is_reserve,
       });
-      toast.success(site.is_reserve ? "已转为公益站点" : "已设为中转站点");
+      toast.success(
+        site.is_reserve
+          ? t("siteManagement.siteForm.relayDisabled")
+          : t("siteManagement.siteForm.relayEnabled"),
+      );
     } catch (reserveError) {
       toast.error(getSiteErrorMessage(locale, reserveError, t));
     }
@@ -1216,6 +1261,7 @@ export function Site() {
   function handleCheckinFilterChange(status: CheckinFilterStatus) {
     if (status === "all") {
       setCheckinFilterStatuses([]);
+      setBatchFailureFilters([]);
       return;
     }
 
@@ -1223,6 +1269,14 @@ export function Site() {
       current.includes(status)
         ? current.filter((item) => item !== status)
         : [...current, status],
+    );
+  }
+
+  function handleBatchFailureFilterChange(category: BatchFailureCategory) {
+    setBatchFailureFilters((current) =>
+      current.includes(category)
+        ? current.filter((item) => item !== category)
+        : [...current, category],
     );
   }
 
@@ -1237,6 +1291,7 @@ export function Site() {
   function clearFilters() {
     setSearchTerm("site", "");
     setCheckinFilterStatuses([]);
+    setBatchFailureFilters([]);
     setTagFilters([]);
   }
 
@@ -1516,34 +1571,39 @@ export function Site() {
                           : "开启自动同步"}
                       </TooltipContent>
                     </Tooltip>
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <span>
-                          <Switch
-                            checked={site.is_reserve}
-                            disabled={updateSite.isPending}
-                            onCheckedChange={() => handleToggleReserve(site)}
-                          />
-                        </span>
-                      </TooltipTrigger>
-                      <TooltipContent>
-                        {site.is_reserve ? "转为公益站点" : "设为中转站点"}
-                      </TooltipContent>
-                    </Tooltip>
-                    <IconActionButton
-                      label="同步账号"
-                      disabled={syncingAccountIds.has(site.accounts[0].id)}
-                      onClick={() => handleSyncAccount(site.accounts[0])}
-                    >
-                      <RefreshCw
-                        className={cn(
-                          "size-4",
-                          syncingAccountIds.has(site.accounts[0].id) &&
-                            "animate-spin",
-                        )}
-                      />
-                    </IconActionButton>
                   </>
+                ) : null}
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <span>
+                      <Switch
+                        checked={site.is_reserve}
+                        disabled={updateSite.isPending}
+                        onCheckedChange={() => handleToggleReserve(site)}
+                        aria-label={t("siteManagement.siteForm.relayPolicy")}
+                      />
+                    </span>
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    {site.is_reserve
+                      ? t("siteManagement.siteForm.setPublic")
+                      : t("siteManagement.siteForm.setRelay")}
+                  </TooltipContent>
+                </Tooltip>
+                {site.accounts.length === 1 ? (
+                  <IconActionButton
+                    label="同步账号"
+                    disabled={syncingAccountIds.has(site.accounts[0].id)}
+                    onClick={() => handleSyncAccount(site.accounts[0])}
+                  >
+                    <RefreshCw
+                      className={cn(
+                        "size-4",
+                        syncingAccountIds.has(site.accounts[0].id) &&
+                          "animate-spin",
+                      )}
+                    />
+                  </IconActionButton>
                 ) : null}
 
                 <Popover>
@@ -1986,12 +2046,13 @@ export function Site() {
           onClearFilters={clearFilters}
           activeFilterStatuses={checkinFilterStatuses}
           onFilterChange={handleCheckinFilterChange}
+          failureFilterCounts={batchFailureFilterCounts}
+          activeFailureFilters={batchFailureFilters}
+          onFailureFilterChange={handleBatchFailureFilterChange}
           allTags={allTags}
           activeTags={tagFilters}
           onTagFilterChange={handleTagFilterChange}
         />
-
-        <BatchSummaryPanel />
 
         {selectedSiteIds.length > 0 ? (
           <section className="sticky top-0 z-30 rounded-3xl border border-border/70 bg-card/95 p-4 shadow-[0_20px_60px_-42px_rgba(15,23,42,0.45)] backdrop-blur supports-[backdrop-filter]:bg-card/90">

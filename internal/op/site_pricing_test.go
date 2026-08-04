@@ -58,6 +58,7 @@ func TestEffectivePricePrecedenceAndFallback(t *testing.T) {
 
 	exact.Input = 3
 	exact.Output = 5
+	exact.ModelMultiplier = 0.3
 	exact.ObservedAt = now.Add(time.Minute)
 	if err := SiteModelPriceQuotesUpsert(ctx, []model.SiteModelPriceQuote{exact}); err != nil {
 		t.Fatalf("upsert exact quote failed: %v", err)
@@ -70,6 +71,15 @@ func TestEffectivePricePrecedenceAndFallback(t *testing.T) {
 	}
 	if exactCount != 1 {
 		t.Fatalf("stable identity upsert created %d exact rows, want 1", exactCount)
+	}
+	var updatedExact model.SiteModelPriceQuote
+	if err := dbpkg.GetDB().WithContext(ctx).
+		Where("site_id = ? AND source = ?", fixture.site.ID, model.PriceQuoteSourceSiteExact).
+		First(&updatedExact).Error; err != nil {
+		t.Fatalf("load updated exact quote: %v", err)
+	}
+	if updatedExact.ModelMultiplier != exact.ModelMultiplier {
+		t.Fatalf("model multiplier was not updated: got %f, want %f", updatedExact.ModelMultiplier, exact.ModelMultiplier)
 	}
 
 	manual, err := SiteModelPriceManualUpsert(ctx, model.SiteModelPriceQuote{
@@ -139,6 +149,144 @@ func TestEffectivePricePrecedenceAndFallback(t *testing.T) {
 	}
 	if price.Source != model.PriceQuoteSourceGlobal || !price.Convertible || price.Input != 0.5 {
 		t.Fatalf("global fallback mismatch: %+v", price)
+	}
+}
+
+func TestChannelLLMListExposesPersistedGroupMultiplierForEveryModel(t *testing.T) {
+	ctx := setupCatalogProvisionTest(t)
+	multiplier := 0.0
+	site := model.Site{
+		Name: "group-multiplier-site", Platform: model.SitePlatformNewAPI,
+		BaseURL: "https://group-multiplier.example.com", Enabled: true,
+	}
+	mustCreatePricingRow(t, ctx, &site)
+	account := model.SiteAccount{
+		SiteID: site.ID, Name: "group-multiplier-account",
+		CredentialType: model.SiteCredentialTypeAccessToken, AccessToken: "token", Enabled: true,
+	}
+	mustCreatePricingRow(t, ctx, &account)
+	group := model.SiteUserGroup{
+		SiteAccountID: account.ID, GroupKey: "vip", Name: "VIP", Multiplier: &multiplier,
+	}
+	mustCreatePricingRow(t, ctx, &group)
+	channel := model.Channel{
+		Name: "group-multiplier-channel", Model: "priced-model,unpriced-model", Enabled: true,
+	}
+	if err := ChannelCreate(&channel, ctx); err != nil {
+		t.Fatalf("create channel: %v", err)
+	}
+	binding := model.SiteChannelBinding{
+		SiteID: site.ID, SiteAccountID: account.ID, SiteUserGroupID: &group.ID,
+		GroupKey:  model.ComposeSiteChannelBindingKey("vip", model.SiteModelRouteTypeAnthropic, true),
+		ChannelID: channel.ID,
+	}
+	mustCreatePricingRow(t, ctx, &binding)
+
+	items, err := ChannelLLMList(ctx)
+	if err != nil {
+		t.Fatalf("ChannelLLMList: %v", err)
+	}
+	seen := 0
+	for _, item := range items {
+		if item.ChannelID != channel.ID {
+			continue
+		}
+		seen++
+		if item.IsReserve {
+			t.Fatalf("non-relay channel was marked reserve: %+v", item)
+		}
+		if item.GroupMultiplier == nil || *item.GroupMultiplier != multiplier {
+			t.Fatalf("group multiplier missing from model %q: %+v", item.Name, item)
+		}
+	}
+	if seen != 2 {
+		t.Fatalf("got %d channel models, want 2", seen)
+	}
+}
+
+func TestSiteUserGroupMultipliersUpdatePersistsZero(t *testing.T) {
+	ctx := setupCatalogProvisionTest(t)
+	site := model.Site{
+		Name: "zero-group-multiplier-site", Platform: model.SitePlatformNewAPI,
+		BaseURL: "https://zero-group-multiplier.example.com", Enabled: true,
+	}
+	mustCreatePricingRow(t, ctx, &site)
+	account := model.SiteAccount{
+		SiteID: site.ID, Name: "zero-group-multiplier-account",
+		CredentialType: model.SiteCredentialTypeAccessToken, AccessToken: "token", Enabled: true,
+	}
+	mustCreatePricingRow(t, ctx, &account)
+	initial := 1.0
+	group := model.SiteUserGroup{
+		SiteAccountID: account.ID, GroupKey: "complimentary", Name: "Complimentary", Multiplier: &initial,
+	}
+	mustCreatePricingRow(t, ctx, &group)
+
+	if err := SiteUserGroupMultipliersUpdate(ctx, account.ID, map[string]float64{"complimentary": 0}); err != nil {
+		t.Fatalf("SiteUserGroupMultipliersUpdate: %v", err)
+	}
+	var reloaded model.SiteUserGroup
+	if err := dbpkg.GetDB().WithContext(ctx).First(&reloaded, group.ID).Error; err != nil {
+		t.Fatalf("reload group: %v", err)
+	}
+	if reloaded.Multiplier == nil || *reloaded.Multiplier != 0 {
+		t.Fatalf("zero group multiplier was not persisted: %+v", reloaded)
+	}
+}
+
+func TestChannelLLMListFallsBackToSiblingQuoteGroupMultiplier(t *testing.T) {
+	ctx := setupCatalogProvisionTest(t)
+	const expectedMultiplier = 0.0
+	site := model.Site{
+		Name: "quote-group-multiplier-site", Platform: model.SitePlatformNewAPI,
+		BaseURL: "https://quote-group-multiplier.example.com", Enabled: true,
+	}
+	mustCreatePricingRow(t, ctx, &site)
+	account := model.SiteAccount{
+		SiteID: site.ID, Name: "quote-group-multiplier-account",
+		CredentialType: model.SiteCredentialTypeAccessToken, AccessToken: "token", Enabled: true,
+	}
+	mustCreatePricingRow(t, ctx, &account)
+	group := model.SiteUserGroup{SiteAccountID: account.ID, GroupKey: "vip", Name: "VIP"}
+	mustCreatePricingRow(t, ctx, &group)
+	channel := model.Channel{
+		Name: "quote-group-multiplier-channel", Model: "quoted-model,no-quote-model", Enabled: true,
+	}
+	if err := ChannelCreate(&channel, ctx); err != nil {
+		t.Fatalf("create channel: %v", err)
+	}
+	binding := model.SiteChannelBinding{
+		SiteID: site.ID, SiteAccountID: account.ID, SiteUserGroupID: &group.ID,
+		GroupKey: "vip", ChannelID: channel.ID,
+	}
+	mustCreatePricingRow(t, ctx, &binding)
+	quote := model.SiteModelPriceQuote{
+		SiteID: site.ID, SiteAccountID: &account.ID, GroupKey: "vip",
+		ModelName: "quoted-model", Source: model.PriceQuoteSourceSiteExact,
+		Unit: model.PriceUnitPerMillionTokens, Currency: "USD", Input: 1, Output: 2,
+		GroupMultiplier: expectedMultiplier, GroupMultiplierKnown: true,
+		ExchangeRateToUSD: 1, ObservedAt: time.Now(),
+	}
+	if err := SiteModelPriceQuotesUpsert(ctx, []model.SiteModelPriceQuote{quote}); err != nil {
+		t.Fatalf("create quote: %v", err)
+	}
+
+	items, err := ChannelLLMList(ctx)
+	if err != nil {
+		t.Fatalf("ChannelLLMList: %v", err)
+	}
+	seen := 0
+	for _, item := range items {
+		if item.ChannelID != channel.ID {
+			continue
+		}
+		seen++
+		if item.GroupMultiplier == nil || *item.GroupMultiplier != expectedMultiplier {
+			t.Fatalf("sibling quote multiplier missing from model %q: %+v", item.Name, item)
+		}
+	}
+	if seen != 2 {
+		t.Fatalf("got %d channel models, want 2", seen)
 	}
 }
 

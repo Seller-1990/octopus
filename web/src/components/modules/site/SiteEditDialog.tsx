@@ -550,6 +550,22 @@ export function SiteEditDialog({ open, onOpenChange, site, onCreated, allTags }:
                             />
                         </div>
 
+                        <div className="flex items-center justify-between gap-4 rounded-xl border border-border/60 bg-muted/20 px-4 py-3">
+                            <div className="min-w-0">
+                                <div className="text-sm font-medium">{tForm('relayPolicy')}</div>
+                                <div className="text-xs text-muted-foreground">
+                                    {tForm('relayPolicyHint')}
+                                </div>
+                            </div>
+                            <Switch
+                                checked={siteForm.is_reserve}
+                                onCheckedChange={(checked) =>
+                                    setSiteForm((current) => ({ ...current, is_reserve: checked }))
+                                }
+                                aria-label={tForm('relayPolicy')}
+                            />
+                        </div>
+
                         <div className="flex items-center justify-between rounded-xl border border-border/60 bg-muted/20 px-4 py-3">
                             <div>
                                 <div className="text-sm font-medium">{tForm('enabled')}</div>
