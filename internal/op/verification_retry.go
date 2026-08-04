@@ -185,7 +185,7 @@ func VerificationRetryPendingSessionIDs(ctx context.Context, limit int) ([]int64
 			model.SiteOperationCheckin,
 		}).
 		Where(
-			"verification_tasks.retry_status = ? OR (verification_tasks.retry_status = ? AND verification_tasks.retry_started_at <= ?)",
+			"(verification_tasks.retry_status = ? OR (verification_tasks.retry_status = ? AND verification_tasks.retry_started_at <= ?))",
 			model.VerificationRetryPending,
 			model.VerificationRetryRunning,
 			staleBefore,

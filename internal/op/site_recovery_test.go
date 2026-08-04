@@ -1072,16 +1072,28 @@ func TestVerificationRetryPendingSessionIDsIncludesPendingAndStaleRunning(t *tes
 	pending := createRetry()
 	active := createRetry()
 	stale := createRetry()
+	invalid := createRetry()
 	if work, err := VerificationRetryAcquire(ctx, active.Session.ID); err != nil || work == nil {
 		t.Fatalf("acquire active retry: work=%+v err=%v", work, err)
 	}
 	if work, err := VerificationRetryAcquire(ctx, stale.Session.ID); err != nil || work == nil {
 		t.Fatalf("acquire stale retry: work=%+v err=%v", work, err)
 	}
+	if work, err := VerificationRetryAcquire(ctx, invalid.Session.ID); err != nil || work == nil {
+		t.Fatalf("acquire invalid retry: work=%+v err=%v", work, err)
+	}
 	if err := dbpkg.GetDB().WithContext(ctx).Model(&model.VerificationTask{}).
 		Where("session_id = ?", stale.Session.ID).
 		Update("retry_started_at", time.Now().Add(-verificationRetryStaleAfter-time.Second)).Error; err != nil {
 		t.Fatalf("age stale retry: %v", err)
+	}
+	if err := dbpkg.GetDB().WithContext(ctx).Model(&model.VerificationTask{}).
+		Where("session_id = ?", invalid.Session.ID).
+		Updates(map[string]any{
+			"status":           model.VerificationTaskPending,
+			"retry_started_at": time.Now().Add(-verificationRetryStaleAfter - time.Second),
+		}).Error; err != nil {
+		t.Fatalf("invalidate stale retry: %v", err)
 	}
 
 	sessionIDs, err := VerificationRetryPendingSessionIDs(ctx, 10)
@@ -1097,6 +1109,9 @@ func TestVerificationRetryPendingSessionIDsIncludesPendingAndStaleRunning(t *tes
 	}
 	if found[active.Session.ID] {
 		t.Fatalf("pending sweep selected an active retry: ids=%v", sessionIDs)
+	}
+	if found[invalid.Session.ID] {
+		t.Fatalf("pending sweep selected a non-completed retry: ids=%v", sessionIDs)
 	}
 }
 
