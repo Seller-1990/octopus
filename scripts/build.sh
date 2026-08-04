@@ -64,6 +64,22 @@ log_step() {
     echo "────────────────────────────────────────"
 }
 
+archive_metadata() {
+    local basename_file="$1"
+    local archive_entry="${APP_NAME}"
+    local archive_file="${basename_file}.zip"
+
+    if [[ "$basename_file" == "${APP_NAME}-desktop-"*.exe ]]; then
+        archive_entry="${APP_NAME}-desktop.exe"
+        archive_file="${basename_file%.exe}.zip"
+    elif [[ "$basename_file" == "${APP_NAME}-windows-"*.exe || "$basename_file" == *.exe ]]; then
+        archive_entry="${APP_NAME}.exe"
+        archive_file="${basename_file%.exe}.zip"
+    fi
+
+    printf '%s\t%s\n' "${archive_file}" "${archive_entry}"
+}
+
 # Error handling function
 handle_error() {
     local exit_code=$1
@@ -426,16 +442,8 @@ create_archives() {
     while IFS= read -r -d '' file; do
         local basename_file
         basename_file=$(basename "$file")
-        local archive_entry="${APP_NAME}"
-        local archive_file="${basename_file}.zip"
-
-        # Preserve the Windows extension and the desktop default-mode signal.
-        if [[ "$basename_file" == "${APP_NAME}-desktop-"*.exe ]]; then
-            archive_entry="${APP_NAME}-desktop.exe"
-            archive_file="${basename_file%.exe}.zip"
-        elif [[ "$basename_file" == "${APP_NAME}-windows-"* || "$basename_file" == *.exe ]]; then
-            archive_entry="${APP_NAME}.exe"
-        fi
+        local archive_file archive_entry
+        IFS=$'\t' read -r archive_file archive_entry < <(archive_metadata "${basename_file}")
 
         if ! cp "$file" "${archives_dir}/${archive_entry}" 2>/dev/null; then
             log_error "Failed to copy $file to ${archives_dir}/${archive_entry}"
@@ -822,4 +830,6 @@ main() {
     esac
 }
 
-main "$@"
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+    main "$@"
+fi

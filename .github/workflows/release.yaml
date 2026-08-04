@@ -32,7 +32,7 @@ jobs:
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
         with:
-          version: latest
+          version: 10
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -45,6 +45,9 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y nsis
+
+      - name: Verify archive naming
+        run: bash scripts/build_archive_test.sh
 
       - name: Build
         run: bash scripts/build.sh release
@@ -64,6 +67,7 @@ jobs:
             build/bin/octopus-desktop-*.exe
             build/bin/md5.txt
           prerelease: false
+          generate_release_notes: true
           tag_name: ${{ steps.tag.outputs.TAG_NAME }}
 
       - name: Docker meta (Debian)

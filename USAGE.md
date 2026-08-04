@@ -107,16 +107,17 @@ If your provider isn't a relay site but gave you a Base URL + Key directly (e.g.
 
 **Docker run:**
 ```bash
-docker run -d --name octopus -v /path/to/data:/app/data -p 8080:8080 ghcr.io/seller-1990/octopus:latest
+docker run -d --name octopus -v /path/to/data:/app/data -p 8080:8080 ghcr.io/seller-1990/octopus:v0.1.0
 ```
 
 **docker compose:**
 ```bash
-wget https://raw.githubusercontent.com/Seller-1990/octopus/refs/heads/dev/docker-compose.yml
+wget https://raw.githubusercontent.com/Seller-1990/octopus/refs/tags/v0.1.0/docker-compose.yml
+echo 'OCTOPUS_IMAGE_TAG=v0.1.0' > .env
 docker compose up -d
 ```
 
-> ⚠️ **The sole distribution source is `Seller-1990/octopus`**: use `ghcr.io/seller-1990/octopus`, this repository's compose file, and its Releases. Parent-fork images and deployment files do not contain the complete Site, multiplier, failure-filter, or desktop changes.
+> ⚠️ **The sole distribution source is `Seller-1990/octopus`**: use `ghcr.io/seller-1990/octopus`, this repository's compose file, and its Releases. Replace `v0.1.0` with the release you intend to deploy; use `latest` only when you explicitly want a moving version. Parent-fork images and deployment files do not contain the complete Site, multiplier, failure-filter, or desktop changes.
 
 ### 4.2 First Login
 

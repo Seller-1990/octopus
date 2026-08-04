@@ -38,18 +38,19 @@
 直接运行
 
 ```bash
-docker run -d --name octopus -v /path/to/data:/app/data -p 8080:8080 ghcr.io/seller-1990/octopus:latest
+docker run -d --name octopus -v /path/to/data:/app/data -p 8080:8080 ghcr.io/seller-1990/octopus:v0.1.0
 ```
 
 或者使用 docker compose 运行
 
 ```bash
-wget https://raw.githubusercontent.com/Seller-1990/octopus/refs/heads/dev/docker-compose.yml
+wget https://raw.githubusercontent.com/Seller-1990/octopus/refs/tags/v0.1.0/docker-compose.yml
+echo 'OCTOPUS_IMAGE_TAG=v0.1.0' > .env
 docker compose up -d
 ```
 
 
-只使用 **ghcr.io/seller-1990/octopus** 以及本仓库提供的 compose。父仓库或其他 fork 的镜像、部署文件不包含本二开的完整功能。
+只使用 **ghcr.io/seller-1990/octopus** 以及本仓库提供的 compose。请把 `v0.1.0` 替换为准备部署的发行版本；只有在明确接受浮动版本时才使用 `latest`。父仓库或其他 fork 的镜像、部署文件不包含本二开的完整功能。
 
 ### 📦 从 Release 下载
 
@@ -64,9 +65,9 @@ Windows 用户可下载 **octopus-setup-版本-x86_64.exe** 安装包（含桌�
 ### 🛠️ 源码运行
 
 **环境要求：**
-- Go 1.24.4
-- Node.js 18+
-- pnpm
+- Go 1.25.0
+- Node.js 22
+- pnpm 10
 
 ```bash
 # 克隆项目
@@ -193,51 +194,17 @@ http://localhost:3000
 <div align="center">
 <table>
 <tr>
-<td align="center"><b>首页</b></td>
-<td align="center"><b>渠道</b></td>
-<td align="center"><b>分组</b></td>
+<td align="center"><b>站点管理</b></td>
+<td align="center"><b>Key 倍率分组</b></td>
+<td align="center"><b>站点托管渠道</b></td>
 </tr>
 <tr>
-<td><img src="web/public/screenshot/desktop-home.png" alt="首页" width="400"></td>
-<td><img src="web/public/screenshot/desktop-channel.png" alt="渠道" width="400"></td>
-<td><img src="web/public/screenshot/desktop-group.png" alt="分组" width="400"></td>
-</tr>
-<tr>
-<td align="center"><b>价格</b></td>
-<td align="center"><b>日志</b></td>
-<td align="center"><b>设置</b></td>
-</tr>
-<tr>
-<td><img src="web/public/screenshot/desktop-price.png" alt="价格" width="400"></td>
-<td><img src="web/public/screenshot/desktop-log.png" alt="日志" width="400"></td>
-<td><img src="web/public/screenshot/desktop-setting.png" alt="设置" width="400"></td>
+<td><img src="web/public/screenshot/desktop-site.png" alt="站点管理与失败分类筛选" width="400"></td>
+<td><img src="web/public/screenshot/desktop-group.png" alt="带中转标识和 Key 倍率的分组" width="400"></td>
+<td><img src="web/public/screenshot/desktop-channel.png" alt="站点托管渠道" width="400"></td>
 </tr>
 </table>
 </div>
-
-### 📱 移动端
-
-<div align="center">
-<table>
-<tr>
-<td align="center"><b>首页</b></td>
-<td align="center"><b>渠道</b></td>
-<td align="center"><b>分组</b></td>
-<td align="center"><b>价格</b></td>
-<td align="center"><b>日志</b></td>
-<td align="center"><b>设置</b></td>
-</tr>
-<tr>
-<td><img src="web/public/screenshot/mobile-home.png" alt="移动端首页" width="140"></td>
-<td><img src="web/public/screenshot/mobile-channel.png" alt="移动端渠道" width="140"></td>
-<td><img src="web/public/screenshot/mobile-group.png" alt="移动端分组" width="140"></td>
-<td><img src="web/public/screenshot/mobile-price.png" alt="移动端价格" width="140"></td>
-<td><img src="web/public/screenshot/mobile-log.png" alt="移动端日志" width="140"></td>
-<td><img src="web/public/screenshot/mobile-setting.png" alt="移动端设置" width="140"></td>
-</tr>
-</table>
-</div>
-
 
 ## 📖 功能说明
 
@@ -330,7 +297,7 @@ import os
 
 client = OpenAI(   
     base_url="http://127.0.0.1:8080/v1",   
-    api_key="sk-octopus-P48ROljwJmWBYVARjwQM8Nkiezlg7WOrXXOWDYY8TI5p9Mzg", 
+    api_key="sk-octopus-your-api-key",
 )
 completion = client.chat.completions.create(
     model="octopus-openai",  // 填写正确的分组名称
@@ -349,7 +316,7 @@ print(completion.choices[0].message.content)
 {
   "env": {
     "ANTHROPIC_BASE_URL": "http://127.0.0.1:8080",
-    "ANTHROPIC_AUTH_TOKEN": "sk-octopus-P48ROljwJmWBYVARjwQM8Nkiezlg7WOrXXOWDYY8TI5p9Mzg",
+    "ANTHROPIC_AUTH_TOKEN": "sk-octopus-your-api-key",
     "API_TIMEOUT_MS": "3000000",
     "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
     "ANTHROPIC_MODEL": "octopus-sonnet-4-5",
@@ -378,7 +345,7 @@ base_url = "http://127.0.0.1:8080/v1"
 
 ```json
 {
-  "OPENAI_API_KEY": "sk-octopus-P48ROljwJmWBYVARjwQM8Nkiezlg7WOrXXOWDYY8TI5p9Mzg"
+  "OPENAI_API_KEY": "sk-octopus-your-api-key"
 }
 ```
 

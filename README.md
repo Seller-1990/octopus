@@ -38,18 +38,19 @@
 Run directly:
 
 ```bash
-docker run -d --name octopus -v /path/to/data:/app/data -p 8080:8080 ghcr.io/seller-1990/octopus:latest
+docker run -d --name octopus -v /path/to/data:/app/data -p 8080:8080 ghcr.io/seller-1990/octopus:v0.1.0
 ```
 
 Or use docker compose:
 
 ```bash
-wget https://raw.githubusercontent.com/Seller-1990/octopus/refs/heads/dev/docker-compose.yml
+wget https://raw.githubusercontent.com/Seller-1990/octopus/refs/tags/v0.1.0/docker-compose.yml
+echo 'OCTOPUS_IMAGE_TAG=v0.1.0' > .env
 docker compose up -d
 ```
 
 
-Use only **ghcr.io/seller-1990/octopus** and the compose file from this repository. Parent-fork images and deployment files do not contain the complete feature set.
+Use only **ghcr.io/seller-1990/octopus** and the compose file from this repository. Replace `v0.1.0` with the release you intend to deploy; use `latest` only when you explicitly want a moving version. Parent-fork images and deployment files do not contain the complete feature set.
 
 ### 📦 Download from Release
 
@@ -64,9 +65,9 @@ Windows users can download **octopus-setup-version-x86_64.exe** for an installer
 ### 🛠️ Build from Source
 
 **Requirements:**
-- Go 1.24.4
-- Node.js 18+
-- pnpm
+- Go 1.25.0
+- Node.js 22
+- pnpm 10
 
 ```bash
 # Clone the repository
@@ -192,51 +193,17 @@ All configuration options can be overridden via environment variables using the 
 <div align="center">
 <table>
 <tr>
-<td align="center"><b>Dashboard</b></td>
-<td align="center"><b>Channel Management</b></td>
-<td align="center"><b>Group Management</b></td>
+<td align="center"><b>Site Management</b></td>
+<td align="center"><b>Key-aware Groups</b></td>
+<td align="center"><b>Managed Channels</b></td>
 </tr>
 <tr>
-<td><img src="web/public/screenshot/desktop-home.png" alt="Dashboard" width="400"></td>
-<td><img src="web/public/screenshot/desktop-channel.png" alt="Channel" width="400"></td>
-<td><img src="web/public/screenshot/desktop-group.png" alt="Group" width="400"></td>
-</tr>
-<tr>
-<td align="center"><b>Price Management</b></td>
-<td align="center"><b>Logs</b></td>
-<td align="center"><b>Settings</b></td>
-</tr>
-<tr>
-<td><img src="web/public/screenshot/desktop-price.png" alt="Price Management" width="400"></td>
-<td><img src="web/public/screenshot/desktop-log.png" alt="Logs" width="400"></td>
-<td><img src="web/public/screenshot/desktop-setting.png" alt="Settings" width="400"></td>
+<td><img src="web/public/screenshot/desktop-site.png" alt="Site management and failure filters" width="400"></td>
+<td><img src="web/public/screenshot/desktop-group.png" alt="Groups with relay badges and Key multipliers" width="400"></td>
+<td><img src="web/public/screenshot/desktop-channel.png" alt="Site-managed channels" width="400"></td>
 </tr>
 </table>
 </div>
-
-### 📱 Mobile
-
-<div align="center">
-<table>
-<tr>
-<td align="center"><b>Home</b></td>
-<td align="center"><b>Channel</b></td>
-<td align="center"><b>Group</b></td>
-<td align="center"><b>Price</b></td>
-<td align="center"><b>Logs</b></td>
-<td align="center"><b>Settings</b></td>
-</tr>
-<tr>
-<td><img src="web/public/screenshot/mobile-home.png" alt="Mobile Home" width="140"></td>
-<td><img src="web/public/screenshot/mobile-channel.png" alt="Mobile Channel" width="140"></td>
-<td><img src="web/public/screenshot/mobile-group.png" alt="Mobile Group" width="140"></td>
-<td><img src="web/public/screenshot/mobile-price.png" alt="Mobile Price" width="140"></td>
-<td><img src="web/public/screenshot/mobile-log.png" alt="Mobile Logs" width="140"></td>
-<td><img src="web/public/screenshot/mobile-setting.png" alt="Mobile Settings" width="140"></td>
-</tr>
-</table>
-</div>
-
 
 ## 📖 Documentation
 
@@ -328,7 +295,7 @@ import os
 
 client = OpenAI(   
     base_url="http://127.0.0.1:8080/v1",   
-    api_key="sk-octopus-P48ROljwJmWBYVARjwQM8Nkiezlg7WOrXXOWDYY8TI5p9Mzg", 
+    api_key="sk-octopus-your-api-key",
 )
 completion = client.chat.completions.create(
     model="octopus-openai",  # Use the correct group name
@@ -347,7 +314,7 @@ Edit `~/.claude/settings.json`
 {
   "env": {
     "ANTHROPIC_BASE_URL": "http://127.0.0.1:8080",
-    "ANTHROPIC_AUTH_TOKEN": "sk-octopus-P48ROljwJmWBYVARjwQM8Nkiezlg7WOrXXOWDYY8TI5p9Mzg",
+    "ANTHROPIC_AUTH_TOKEN": "sk-octopus-your-api-key",
     "API_TIMEOUT_MS": "3000000",
     "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
     "ANTHROPIC_MODEL": "octopus-sonnet-4-5",
@@ -377,7 +344,7 @@ Edit `~/.codex/auth.json`
 
 ```json
 {
-  "OPENAI_API_KEY": "sk-octopus-P48ROljwJmWBYVARjwQM8Nkiezlg7WOrXXOWDYY8TI5p9Mzg"
+  "OPENAI_API_KEY": "sk-octopus-your-api-key"
 }
 ```
 

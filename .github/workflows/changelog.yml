@@ -1,40 +1,15 @@
 name: changelog
 
 on:
-  push:
-    tags:
-      - 'v*'
+  workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   changelog:
-    name: Create Release
+    name: Legacy workflow disabled
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v5
-        with:
-          fetch-depth: 0
-          token: ${{ secrets.ACTION_TOKEN }}
-
-      - run: npx changelogithub
-        env:
-          GITHUB_TOKEN: ${{secrets.ACTION_TOKEN}}
-
-      - name: Merge dev to master branch
-        run: |
-          git config --global user.name 'GitHub Actions'
-          git config --global user.email 'github-actions@github.com'
-          if ! git show-ref --verify --quiet refs/heads/master; then
-            git checkout -b master
-          else
-            git checkout master
-          fi
-          git fetch origin dev
-          git merge origin/dev
-          git remote set-url origin https://x-access-token:${GITHUB_TOKEN}@github.com/${{ github.repository }}
-          git push origin master --force
-        env:
-          GITHUB_TOKEN: ${{secrets.ACTION_TOKEN}}
+      - name: Use the independent release workflow
+        run: echo 'Automatic changelog publication is disabled; use .github/workflows/release.yaml.'

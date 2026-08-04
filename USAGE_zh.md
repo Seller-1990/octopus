@@ -107,16 +107,17 @@ Octopus 是一个 **LLM API 聚合与负载均衡服务**。简单说，它帮�
 
 **Docker 直接运行：**
 ```bash
-docker run -d --name octopus -v /path/to/data:/app/data -p 8080:8080 ghcr.io/seller-1990/octopus:latest
+docker run -d --name octopus -v /path/to/data:/app/data -p 8080:8080 ghcr.io/seller-1990/octopus:v0.1.0
 ```
 
 **docker compose：**
 ```bash
-wget https://raw.githubusercontent.com/Seller-1990/octopus/refs/heads/dev/docker-compose.yml
+wget https://raw.githubusercontent.com/Seller-1990/octopus/refs/tags/v0.1.0/docker-compose.yml
+echo 'OCTOPUS_IMAGE_TAG=v0.1.0' > .env
 docker compose up -d
 ```
 
-> ⚠️ **唯一发行源是 `Seller-1990/octopus`**：请使用 `ghcr.io/seller-1990/octopus`、本仓库的 compose 和 Releases。父仓库或其他 fork 的产物不包含完整的站点、倍率、失败筛选和桌面端改动。
+> ⚠️ **唯一发行源是 `Seller-1990/octopus`**：请使用 `ghcr.io/seller-1990/octopus`、本仓库的 compose 和 Releases。请把 `v0.1.0` 替换为准备部署的发行版本；只有在明确接受浮动版本时才使用 `latest`。父仓库或其他 fork 的产物不包含完整的站点、倍率、失败筛选和桌面端改动。
 
 ### 4.2 首次登录
 

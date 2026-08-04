@@ -21,7 +21,7 @@ func TestReleaseURLsUseSellerFork(t *testing.T) {
 
 func TestAutoUpdateSupported(t *testing.T) {
 	if autoUpdateSupported("windows", false) {
-		t.Fatal("Windows self-update must be disabled for installed desktop builds")
+		t.Fatal("Windows in-place self-update must remain disabled until executable replacement is supported")
 	}
 	if autoUpdateSupported("linux", true) {
 		t.Fatal("container self-update must be disabled")
