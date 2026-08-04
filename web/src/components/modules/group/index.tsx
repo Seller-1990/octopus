@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo } from 'react';
+import { useCallback, useMemo } from 'react';
 import { GroupCard } from './Card';
 import { useGroupList } from '@/api/endpoints/group';
 import { useSearchStore, useToolbarViewOptionsStore } from '@/components/modules/toolbar';
@@ -35,10 +35,17 @@ export function Group() {
         return !term ? sortedGroups : sortedGroups.filter((g) => g.name.toLowerCase().includes(term));
     }, [sortedGroups, searchTerm]);
 
+    const groupColumnCompute = useCallback((width: number) => {
+        if (width >= 1240) return 4;
+        if (width >= 830) return 3;
+        if (width >= 560) return 2;
+        return 1;
+    }, []);
+
     return (
         <VirtualizedGrid
             items={visibleGroups}
-            columns={{ default: 1, md: 2, lg: 3 }}
+            columns={groupColumnCompute}
             estimateItemHeight={520}
             getItemKey={(group, index) => group.id ?? `group-${index}`}
             renderItem={(group) => <GroupCard group={group} />}

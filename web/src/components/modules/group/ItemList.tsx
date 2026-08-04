@@ -18,7 +18,11 @@ import { useTranslations } from 'next-intl';
 
 function formatBalance(value: number): string {
     if (!Number.isFinite(value)) return '-';
-    if (Math.abs(value) >= 1000) return `$${value.toFixed(0)}`;
+    if (Math.abs(value) >= 1000) {
+        const scaled = value / 1000;
+        const text = scaled >= 100 ? Math.round(scaled).toString() : (Math.round(scaled * 10) / 10).toString();
+        return `$${text}k`;
+    }
     return `$${value.toFixed(2)}`;
 }
 
