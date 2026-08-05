@@ -38,10 +38,17 @@ interface LogAnalyticsState {
     clearBusinessFilters: () => void;
 }
 
+// 视图切换不持久化：日志页每次进入都默认展示明细，使用分析由使用者按需切换。
+function withoutView<S extends { view: LogView }>(state: S): Omit<S, 'view'> {
+    const { view: _view, ...rest } = state;
+    void _view;
+    return rest;
+}
+
 export const useLogAnalyticsStore = create<LogAnalyticsState>()(
     persist(
         (set) => ({
-            view: 'analytics',
+            view: 'detail',
             scope: 'request',
             dimension: 'site',
             timezone: browserTimezone(),
@@ -73,6 +80,9 @@ export const useLogAnalyticsStore = create<LogAnalyticsState>()(
         }),
         {
             name: 'log-analytics-options',
+            version: 2,
+            migrate: (persisted) => withoutView(persisted as LogAnalyticsState),
+            partialize: withoutView,
         },
     ),
 );

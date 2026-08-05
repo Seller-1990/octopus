@@ -353,7 +353,7 @@ export function Log() {
                 aria-labelledby={tabIds.analytics.trigger}
                 hidden={view !== 'analytics'}
                 tabIndex={view === 'analytics' ? 0 : -1}
-                className="min-h-0 flex-1"
+                className="flex min-h-0 flex-1 flex-col"
             >
                 {view === 'analytics' ? (
                     <UsageAnalytics filters={analyticsFilters} dimension={dimension} onDrilldown={handleDrilldown} />
@@ -365,7 +365,7 @@ export function Log() {
                 aria-labelledby={tabIds.detail.trigger}
                 hidden={view !== 'detail'}
                 tabIndex={view === 'detail' ? 0 : -1}
-                className="min-h-0 flex-1"
+                className="flex min-h-0 flex-1 flex-col"
             >
                 {view === 'detail' ? <LogDetailList /> : null}
             </div>

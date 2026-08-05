@@ -186,6 +186,15 @@ function hasCacheTokens(log: RelayLog) {
         || (log.cache_write_tokens != null && log.cache_write_tokens > 0);
 }
 
+// key 倍率展示：与分组成员倍率一致使用 `1.5x` 格式（见 group/ItemList 的 formatMultiplier）；
+// 无倍率（缺失、非有限值或四舍五入后为 ×1）不标注。
+function formatKeyMultiplier(value: number | undefined | null): string | null {
+    if (value == null || !Number.isFinite(value)) return null;
+    const rounded = Math.round(value * 100) / 100;
+    if (rounded === 1) return null;
+    return `${rounded}x`;
+}
+
 // 投影渠道命名 "站点/账号/分组-端点后缀"，Anthropic 端点后缀为 -Anthropic。
 // 仅 Anthropic 端点的 input_tokens 不含 cache_read（Anthropic 原生语义），不应做减法；
 // OpenAI/Gemini 等的 input_tokens 已含 cache_read。见 SiteModelRouteType 后缀映射。
@@ -746,6 +755,7 @@ export function LogCard({ log, siteTargets }: { log: RelayLog; siteTargets: LogS
         [displayActualModelName]
     );
     const requestAPIKeyName = useMemo(() => log.request_api_key_name?.trim() ?? '', [log.request_api_key_name]);
+    const keyMultiplierLabel = formatKeyMultiplier(log.price_group_multiplier);
     const disableMutation = useUpdateSiteChannelModelDisabled();
 
     const hasError = !!log.error;
@@ -909,6 +919,20 @@ export function LogCard({ log, siteTargets }: { log: RelayLog; siteTargets: LogS
                                         <span className="truncate" title={requestAPIKeyName}>
                                             {requestAPIKeyName}
                                         </span>
+                                        {keyMultiplierLabel ? (
+                                            <Tooltip>
+                                                <TooltipTrigger asChild>
+                                                    <Badge
+                                                        variant="secondary"
+                                                        className="shrink-0 gap-1 px-1.5 py-0 text-[10px] bg-amber-500/15 text-amber-700 dark:text-amber-300"
+                                                    >
+                                                        <Coins className="size-3 shrink-0" />
+                                                        {keyMultiplierLabel}
+                                                    </Badge>
+                                                </TooltipTrigger>
+                                                <TooltipContent>{t('keyMultiplier')}</TooltipContent>
+                                            </Tooltip>
+                                        ) : null}
                                     </div>
                                 ) : null}
                                 <div className="flex items-center gap-1.5">

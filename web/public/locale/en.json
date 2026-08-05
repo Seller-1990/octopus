@@ -1123,7 +1123,8 @@
       "transportInput": "Transport Input",
       "billInput": "Billed Input",
       "cacheRead": "Cache Read",
-      "cacheWrite": "Cache Write"
+      "cacheWrite": "Cache Write",
+      "keyMultiplier": "Key multiplier"
     },
     "analytics": {
       "view": {

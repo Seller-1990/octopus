@@ -1414,7 +1414,7 @@ export function Site() {
             "ring-2 ring-primary/35 ring-offset-2 ring-offset-background",
         )}
       >
-        <div className="flex items-start gap-3">
+        <div className="flex flex-wrap items-start gap-3">
           <button
             type="button"
             className="mt-1 shrink-0 text-muted-foreground transition-colors hover:text-foreground"
@@ -1431,7 +1431,7 @@ export function Site() {
           </button>
 
           <div className="min-w-0 flex-1">
-            <div className="flex items-start gap-3">
+            <div className="flex flex-wrap items-start gap-3">
               <div
                 className="min-w-0 flex-1 cursor-pointer text-left"
                 onClick={() => toggleSiteExpanded(site.id, forceExpanded)}
@@ -1486,17 +1486,6 @@ export function Site() {
                   </a>
                 </div>
 
-                <div className="mt-3 flex flex-wrap gap-x-4 gap-y-2">
-                  <CompactMetric label="账号" value={summary.accountCount} />
-                  <CompactMetric label="密钥" value={summary.keyCount} />
-                  <CompactMetric label="模型" value={summary.modelCount} />
-                  <CompactMetric label="余额" value={formatBalance(summary.balance)} />
-                  <CompactMetric
-                    label="今日收入"
-                    value={formatBalance(summary.todayIncome)}
-                  />
-                </div>
-
                 {site.tags.length > 0 ? (
                   <div className="mt-2 flex flex-wrap gap-1.5">
                     {site.tags.map((tag) => (
@@ -1530,8 +1519,21 @@ export function Site() {
                     ))}
                   </div>
                 ) : null}
+              </div>
 
-                <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
+              <div className="flex max-w-full shrink-0 flex-col items-end gap-2">
+                <div className="flex flex-wrap items-center justify-end gap-x-4 gap-y-1">
+                  <CompactMetric label="账号" value={summary.accountCount} />
+                  <CompactMetric label="密钥" value={summary.keyCount} />
+                  <CompactMetric label="模型" value={summary.modelCount} />
+                  <CompactMetric label="余额" value={formatBalance(summary.balance)} />
+                  <CompactMetric
+                    label="今日收入"
+                    value={formatBalance(summary.todayIncome)}
+                  />
+                </div>
+
+                <div className="flex flex-wrap items-center justify-end gap-x-4 gap-y-1 text-xs text-muted-foreground">
                   <button
                     type="button"
                     className="inline-flex items-center gap-1 rounded-md hover:text-foreground"
@@ -1549,175 +1551,175 @@ export function Site() {
                   ) : null}
                   {site.external_checkin_url ? <span>手动签到</span> : null}
                 </div>
-              </div>
 
-              <div className="flex items-center gap-1">
-                {site.accounts.length === 0 ? (
-                  <IconActionButton
-                    label="新增账号"
-                    onClick={() => openCreateAccountDialog(site)}
-                  >
-                    <Plus className="size-4" />
-                  </IconActionButton>
-                ) : site.accounts.length === 1 ? (
-                  <>
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <span>
-                          <Switch
-                            checked={site.accounts[0].auto_sync}
-                            disabled={updateSiteAccount.isPending}
-                            aria-label={`${site.accounts[0].name} 自动同步`}
-                            onCheckedChange={() =>
-                              handleToggleAutoSync(site.accounts[0])
-                            }
-                          />
-                        </span>
-                      </TooltipTrigger>
-                      <TooltipContent>
-                        {site.accounts[0].auto_sync
-                          ? "关闭自动同步"
-                          : "开启自动同步"}
-                      </TooltipContent>
-                    </Tooltip>
-                  </>
-                ) : null}
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <span>
-                      <Switch
-                        checked={site.is_reserve}
-                        disabled={updateSite.isPending}
-                        onCheckedChange={() => handleToggleReserve(site)}
-                        aria-label={t("siteManagement.siteForm.relayPolicy")}
-                      />
-                    </span>
-                  </TooltipTrigger>
-                  <TooltipContent>
-                    {site.is_reserve
-                      ? t("siteManagement.siteForm.setPublic")
-                      : t("siteManagement.siteForm.setRelay")}
-                  </TooltipContent>
-                </Tooltip>
-                {site.accounts.length === 1 ? (
-                  <IconActionButton
-                    label="同步账号"
-                    disabled={syncingAccountIds.has(site.accounts[0].id)}
-                    onClick={() => handleSyncAccount(site.accounts[0])}
-                  >
-                    <RefreshCw
-                      className={cn(
-                        "size-4",
-                        syncingAccountIds.has(site.accounts[0].id) &&
-                          "animate-spin",
-                      )}
-                    />
-                  </IconActionButton>
-                ) : null}
-
-                <Popover>
-                  <PopoverTrigger asChild>
-                    <Button
-                      type="button"
-                      size="icon-sm"
-                      variant="outline"
-                      className="rounded-xl"
-                      aria-label="更多站点操作"
-                      title="更多站点操作"
+                <div className="flex items-center gap-1">
+                  {site.accounts.length === 0 ? (
+                    <IconActionButton
+                      label="新增账号"
+                      onClick={() => openCreateAccountDialog(site)}
                     >
-                      <MoreHorizontal className="size-4" />
-                    </Button>
-                  </PopoverTrigger>
-                  <PopoverContent
-                    align="end"
-                    className="w-52 rounded-2xl border border-border/60 bg-card p-2"
-                  >
-                    <div className="grid gap-1">
-                      <button
+                      <Plus className="size-4" />
+                    </IconActionButton>
+                  ) : site.accounts.length === 1 ? (
+                    <>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <span>
+                            <Switch
+                              checked={site.accounts[0].auto_sync}
+                              disabled={updateSiteAccount.isPending}
+                              aria-label={`${site.accounts[0].name} 自动同步`}
+                              onCheckedChange={() =>
+                                handleToggleAutoSync(site.accounts[0])
+                              }
+                            />
+                          </span>
+                        </TooltipTrigger>
+                        <TooltipContent>
+                          {site.accounts[0].auto_sync
+                            ? "关闭自动同步"
+                            : "开启自动同步"}
+                        </TooltipContent>
+                      </Tooltip>
+                    </>
+                  ) : null}
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <span>
+                        <Switch
+                          checked={site.is_reserve}
+                          disabled={updateSite.isPending}
+                          onCheckedChange={() => handleToggleReserve(site)}
+                          aria-label={t("siteManagement.siteForm.relayPolicy")}
+                        />
+                      </span>
+                    </TooltipTrigger>
+                    <TooltipContent>
+                      {site.is_reserve
+                        ? t("siteManagement.siteForm.setPublic")
+                        : t("siteManagement.siteForm.setRelay")}
+                    </TooltipContent>
+                  </Tooltip>
+                  {site.accounts.length === 1 ? (
+                    <IconActionButton
+                      label="同步账号"
+                      disabled={syncingAccountIds.has(site.accounts[0].id)}
+                      onClick={() => handleSyncAccount(site.accounts[0])}
+                    >
+                      <RefreshCw
+                        className={cn(
+                          "size-4",
+                          syncingAccountIds.has(site.accounts[0].id) &&
+                            "animate-spin",
+                        )}
+                      />
+                    </IconActionButton>
+                  ) : null}
+
+                  <Popover>
+                    <PopoverTrigger asChild>
+                      <Button
                         type="button"
-                        className={MENU_BUTTON_CLASS}
-                        onClick={() => jumpToSiteChannel(site.id)}
+                        size="icon-sm"
+                        variant="outline"
+                        className="rounded-xl"
+                        aria-label="更多站点操作"
+                        title="更多站点操作"
                       >
-                        <Waypoints className="size-4" />
-                        <span>查看站点渠道</span>
-                      </button>
-                      {site.accounts.length > 0 ? (
+                        <MoreHorizontal className="size-4" />
+                      </Button>
+                    </PopoverTrigger>
+                    <PopoverContent
+                      align="end"
+                      className="w-52 rounded-2xl border border-border/60 bg-card p-2"
+                    >
+                      <div className="grid gap-1">
                         <button
                           type="button"
                           className={MENU_BUTTON_CLASS}
-                          onClick={() => openCreateAccountDialog(site)}
+                          onClick={() => jumpToSiteChannel(site.id)}
                         >
-                          <Plus className="size-4" />
-                          <span>新增账号</span>
+                          <Waypoints className="size-4" />
+                          <span>查看站点渠道</span>
                         </button>
-                      ) : null}
-                      <div className="my-1 border-t border-border/60" />
-                      <button
-                        type="button"
-                        className={MENU_BUTTON_CLASS}
-                        onClick={() => openEditSiteDialog(site)}
-                      >
-                        <Pencil className="size-4" />
-                        <span>编辑站点</span>
-                      </button>
-                      <button
-                        type="button"
-                        className={MENU_BUTTON_CLASS}
-                        onClick={() => handleTogglePin(site)}
-                      >
-                        {site.is_pinned ? (
-                          <PinOff className="size-4" />
-                        ) : (
-                          <Pin className="size-4" />
-                        )}
-                        <span>{site.is_pinned ? "取消置顶" : "置顶"}</span>
-                      </button>
-                      <button
-                        type="button"
-                        className={MENU_BUTTON_CLASS}
-                        onClick={() => handleToggleSite(site)}
-                      >
-                        <Power className="size-4" />
-                        <span>{site.enabled ? "停用站点" : "启用站点"}</span>
-                      </button>
-                      <button
-                        type="button"
-                        className={MENU_BUTTON_CLASS}
-                        onClick={() => handleArchiveSite(site)}
-                      >
-                        <Archive className="size-4" />
-                        <span>归档站点</span>
-                      </button>
-                      <button
-                        type="button"
-                        className={cn(MENU_BUTTON_CLASS, "text-destructive")}
-                        onClick={() => handleDeleteSite(site)}
-                      >
-                        <Trash2 className="size-4" />
-                        <span>删除站点</span>
-                      </button>
-                    </div>
-                  </PopoverContent>
-                </Popover>
+                        {site.accounts.length > 0 ? (
+                          <button
+                            type="button"
+                            className={MENU_BUTTON_CLASS}
+                            onClick={() => openCreateAccountDialog(site)}
+                          >
+                            <Plus className="size-4" />
+                            <span>新增账号</span>
+                          </button>
+                        ) : null}
+                        <div className="my-1 border-t border-border/60" />
+                        <button
+                          type="button"
+                          className={MENU_BUTTON_CLASS}
+                          onClick={() => openEditSiteDialog(site)}
+                        >
+                          <Pencil className="size-4" />
+                          <span>编辑站点</span>
+                        </button>
+                        <button
+                          type="button"
+                          className={MENU_BUTTON_CLASS}
+                          onClick={() => handleTogglePin(site)}
+                        >
+                          {site.is_pinned ? (
+                            <PinOff className="size-4" />
+                          ) : (
+                            <Pin className="size-4" />
+                          )}
+                          <span>{site.is_pinned ? "取消置顶" : "置顶"}</span>
+                        </button>
+                        <button
+                          type="button"
+                          className={MENU_BUTTON_CLASS}
+                          onClick={() => handleToggleSite(site)}
+                        >
+                          <Power className="size-4" />
+                          <span>{site.enabled ? "停用站点" : "启用站点"}</span>
+                        </button>
+                        <button
+                          type="button"
+                          className={MENU_BUTTON_CLASS}
+                          onClick={() => handleArchiveSite(site)}
+                        >
+                          <Archive className="size-4" />
+                          <span>归档站点</span>
+                        </button>
+                        <button
+                          type="button"
+                          className={cn(MENU_BUTTON_CLASS, "text-destructive")}
+                          onClick={() => handleDeleteSite(site)}
+                        >
+                          <Trash2 className="size-4" />
+                          <span>删除站点</span>
+                        </button>
+                      </div>
+                    </PopoverContent>
+                  </Popover>
 
-                <IconActionButton
-                  label={
-                    forceExpanded
-                      ? "筛选结果已自动展开"
-                      : isExpanded
-                        ? "收起账号"
-                        : "展开账号"
-                  }
-                  disabled={forceExpanded || site.accounts.length === 0}
-                  onClick={() => toggleSiteExpanded(site.id, forceExpanded)}
-                >
-                  <ChevronDown
-                    className={cn(
-                      "size-4 transition-transform",
-                      isExpanded && "rotate-180",
-                    )}
-                  />
-                </IconActionButton>
+                  <IconActionButton
+                    label={
+                      forceExpanded
+                        ? "筛选结果已自动展开"
+                        : isExpanded
+                          ? "收起账号"
+                          : "展开账号"
+                    }
+                    disabled={forceExpanded || site.accounts.length === 0}
+                    onClick={() => toggleSiteExpanded(site.id, forceExpanded)}
+                  >
+                    <ChevronDown
+                      className={cn(
+                        "size-4 transition-transform",
+                        isExpanded && "rotate-180",
+                      )}
+                    />
+                  </IconActionButton>
+                </div>
               </div>
             </div>
 
@@ -1770,8 +1772,8 @@ export function Site() {
                               )}
                             >
                               <div className="space-y-3">
-                                <div className="flex items-start gap-3">
-                                  <div className="min-w-0 flex-1 space-y-2">
+                                <div className="flex flex-wrap items-start gap-3">
+                                  <div className="min-w-0 flex-1">
                                     <div className="flex flex-wrap items-center gap-2">
                                       <div className="text-sm font-semibold">
                                         {account.name}
@@ -1794,8 +1796,10 @@ export function Site() {
                                         {account.enabled ? "启用中" : "已停用"}
                                       </Badge>
                                     </div>
+                                  </div>
 
-                                    <div className="flex flex-wrap gap-x-4 gap-y-1">
+                                  <div className="flex max-w-full shrink-0 flex-col items-end gap-2">
+                                    <div className="flex flex-wrap items-center justify-end gap-x-4 gap-y-1">
                                       <CompactMetric
                                         label="分组"
                                         value={account.user_groups.length}
@@ -1814,7 +1818,7 @@ export function Site() {
                                       />
                                     </div>
 
-                                    <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
+                                    <div className="flex flex-wrap items-center justify-end gap-x-4 gap-y-1 text-xs text-muted-foreground">
                                       <span>
                                         {account.auto_sync ? "自动同步" : "手动同步"}
                                       </span>
@@ -1835,140 +1839,140 @@ export function Site() {
                                               : tProxy('mode.direct')}
                                       </span>
                                     </div>
-                                  </div>
 
-                                  <div className="flex shrink-0 items-center gap-2 self-start">
-                                    <Tooltip>
-                                      <TooltipTrigger asChild>
-                                        <span>
-                                          <Switch
-                                            checked={account.enabled}
-                                            disabled={enableSiteAccount.isPending}
-                                            aria-label={`${account.name} 启用账号`}
-                                            onCheckedChange={() =>
-                                              handleToggleAccount(account)
-                                            }
-                                          />
-                                        </span>
-                                      </TooltipTrigger>
-                                      <TooltipContent>
-                                        {account.enabled ? "停用账号" : "启用账号"}
-                                      </TooltipContent>
-                                    </Tooltip>
+                                    <div className="flex shrink-0 items-center gap-2">
+                                      <Tooltip>
+                                        <TooltipTrigger asChild>
+                                          <span>
+                                            <Switch
+                                              checked={account.enabled}
+                                              disabled={enableSiteAccount.isPending}
+                                              aria-label={`${account.name} 启用账号`}
+                                              onCheckedChange={() =>
+                                                handleToggleAccount(account)
+                                              }
+                                            />
+                                          </span>
+                                        </TooltipTrigger>
+                                        <TooltipContent>
+                                          {account.enabled ? "停用账号" : "启用账号"}
+                                        </TooltipContent>
+                                      </Tooltip>
 
-                                    <Tooltip>
-                                      <TooltipTrigger asChild>
-                                        <span>
-                                          <Switch
-                                            checked={account.auto_sync}
-                                            disabled={updateSiteAccount.isPending}
-                                            aria-label={`${account.name} 自动同步`}
-                                            onCheckedChange={() =>
-                                              handleToggleAutoSync(account)
-                                            }
-                                          />
-                                        </span>
-                                      </TooltipTrigger>
-                                      <TooltipContent>
-                                        {account.auto_sync
-                                          ? "关闭自动同步"
-                                          : "开启自动同步"}
-                                      </TooltipContent>
-                                    </Tooltip>
+                                      <Tooltip>
+                                        <TooltipTrigger asChild>
+                                          <span>
+                                            <Switch
+                                              checked={account.auto_sync}
+                                              disabled={updateSiteAccount.isPending}
+                                              aria-label={`${account.name} 自动同步`}
+                                              onCheckedChange={() =>
+                                                handleToggleAutoSync(account)
+                                              }
+                                            />
+                                          </span>
+                                        </TooltipTrigger>
+                                        <TooltipContent>
+                                          {account.auto_sync
+                                            ? "关闭自动同步"
+                                            : "开启自动同步"}
+                                        </TooltipContent>
+                                      </Tooltip>
 
-                                    <IconActionButton
-                                      label="同步账号"
-                                      disabled={syncingAccountIds.has(account.id)}
-                                      onClick={() => handleSyncAccount(account)}
-                                    >
-                                      <RefreshCw
-                                        className={cn(
-                                          "size-4",
-                                          syncingAccountIds.has(account.id) &&
-                                            "animate-spin",
-                                        )}
-                                      />
-                                    </IconActionButton>
-
-                                    <Popover>
-                                      <PopoverTrigger asChild>
-                                        <Button
-                                          type="button"
-                                          size="icon-sm"
-                                          variant="outline"
-                                          className="rounded-xl"
-                                          aria-label="更多账号操作"
-                                          title="更多账号操作"
-                                        >
-                                          <MoreHorizontal className="size-4" />
-                                        </Button>
-                                      </PopoverTrigger>
-                                      <PopoverContent
-                                        align="end"
-                                        className="w-44 rounded-2xl border border-border/60 bg-card p-2"
+                                      <IconActionButton
+                                        label="同步账号"
+                                        disabled={syncingAccountIds.has(account.id)}
+                                        onClick={() => handleSyncAccount(account)}
                                       >
-                                        <div className="grid gap-1">
-                                          <button
+                                        <RefreshCw
+                                          className={cn(
+                                            "size-4",
+                                            syncingAccountIds.has(account.id) &&
+                                              "animate-spin",
+                                          )}
+                                        />
+                                      </IconActionButton>
+
+                                      <Popover>
+                                        <PopoverTrigger asChild>
+                                          <Button
                                             type="button"
-                                            className={MENU_BUTTON_CLASS}
-                                            onClick={() =>
-                                              jumpToSiteChannelAccount(site.id, account.id)
-                                            }
+                                            size="icon-sm"
+                                            variant="outline"
+                                            className="rounded-xl"
+                                            aria-label="更多账号操作"
+                                            title="更多账号操作"
                                           >
-                                            <Waypoints className="size-4" />
-                                            <span>查看站点渠道</span>
-                                          </button>
-                                          <button
-                                            type="button"
-                                            className={cn(
-                                              MENU_BUTTON_CLASS,
-                                              "disabled:cursor-not-allowed disabled:opacity-50",
-                                            )}
-                                            onClick={() =>
-                                              handleCheckinAccount(account)
-                                            }
-                                            disabled={checkinAccountIds.has(account.id)}
-                                            hidden={!canShowManualCheckin}
-                                          >
-                                            <CalendarCheck2 className="size-4" />
-                                            <span>立即签到</span>
-                                          </button>
-                                          <button
-                                            type="button"
-                                            className={MENU_BUTTON_CLASS}
-                                            onClick={() =>
-                                              openEditAccountDialog(site, account)
-                                            }
-                                          >
-                                            <Pencil className="size-4" />
-                                            <span>编辑账号</span>
-                                          </button>
-                                          <button
-                                            type="button"
-                                            className={MENU_BUTTON_CLASS}
-                                            onClick={() =>
-                                              openRecoveryDialog(site, account)
-                                            }
-                                          >
-                                            <ShieldCheck className="size-4" />
-                                            <span>{tRecovery('menu')}</span>
-                                          </button>
-                                          <button
-                                            type="button"
-                                            className={cn(
-                                              MENU_BUTTON_CLASS,
-                                              "text-destructive",
-                                            )}
-                                            onClick={() =>
-                                              handleDeleteAccount(account)
-                                            }
-                                          >
-                                            <Trash2 className="size-4" />
-                                            <span>删除账号</span>
-                                          </button>
-                                        </div>
-                                      </PopoverContent>
-                                    </Popover>
+                                            <MoreHorizontal className="size-4" />
+                                          </Button>
+                                        </PopoverTrigger>
+                                        <PopoverContent
+                                          align="end"
+                                          className="w-44 rounded-2xl border border-border/60 bg-card p-2"
+                                        >
+                                          <div className="grid gap-1">
+                                            <button
+                                              type="button"
+                                              className={MENU_BUTTON_CLASS}
+                                              onClick={() =>
+                                                jumpToSiteChannelAccount(site.id, account.id)
+                                              }
+                                            >
+                                              <Waypoints className="size-4" />
+                                              <span>查看站点渠道</span>
+                                            </button>
+                                            <button
+                                              type="button"
+                                              className={cn(
+                                                MENU_BUTTON_CLASS,
+                                                "disabled:cursor-not-allowed disabled:opacity-50",
+                                              )}
+                                              onClick={() =>
+                                                handleCheckinAccount(account)
+                                              }
+                                              disabled={checkinAccountIds.has(account.id)}
+                                              hidden={!canShowManualCheckin}
+                                            >
+                                              <CalendarCheck2 className="size-4" />
+                                              <span>立即签到</span>
+                                            </button>
+                                            <button
+                                              type="button"
+                                              className={MENU_BUTTON_CLASS}
+                                              onClick={() =>
+                                                openEditAccountDialog(site, account)
+                                              }
+                                            >
+                                              <Pencil className="size-4" />
+                                              <span>编辑账号</span>
+                                            </button>
+                                            <button
+                                              type="button"
+                                              className={MENU_BUTTON_CLASS}
+                                              onClick={() =>
+                                                openRecoveryDialog(site, account)
+                                              }
+                                            >
+                                              <ShieldCheck className="size-4" />
+                                              <span>{tRecovery('menu')}</span>
+                                            </button>
+                                            <button
+                                              type="button"
+                                              className={cn(
+                                                MENU_BUTTON_CLASS,
+                                                "text-destructive",
+                                              )}
+                                              onClick={() =>
+                                                handleDeleteAccount(account)
+                                              }
+                                            >
+                                              <Trash2 className="size-4" />
+                                              <span>删除账号</span>
+                                            </button>
+                                          </div>
+                                        </PopoverContent>
+                                      </Popover>
+                                    </div>
                                   </div>
                                 </div>
 

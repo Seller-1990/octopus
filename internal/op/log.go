@@ -778,6 +778,7 @@ func selectRelayLogListFields(query *gorm.DB, includeContent bool) *gorm.DB {
 		"cost",
 		"price_source",
 		"price_currency",
+		"price_group_multiplier",
 		"token_source",
 		"error",
 		"success",
