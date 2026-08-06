@@ -1,7 +1,7 @@
 # Octopus 项目瘦身计划（Slimming Plan）
 
 > 生成日期：2026-08-06
-> 依据：当前 `dev` 源码静态调研（前端 7 个主页面 + API Key 模式；后端 178 条 `NewRoute` 路由、13 个后台任务注册项）
+> 依据：当前 `dev` 源码静态调研（前端 7 个主页面 + API Key 模式；后端 179 条 `NewRoute` 路由、13 个后台任务注册项；运行时路由总数以 `GetRouterCount()` 注册结果为准）
 > 状态：**待用户确认后按序执行**
 
 ---
@@ -12,8 +12,21 @@
 
 1. **功能层合并/删除**（需产品决策）：使用分析并入 Home、删除旧版全局价格体系、Header 策略简化为全局开关、模型目录 UI 精简
 2. **静态清理候选**：前后端约 28 处低使用或无生产调用的定义；其中包含测试支撑 API，不能整体当作“零风险死代码”
-3. **重复实现重构**（不删功能减代码）：公共函数 8 处副本、巨型组件拆分等
+3. **重复实现重构**（不删功能减代码）：多处公共函数副本、巨型组件拆分等
 4. **疑似缺口/兼容项复核**：5 处，其中 API Key 登录与 Verification Bridge 已确认不是“空实现/无认证”
+
+### 内网部署裁剪原则
+
+本项目主要部署在内网。瘦身应优先移除没有真实调用方、没有可复现故障模式、或只是重复表达同一约束的代码；不要为了假设中的公网攻击面保留多层重复防御，也不要把“理论上可能发生”当作删除或保留的唯一依据。
+
+以下逻辑仍属于基础合同，不能因为内网而删除：
+
+- 认证与权限边界，以及 Verification Bridge 的 pairing/task/request token 作用域校验
+- Cookie/token 加密、日志和备份脱敏
+- credential revision 的 CAS/fence、事务一致性和并发覆盖保护
+- context cancellation、真实业务输入校验、关键错误分类和可观测性
+
+以下内容进入优先审查范围：仅为公网暴露准备且本部署未启用的兼容路径；多层重复的 nil/empty/invalid fallback；没有真实调用方的 HTTP 重试和泛化 fallback；AnyRouter、Cloudflare、浏览器验证等未启用路径；同一错误在多层重复 sanitize/翻译。每个防御分支都应注明对应故障模式、真实调用方和测试证据；缺乏证据的分支进入候选清理，但删除前必须确认不会削弱上述基础合同。
 
 ---
 
@@ -44,7 +57,7 @@
 3. 分析下钻 → 跳转 Log 页并自动应用筛选（store 已持久化）
 4. 长期可选：统一两套统计口径（stats 与 usage 双轨并存是数据层的历史包袱，但**不在本次瘦身范围**，合并 UI 不要求合并数据管线）
 
-**风险**：低。注意 logDateRange 目前存在 toolbar 的 view-options-store，迁移时需保持两个 store 的日期同步或统一收纳。
+**风险**：中。注意 logDateRange 目前存在 toolbar 的 view-options-store，迁移时需保持两个 store 的日期同步或统一收纳，并验证下钻跳转和明细筛选的一致性。
 
 ---
 
@@ -56,17 +69,18 @@
 
 | 层 | 可删除 | 必须保留 |
 |----|--------|---------|
-| 前端组件 | `LegacyPrices.tsx`、`Item.tsx`、`ItemOverlays.tsx`、`Create.tsx`、`vendor-options.ts`（若仅旧 UI 用，需复核） | — |
+| 前端组件 | `LegacyPrices.tsx`、`Item.tsx`、`ItemOverlays.tsx`、`Create.tsx` | `vendor-options.ts`（仍被 `VendorBadge.tsx`、`DiscoveryToolbar.tsx` 使用） |
 | 前端 hooks | `useModelList`/`useUpdateModel`/`useCreateModel`/`useDeleteModel` | `useUpdateModelPrice`/`useLastUpdateTime`（设置页同步任务卡片在用）、`useModelChannelList`（分组编辑器在用） |
-| 后端路由 | `/model/list`、`/model/create`、`/model/update`、`/model/delete` | `/model/channel`、`/model/update-price`、`/model/last-update-time`、`/model/catalog/*` 全部 |
+| 后端路由 | `/model/create`、`/model/update`、`/model/delete`；`/model/list` 需在移除旧 UI 并处理 Model 页预取后再废弃 | `/model/channel`、`/model/update-price`、`/model/last-update-time`、`/model/catalog/*` 全部 |
 | 后端数据 | LLMInfo CRUD 写入路径（`op/llm.go` 的 Create/Update/Delete） | **LLM 价格表本身保留**：`price.GetLLMPrice` 运行时兜底（DB → globalprice），`task/channel.go` 价格同步任务持续写入 |
 
 **建议方案：**
-1. 前端删除旧 Tab 整链 + 4 个 hooks
-2. 后端删除 4 条 CRUD 路由与对应 op 函数；保留表与读取/任务写入
-3. model 页剩 3 个 tab：目录 / 发现 / Header 策略（若 2.4 落地则 Header 策略也删，剩 2 个 tab）
+1. 前端删除旧 Tab 整链及其专用 hooks；保留 `vendor-options.ts`
+2. 处理 `web/src/components/app.tsx` 进入 Model 页时对 `/model/list` 的后台预取，再评估是否废弃该路由
+3. 后端先废弃并观测 `/model/create`、`/model/update`、`/model/delete` 的外部消费者，再删除路由与对应 op 函数；保留价格表读取和任务写入
+4. model 页剩 3 个 tab：目录 / 发现 / Header 策略（若 2.4 落地则 Header 策略也删，剩 2 个 tab）
 
-**风险**：中。单独删除前端旧 Tab 风险较低，但同时删除 4 条后端 CRUD API 会破坏未在仓库内可见的外部调用方。建议先关闭 UI 入口，监测/确认 API 无消费者后再废弃；价格表和同步写入链路继续保留。
+**风险**：中。前端入口移除相对可控，但 `/model/list` 仍有 Model 页预取，后端 CRUD 还可能有仓库外调用方；必须先关闭 UI 入口、处理预取并完成消费者审计后再废弃 API。价格表和同步写入链路继续保留。
 
 ---
 
@@ -85,7 +99,7 @@
 | PricingPanel 生效价链路/手动报价/汇率 | 定价核心 | 保留 |
 | 目录同步按钮 | 核心 | 保留 |
 
-**附带修复**：`catalog-options.ts` 的 `INBOUND_PROTOCOLS` 只有 4 项而类型有 7 项（RouteTools 选不了 Gemini/火山入站）——精简时顺带补全或随能力矩阵一起收窄。
+**附带复核**：`catalog-options.ts` 的 `INBOUND_PROTOCOLS` 只有 4 项，而 `ProtocolName` 类型有 7 项；当前明确缺少 `gemini`、`volcengine`，`unknown` 是否应展示取决于协议语义，不能机械地把 7 项全部放入 UI。精简时补齐真实支持的入站协议，或随能力矩阵一起收窄并补测试。
 
 **建议方案：** ① 先删能力矩阵 UI，后端 API 是否废弃单独决策；② 候选编辑器高级字段折叠；③ 其余保留。若后续仍嫌多，再评估"发现"与"目录"是否合并视图（两 tab 数据关联性强，但涉及交互重设计，不建议本次做）。
 
@@ -287,14 +301,14 @@
 
 ### C 级：重复实现/代码瘦身（不删功能，重构减代码）
 
-- `getErrorMessage` **8 处**重复（site 模块内）、`formatDateTime` 4 处、`PLATFORM_LABELS` 2 处
+- `getErrorMessage` 当前有 **6 个**实现（site 模块内及同步任务），`formatDateTime` 在多处重复、`PLATFORM_LABELS` 2 处
 - 健康状态样式函数 `home/group-health-overview.tsx` 与 `group/health.tsx` 双份
 - `log/Item.tsx` 相邻尝试合并算法两份拷贝
 - Setting 页 4 张卡片未用公共 `SettingCard`（样式重复）
 - 手写 fetch + FormData 3 处（`useImportDB`/`useImportAllAPIHub`/`useImportMetAPI`）
 - `CustomHeader`/`ApiResponse` 类型各双份
 - `site/index.tsx`（2622 行）、`site-channel/index.tsx`（3343 行）巨型组件拆分
-- 后端 `relay/relay.go`（1930 行）、`op/backup.go`（1400+ 行）拆分候选
+- 后端 `relay/relay.go`（1926 行）、`op/backup.go`（1603 行）拆分候选
 - 前端硬编码中文多处（toolbar/site/log），与 i18n 混用
 
 ### D 级：疑似缺口/兼容项的复核结论
@@ -303,9 +317,9 @@
 |---|------|------|------|
 | 1 | `SiteEditDialog.tsx:60` | global_weight 无 UI 控件，但已进入持久化与 API 合同 | 先盘点兼容，再决定补 UI 或分阶段废弃 |
 | 2 | `handlers/apikey.go:141` | `/api/v1/apikey/login` handler 本身只返回成功，但路由前的 `APIKeyAuth()` 负责实际校验 | **保留**：前端登录与持久会话恢复均调用该入口 |
-| 3 | `task/init.go` | TaskCleanLLM 未注册 | 删常量 |
-| 4 | `catalog-options.ts` | INBOUND_PROTOCOLS 缺 3 项 | 补全或随能力矩阵收窄 |
-| 5 | `handlers/site_recovery.go:53-61` | `/verification/bridge/*` 7 条路由不走后台 `Auth()`，但使用 `pairing_token`、账号作用域及一次性 `task_token`/`request_token` 内建认证 | 保留协议；补充端点速率限制、请求体上限，并明确反向代理下的可信 IP/暴露策略 |
+| 3 | `task/init.go` | `TaskPriceUpdate`、`TaskSyncLLM`、`TaskCleanLLM`、`TaskSiteSync`、`TaskSiteCheckin`、`TaskWebDAVBackup` 仅声明未使用；其中 `TaskCleanLLM` 也未注册 | 删除这 6 个无调用常量，先确认没有外部配置按名称引用 |
+| 4 | `catalog-options.ts` | INBOUND_PROTOCOLS 缺少 `gemini`、`volcengine`；`unknown` 的 UI 语义未定 | 按真实入站协议补全；对 `unknown` 先明确语义并补测试 |
+| 5 | `handlers/site_recovery.go:53-61` | `/verification/bridge/*` 7 条路由不走后台 `Auth()`，但使用 `pairing_token`、账号作用域及一次性 `task_token`/`request_token` 内建认证 | 保留协议和现有认证；仅在实际存在公网暴露或请求体风险时增加边界限制，不默认叠加重复的速率限制/防护层 |
 
 ---
 
@@ -313,6 +327,7 @@
 
 | 顺序 | 内容 | 风险 | 预计影响 |
 |------|------|------|---------|
+| PR-0 | 内网防御分支审计：为每个 fallback、重试、重复校验登记真实调用方、故障模式和测试证据；删除无证据且不承担基础合同的分支 | 低至中 | 先降低后续 PR 的复杂度，避免把公网兼容路径继续带入内网主链路 |
 | PR-1 | A 级静态候选分批清理 | 低至中 | 先删真无调用定义；测试支撑 API 必须同 PR 改写测试，排除 `GroupItemBatchAdd` |
 | PR-2 | 删除旧版全局价格 Tab（2.2） | 中 | UI 删除可先行；后端 4 路由需先确认外部消费者/废弃策略 |
 | PR-3 | Header 策略 → 全局透传开关（2.4） | 中高 | 先完成数据审计与迁移，再分别改造 relay 和 Site sync 入口 |
