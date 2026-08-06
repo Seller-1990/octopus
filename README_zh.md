@@ -20,13 +20,17 @@
 - 🔀 **多渠道聚合** - 支持接入多个 LLM 供应商渠道，统一管理
 - 🔑 **多Key支持** - 单渠道支持配置多 Key
 - ⚡ **智能优选** - 单渠道多端点，智能选择延迟最小的端点请求
-- ⚖️ **负载均衡** - 自动分配请求，确保服务稳定高效
-- 🔄 **协议互转** - 支持 OpenAI Chat / OpenAI Responses / Anthropic 三种 API 格式互相转换
-- 💰 **价格同步** - 自动更新模型价格
+- ⚖️ **负载均衡** - 4 种策略（轮训/随机/故障转移/加权）自动分配请求
+- 🔄 **协议互转** - 支持 OpenAI Chat / OpenAI Responses / Anthropic / Gemini 格式自动互转
+- 💰 **价格同步** - 自动从上游站点和 models.dev 同步模型价格
 - 🔃 **模型同步** - 自动与渠道同步可用模型列表，省心省力
-- 📊 **数据统计** - 全面的请求统计、Token 消耗、费用追踪
-- 🎨 **优雅界面** - 简洁美观的 Web 管理面板
+- 📊 **数据统计** - 实时 SSE 日志流、Token 消耗、费用追踪、倍率显示
+- 🎨 **优雅界面** - 卡片式管理面板，厂商图标识别，智能筛选
 - 🗄️ **多数据库支持** - 支持 SQLite、MySQL、PostgreSQL
+- 🔄 **一键更新** - 应用内自动检测新版本，SHA-256 校验，旧版本自动备份
+- 🐳 **Docker 热更新** - 容器内无需重启即可更新，二进制存于数据卷
+- 🏷️ **厂商筛选** - 自动检测模型厂商，filter chips 快速定位分组
+- 📦 **原生安装包** - Linux 提供 `.deb` 和 `.rpm` 包，含 systemd 服务
 
 > 📖 **第一次使用？** 请先阅读 **[新手使用指南](USAGE_zh.md)**，覆盖从部署到接入客户端的完整流程，5 分钟快速上手。
 
@@ -38,29 +42,42 @@
 直接运行
 
 ```bash
-docker run -d --name octopus -v /path/to/data:/app/data -p 8080:8080 ghcr.io/seller-1990/octopus:v0.1.0
+docker run -d --name octopus -v octopus-data:/app/data -p 8080:8080 ghcr.io/seller-1990/octopus:latest
 ```
 
 或者使用 docker compose 运行
 
 ```bash
-wget https://raw.githubusercontent.com/Seller-1990/octopus/refs/tags/v0.1.0/docker-compose.yml
-echo 'OCTOPUS_IMAGE_TAG=v0.1.0' > .env
+wget https://raw.githubusercontent.com/Seller-1990/octopus/dev/docker-compose.yml
 docker compose up -d
 ```
 
+> 💡 **Docker 内一键更新**：Octopus 支持容器内无需重启的一键更新，更新后的二进制存储在数据卷中。也可使用 [Watchtower](https://github.com/containrrr/watchtower) 实现镜像级自动更新。
 
-只使用 **ghcr.io/seller-1990/octopus** 以及本仓库提供的 compose。请把 `v0.1.0` 替换为准备部署的发行版本；只有在明确接受浮动版本时才使用 `latest`。父仓库或其他 fork 的镜像、部署文件不包含本二开的完整功能。
+只使用 **ghcr.io/seller-1990/octopus** 以及本仓库提供的 compose 文件。
 
 ### 📦 从 Release 下载
 
-从 [Releases](https://github.com/Seller-1990/octopus/releases) 下载对应平台的二进制文件，然后运行：
+从 [Releases](https://github.com/Seller-1990/octopus/releases) 下载对应平台的安装包：
 
 ```bash
 ./octopus start
 ```
 
-Windows 用户可下载 **octopus-setup-版本-x86_64.exe** 安装包（含桌面、开始菜单快捷方式），也可直接使用便携版 **octopus-desktop-x86_64.exe**。
+**Linux（推荐）**：安装 `.deb` 或 `.rpm` 包，自动配置 systemd 服务：
+
+```bash
+# Debian/Ubuntu/NAS
+sudo dpkg -i octopus_*.deb
+# Fedora/CentOS
+sudo rpm -i octopus_*.rpm
+```
+
+安装后使用 `systemctl start/stop/restart octopus` 管理服务。
+
+**Windows**：下载 **octopus-setup-版本-x86_64.exe** 安装包（含桌面、开始菜单快捷方式），也可直接使用便携版 **octopus-desktop-x86_64.exe**。
+
+**macOS**：下载对应架构的 `.zip`（Apple Silicon 用 arm64，Intel 用 amd64），解压后运行 `./octopus start`。
 
 ### 🛠️ 源码运行
 
