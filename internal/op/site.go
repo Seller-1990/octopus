@@ -527,6 +527,17 @@ func SiteAccountCreate(account *model.SiteAccount, ctx context.Context) error {
 	if err := account.Validate(); err != nil {
 		return err
 	}
+	if account.CredentialType == model.SiteCredentialTypeAccessToken && model.IsSiteCookieCredential(account.AccessToken) {
+		encrypted, err := EncryptSecret(account.AccessToken)
+		if err != nil {
+			return fmt.Errorf("encrypt site session cookie: %w", err)
+		}
+		account.AccessToken = ""
+		account.SessionCookieEncrypted = encrypted
+	}
+	if account.CredentialRevision == 0 {
+		account.CredentialRevision = 1
+	}
 	if account.ProxyMode == model.ProxyUsageModePool && account.ProxyConfigID != nil {
 		if _, err := ProxyURLForConfig(*account.ProxyConfigID, ctx); err != nil {
 			return err
@@ -579,6 +590,8 @@ func SiteAccountUpdate(req *model.SiteAccountUpdateRequest, ctx context.Context)
 	merged := account
 	var selectFields []string
 	updates := model.SiteAccount{ID: req.ID}
+	credentialFieldsProvided := req.CredentialType != nil || req.Username != nil || req.Password != nil ||
+		req.AccessToken != nil || req.APIKey != nil || req.RefreshToken != nil || req.TokenExpiresAt != nil
 
 	if req.Name != nil {
 		merged.Name = *req.Name
@@ -664,6 +677,20 @@ func SiteAccountUpdate(req *model.SiteAccountUpdateRequest, ctx context.Context)
 		merged.CheckinRandomWindowMinutes = *req.CheckinRandomWindowMinutes
 		selectFields = append(selectFields, "checkin_random_window_minutes")
 	}
+	if credentialFieldsProvided && merged.CredentialType != model.SiteCredentialTypeAccessToken {
+		merged.SessionCookieEncrypted = ""
+	}
+	if req.AccessToken != nil && !model.IsSiteCookieCredential(merged.AccessToken) {
+		merged.SessionCookieEncrypted = ""
+	}
+	credentialsChanged := merged.CredentialType != account.CredentialType ||
+		merged.Username != account.Username ||
+		merged.Password != account.Password ||
+		merged.AccessToken != account.AccessToken ||
+		merged.APIKey != account.APIKey ||
+		merged.RefreshToken != account.RefreshToken ||
+		merged.TokenExpiresAt != account.TokenExpiresAt ||
+		(req.AccessToken != nil && model.IsSiteCookieCredential(merged.AccessToken) && account.SessionCookieEncrypted == "")
 
 	if len(selectFields) > 0 {
 		if err := merged.Validate(); err != nil {
@@ -674,6 +701,14 @@ func SiteAccountUpdate(req *model.SiteAccountUpdateRequest, ctx context.Context)
 				return nil, err
 			}
 		}
+	}
+	encryptedSessionCookie := merged.SessionCookieEncrypted
+	if credentialsChanged && merged.CredentialType == model.SiteCredentialTypeAccessToken && model.IsSiteCookieCredential(merged.AccessToken) {
+		encrypted, err := EncryptSecret(merged.AccessToken)
+		if err != nil {
+			return nil, fmt.Errorf("encrypt site session cookie: %w", err)
+		}
+		encryptedSessionCookie = encrypted
 	}
 	if req.Name != nil {
 		updates.Name = merged.Name
@@ -736,15 +771,51 @@ func SiteAccountUpdate(req *model.SiteAccountUpdateRequest, ctx context.Context)
 		updates.CheckinRandomWindowMinutes = merged.CheckinRandomWindowMinutes
 	}
 
-	if len(selectFields) > 0 {
-		if err := db.GetDB().WithContext(ctx).
-			Model(&model.SiteAccount{}).
-			Where("id = ?", req.ID).
-			Select(selectFields).
-			Updates(&updates).Error; err != nil {
-			return nil, fmt.Errorf("failed to update site account: %w", err)
+	var revokedVerificationSessionIDs []int64
+	applyUpdates := func(tx *gorm.DB) error {
+		if credentialsChanged {
+			var err error
+			revokedVerificationSessionIDs, err = clearVerificationSessionsForAccountTx(tx, req.ID)
+			if err != nil {
+				return fmt.Errorf("clear prior verification sessions: %w", err)
+			}
 		}
+		if len(selectFields) > 0 {
+			if err := tx.
+				Model(&model.SiteAccount{}).
+				Where("id = ?", req.ID).
+				Select(selectFields).
+				Updates(&updates).Error; err != nil {
+				return fmt.Errorf("failed to update site account: %w", err)
+			}
+		}
+		if !credentialsChanged {
+			return nil
+		}
+		credentialUpdates := clearedVerificationCredentialFields()
+		credentialUpdates["credential_revision"] = gorm.Expr("credential_revision + 1")
+		if encryptedSessionCookie != "" {
+			credentialUpdates["access_token"] = ""
+			credentialUpdates["session_cookie_encrypted"] = encryptedSessionCookie
+		} else {
+			credentialUpdates["session_cookie_encrypted"] = ""
+		}
+		if err := tx.Model(&model.SiteAccount{}).Where("id = ?", req.ID).Updates(credentialUpdates).Error; err != nil {
+			return fmt.Errorf("failed to fence updated site credentials: %w", err)
+		}
+		return nil
 	}
+	if credentialsChanged {
+		if err := db.GetDB().WithContext(ctx).Transaction(applyUpdates); err != nil {
+			return nil, err
+		}
+	} else if err := applyUpdates(db.GetDB().WithContext(ctx)); err != nil {
+		return nil, err
+	}
+	cancelVerificationBrowserSessions(
+		revokedVerificationSessionIDs,
+		fmt.Errorf("verification account credentials were updated"),
+	)
 	return SiteAccountGet(req.ID, ctx)
 }
 

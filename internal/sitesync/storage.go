@@ -92,6 +92,11 @@ func persistSyncSnapshot(ctx context.Context, accountID int, snapshot *syncSnaps
 			existingModelMap[key] = item
 		}
 
+		if snapshot.persistCredential {
+			if err := persistSiteCredentialCAS(tx, accountID, snapshot.credentialRevision, snapshot.accessToken); err != nil {
+				return err
+			}
+		}
 		updatePayload := map[string]any{
 			"last_sync_at":      &now,
 			"last_sync_status":  snapshot.status,
@@ -99,9 +104,6 @@ func persistSyncSnapshot(ctx context.Context, accountID int, snapshot *syncSnaps
 			"balance":           snapshot.balance,
 			"balance_used":      snapshot.balanceUsed,
 			"today_income":      snapshot.todayIncome,
-		}
-		if strings.TrimSpace(snapshot.accessToken) != "" {
-			updatePayload["access_token"] = strings.TrimSpace(snapshot.accessToken)
 		}
 		if err := tx.Model(&model.SiteAccount{}).Where("id = ?", accountID).Updates(updatePayload).Error; err != nil {
 			return err
@@ -165,6 +167,46 @@ func persistSyncSnapshot(ctx context.Context, accountID int, snapshot *syncSnaps
 		return err
 	}
 	return nil
+}
+
+func shouldPersistSiteCredential(account *model.SiteAccount, credential string) bool {
+	credential = strings.TrimSpace(credential)
+	if account == nil || credential == "" {
+		return false
+	}
+	if looksLikeCookieToken(credential) {
+		if account.SessionCookieEncrypted == "" {
+			return true
+		}
+		stored, err := op.DecryptSecret(account.SessionCookieEncrypted)
+		return err != nil || strings.TrimSpace(stored) != credential
+	}
+	return strings.TrimSpace(account.AccessToken) != credential || account.SessionCookieEncrypted != ""
+}
+
+func persistSiteCredentialCAS(tx *gorm.DB, accountID int, revision int64, credential string) error {
+	credential = strings.TrimSpace(credential)
+	if credential == "" {
+		return nil
+	}
+	updates := map[string]any{
+		"credential_revision": gorm.Expr("credential_revision + 1"),
+	}
+	if looksLikeCookieToken(credential) {
+		encrypted, err := op.EncryptSecret(credential)
+		if err != nil {
+			return fmt.Errorf("encrypt site session cookie: %w", err)
+		}
+		updates["access_token"] = ""
+		updates["session_cookie_encrypted"] = encrypted
+	} else {
+		updates["access_token"] = credential
+		updates["session_cookie_encrypted"] = ""
+	}
+	result := tx.Model(&model.SiteAccount{}).
+		Where("id = ? AND credential_revision = ?", accountID, revision).
+		Updates(updates)
+	return result.Error
 }
 
 func preparePersistedSyncModels(accountID int, incoming []model.SiteModel, existingModelMap map[string]model.SiteModel, now time.Time) []model.SiteModel {
@@ -649,15 +691,12 @@ func resolveExplicitSyncRoute(item *model.SiteModel, existing *model.SiteModel) 
 	return "", "", false
 }
 
-func updateAccountSyncState(ctx context.Context, accountID int, status model.SiteExecutionStatus, message string, accessToken string) error {
+func updateAccountSyncState(ctx context.Context, accountID int, status model.SiteExecutionStatus, message string) error {
 	now := time.Now()
 	updatePayload := map[string]any{
 		"last_sync_at":      &now,
 		"last_sync_status":  status,
 		"last_sync_message": sanitizeSiteStatusText(message),
-	}
-	if strings.TrimSpace(accessToken) != "" {
-		updatePayload["access_token"] = strings.TrimSpace(accessToken)
 	}
 	return db.GetDB().WithContext(ctx).Model(&model.SiteAccount{}).Where("id = ?", accountID).Updates(updatePayload).Error
 }
@@ -690,8 +729,10 @@ func updateAccountCheckinState(ctx context.Context, account *model.SiteAccount, 
 		account.NextAutoCheckinAt = nextAt
 		updatePayload["next_auto_checkin_at"] = nextAt
 	}
-	if strings.TrimSpace(accessToken) != "" {
-		updatePayload["access_token"] = strings.TrimSpace(accessToken)
+	if shouldPersistSiteCredential(account, accessToken) {
+		if err := persistSiteCredentialCAS(db.GetDB().WithContext(ctx), account.ID, account.CredentialRevision, accessToken); err != nil {
+			return err
+		}
 	}
 	return db.GetDB().WithContext(ctx).Model(&model.SiteAccount{}).Where("id = ?", account.ID).Updates(updatePayload).Error
 }

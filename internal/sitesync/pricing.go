@@ -19,7 +19,7 @@ func refreshSitePricingQuotes(
 	account *model.SiteAccount,
 	accessToken string,
 ) error {
-	if siteRecord == nil || account == nil || strings.TrimSpace(accessToken) == "" {
+	if siteRecord == nil || account == nil || !managedSessionRequestAvailable(ctx, accessToken) {
 		return nil
 	}
 	payload, err := requestJSONWithManagedAccessToken(

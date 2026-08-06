@@ -8,6 +8,7 @@ import (
 
 	"github.com/bestruirui/octopus/internal/apperror"
 	"github.com/bestruirui/octopus/internal/model"
+	"github.com/bestruirui/octopus/internal/op"
 )
 
 func isAlreadyCheckedInMessage(message string) bool {
@@ -88,6 +89,13 @@ func syncManagementPlatform(ctx context.Context, siteRecord *model.Site, account
 	}
 
 	tokens, err := fetchManagementTokens(ctx, siteRecord, account, accessToken)
+	if err != nil && account.CredentialType == model.SiteCredentialTypeUsernamePassword && account.SessionCookieEncrypted != "" && shouldTryAlternativeManagedAuth(err) {
+		account.SessionCookieEncrypted = ""
+		accessToken, err = loginManagedSession(ctx, siteRecord, account)
+		if err == nil {
+			tokens, err = fetchManagementTokens(ctx, siteRecord, account, accessToken)
+		}
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -307,16 +315,45 @@ func syncWithDirectToken(ctx context.Context, siteRecord *model.Site, account *m
 
 func resolveManagedAccessToken(ctx context.Context, siteRecord *model.Site, account *model.SiteAccount) (string, error) {
 	if account.CredentialType == model.SiteCredentialTypeAccessToken {
-		if strings.TrimSpace(account.AccessToken) == "" {
-			return "", newAccessTokenRequiredError()
+		if strings.TrimSpace(account.AccessToken) != "" {
+			return strings.TrimSpace(account.AccessToken), nil
 		}
-		return strings.TrimSpace(account.AccessToken), nil
+		return decryptManagedSessionCookie(account)
 	}
 	if account.CredentialType != model.SiteCredentialTypeUsernamePassword {
 		return "", fmt.Errorf("managed access token is not available for credential type %s", account.CredentialType)
 	}
+	if account.SessionCookieEncrypted != "" {
+		return decryptManagedSessionCookie(account)
+	}
+	return loginManagedSession(ctx, siteRecord, account)
+}
 
-	payload, err := requestJSON(ctx, siteRecord, http.MethodPost, buildSiteURL(siteRecord.BaseURL, "/api/user/login"), map[string]any{"username": account.Username, "password": account.Password}, nil, account)
+func decryptManagedSessionCookie(account *model.SiteAccount) (string, error) {
+	if account == nil || account.SessionCookieEncrypted == "" {
+		return "", newAccessTokenRequiredError()
+	}
+	cookie, err := op.DecryptSecret(account.SessionCookieEncrypted)
+	if err != nil {
+		return "", fmt.Errorf("decrypt site session cookie: %w", err)
+	}
+	if strings.TrimSpace(cookie) == "" {
+		return "", newAccessTokenRequiredError()
+	}
+	return strings.TrimSpace(cookie), nil
+}
+
+func loginManagedSession(ctx context.Context, siteRecord *model.Site, account *model.SiteAccount) (string, error) {
+	payload, cookieHeader, err := anyRouterRequestJSONWithCookieScope(
+		ctx,
+		siteRecord,
+		http.MethodPost,
+		buildSiteURL(siteRecord.BaseURL, "/api/user/login"),
+		buildSiteURL(siteRecord.BaseURL, "/api/"),
+		map[string]any{"username": account.Username, "password": account.Password},
+		map[string]string{"X-Requested-With": "XMLHttpRequest"},
+		account,
+	)
 	if err != nil {
 		return "", err
 	}
@@ -332,6 +369,14 @@ func resolveManagedAccessToken(ctx context.Context, siteRecord *model.Site, acco
 	}
 	if token == "" {
 		token = firstNonEmptyString(jsonString(payload["token"]), jsonString(payload["access_token"]), jsonString(payload["accessToken"]))
+	}
+	if token == "" && anyRouterHasUsableSessionCookie(cookieHeader) {
+		token = cookieHeader
+	}
+	if token == "" {
+		if _, ok := verificationBrowserTransportFromContext(ctx); ok {
+			return "", nil
+		}
 	}
 	if token == "" {
 		return "", newSiteLoginTokenMissingError()

@@ -347,6 +347,79 @@ func TestPersistSyncSnapshotPreservesGroupProjectionDisabled(t *testing.T) {
 	}
 }
 
+func TestPersistSyncSnapshotEncryptsCookieSession(t *testing.T) {
+	ctx := setupProjectTestDB(t)
+	_, account := createProjectionFixture(t, ctx)
+	if err := op.InitCache(); err != nil {
+		t.Fatalf("initialize settings cache: %v", err)
+	}
+	if err := op.SettingSetString(model.SettingKeyJWTSecret, "cookie-session-test-secret"); err != nil {
+		t.Fatalf("set jwt secret: %v", err)
+	}
+	const cookie = "session=cookie-only-session; auth_token=opaque"
+	snapshot := &syncSnapshot{
+		accessToken:        cookie,
+		credentialRevision: account.CredentialRevision,
+		persistCredential:  true,
+		status:             model.SiteExecutionStatusSuccess,
+		message:            "ok",
+	}
+	if err := persistSyncSnapshot(ctx, account.ID, snapshot); err != nil {
+		t.Fatalf("persistSyncSnapshot: %v", err)
+	}
+
+	var reloaded model.SiteAccount
+	if err := dbpkg.GetDB().WithContext(ctx).First(&reloaded, account.ID).Error; err != nil {
+		t.Fatalf("reload account: %v", err)
+	}
+	if reloaded.AccessToken == cookie || reloaded.SessionCookieEncrypted == "" {
+		t.Fatalf("cookie session was not isolated from access_token: %+v", reloaded)
+	}
+	plain, err := op.DecryptSecret(reloaded.SessionCookieEncrypted)
+	if err != nil {
+		t.Fatalf("decrypt persisted cookie: %v", err)
+	}
+	if plain != cookie || reloaded.CredentialRevision != account.CredentialRevision+1 {
+		t.Fatalf("unexpected persisted cookie state: plain=%q revision=%d", plain, reloaded.CredentialRevision)
+	}
+}
+
+func TestPersistSyncSnapshotDoesNotOverwriteNewerCredentials(t *testing.T) {
+	ctx := setupProjectTestDB(t)
+	_, account := createProjectionFixture(t, ctx)
+	if err := op.InitCache(); err != nil {
+		t.Fatalf("initialize settings cache: %v", err)
+	}
+	if err := op.SettingSetString(model.SettingKeyJWTSecret, "snapshot-cas-test-secret"); err != nil {
+		t.Fatalf("set jwt secret: %v", err)
+	}
+	if err := dbpkg.GetDB().WithContext(ctx).Model(&model.SiteAccount{}).Where("id = ?", account.ID).Updates(map[string]any{
+		"access_token":        "newer-manual-token",
+		"credential_revision": 1,
+	}).Error; err != nil {
+		t.Fatalf("install newer credentials: %v", err)
+	}
+
+	snapshot := &syncSnapshot{
+		accessToken:        "session=stale-cookie",
+		credentialRevision: 0,
+		persistCredential:  true,
+		status:             model.SiteExecutionStatusSuccess,
+		message:            "ok",
+	}
+	if err := persistSyncSnapshot(ctx, account.ID, snapshot); err != nil {
+		t.Fatalf("persistSyncSnapshot: %v", err)
+	}
+
+	var reloaded model.SiteAccount
+	if err := dbpkg.GetDB().WithContext(ctx).First(&reloaded, account.ID).Error; err != nil {
+		t.Fatalf("reload account: %v", err)
+	}
+	if reloaded.AccessToken != "newer-manual-token" || reloaded.SessionCookieEncrypted != "" || reloaded.CredentialRevision != 1 {
+		t.Fatalf("stale snapshot overwrote newer credentials: %+v", reloaded)
+	}
+}
+
 func TestPersistSyncSnapshotPreservesGroupMultiplier(t *testing.T) {
 	ctx := setupProjectTestDB(t)
 	_, account := createProjectionFixture(t, ctx)

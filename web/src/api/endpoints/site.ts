@@ -87,6 +87,7 @@ export type SiteAccount = {
   username: string;
   password: string;
   access_token: string;
+  has_stored_session_cookie?: boolean;
   api_key: string;
   refresh_token: string;
   token_expires_at: number;

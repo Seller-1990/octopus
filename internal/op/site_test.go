@@ -11,6 +11,7 @@ import (
 	"github.com/bestruirui/octopus/internal/apperror"
 	dbpkg "github.com/bestruirui/octopus/internal/db"
 	"github.com/bestruirui/octopus/internal/model"
+	"gorm.io/gorm"
 )
 
 func setupSiteOpTestDB(t *testing.T) context.Context {
@@ -635,6 +636,219 @@ func TestSiteAccountUpdateRejectsInvalidMergedCredentials(t *testing.T) {
 	}
 }
 
+func TestSiteAccountUpdateAdvancesCredentialRevisionAndClearsStoredSession(t *testing.T) {
+	ctx := setupSiteOpTestDB(t)
+	_, account := createSiteOpTestSiteAccount(t, ctx, "credential-revision-site", "credential-revision-account")
+	created, err := VerificationSessionCreate(ctx, VerificationSessionCreateRequest{SiteAccountID: account.ID})
+	if err != nil {
+		t.Fatalf("create verification session: %v", err)
+	}
+	if err := dbpkg.GetDB().WithContext(ctx).Model(&model.SiteAccount{}).Where("id = ?", account.ID).Updates(map[string]any{
+		"session_cookie_encrypted": "encrypted-old-session",
+		"credential_revision":      4,
+	}).Error; err != nil {
+		t.Fatalf("seed stored session: %v", err)
+	}
+
+	newToken := "manual-bearer-token"
+	updated, err := SiteAccountUpdate(&model.SiteAccountUpdateRequest{ID: account.ID, AccessToken: &newToken}, ctx)
+	if err != nil {
+		t.Fatalf("SiteAccountUpdate: %v", err)
+	}
+	if updated.AccessToken != newToken || updated.SessionCookieEncrypted != "" || updated.CredentialRevision != 5 ||
+		updated.VerificationSessionFenceID != created.Session.ID {
+		t.Fatalf("credential update did not fence prior session: %+v", updated)
+	}
+	var session model.VerificationSession
+	if err := dbpkg.GetDB().WithContext(ctx).First(&session, created.Session.ID).Error; err != nil {
+		t.Fatalf("reload verification session: %v", err)
+	}
+	if session.Status != model.VerificationSessionRevoked || session.CookieEncrypted != "" {
+		t.Fatalf("manual credential update retained prior verification session: %+v", session)
+	}
+}
+
+func TestSiteAccountCreateEncryptsCookieSession(t *testing.T) {
+	ctx := setupSiteOpTestDB(t)
+	if err := InitCache(); err != nil {
+		t.Fatalf("initialize settings cache: %v", err)
+	}
+	if err := SettingSetString(model.SettingKeyJWTSecret, "site-account-create-cookie-secret"); err != nil {
+		t.Fatalf("set jwt secret: %v", err)
+	}
+	site := &model.Site{Name: "cookie-create-site", Platform: model.SitePlatformNewAPI, BaseURL: "https://example.com", Enabled: true}
+	if err := SiteCreate(site, ctx); err != nil {
+		t.Fatalf("SiteCreate: %v", err)
+	}
+	account := &model.SiteAccount{
+		SiteID:         site.ID,
+		Name:           "cookie-create-account",
+		CredentialType: model.SiteCredentialTypeAccessToken,
+		AccessToken:    "session=create-cookie",
+		Enabled:        true,
+	}
+	if err := SiteAccountCreate(account, ctx); err != nil {
+		t.Fatalf("SiteAccountCreate: %v", err)
+	}
+	reloaded, err := SiteAccountGet(account.ID, ctx)
+	if err != nil {
+		t.Fatalf("SiteAccountGet: %v", err)
+	}
+	plain, err := DecryptSecret(reloaded.SessionCookieEncrypted)
+	if err != nil || plain != "session=create-cookie" || reloaded.AccessToken != "" || reloaded.CredentialRevision != 1 {
+		t.Fatalf("cookie credential was not encrypted: account=%+v plain=%q err=%v", reloaded, plain, err)
+	}
+}
+
+func TestSiteAccountUpdatePreservesStoredCookieWhenUpdatingRefreshMetadata(t *testing.T) {
+	ctx := setupSiteOpTestDB(t)
+	if err := InitCache(); err != nil {
+		t.Fatalf("initialize settings cache: %v", err)
+	}
+	if err := SettingSetString(model.SettingKeyJWTSecret, "site-account-update-cookie-secret"); err != nil {
+		t.Fatalf("set jwt secret: %v", err)
+	}
+	site := &model.Site{Name: "cookie-update-site", Platform: model.SitePlatformNewAPI, BaseURL: "https://example.com", Enabled: true}
+	if err := SiteCreate(site, ctx); err != nil {
+		t.Fatalf("SiteCreate: %v", err)
+	}
+	account := &model.SiteAccount{
+		SiteID:         site.ID,
+		Name:           "cookie-update-account",
+		CredentialType: model.SiteCredentialTypeAccessToken,
+		AccessToken:    "session=preserved-cookie",
+		Enabled:        true,
+	}
+	if err := SiteAccountCreate(account, ctx); err != nil {
+		t.Fatalf("SiteAccountCreate: %v", err)
+	}
+
+	refreshToken := "refresh-metadata"
+	updated, err := SiteAccountUpdate(&model.SiteAccountUpdateRequest{ID: account.ID, RefreshToken: &refreshToken}, ctx)
+	if err != nil {
+		t.Fatalf("SiteAccountUpdate: %v", err)
+	}
+	plain, err := DecryptSecret(updated.SessionCookieEncrypted)
+	if err != nil {
+		t.Fatalf("decrypt preserved session cookie: %v", err)
+	}
+	if plain != "session=preserved-cookie" || updated.AccessToken != "" || updated.CredentialRevision != 2 {
+		t.Fatalf("refresh metadata update lost stored cookie: account=%+v plain=%q", updated, plain)
+	}
+
+	name := "cookie-update-account-renamed"
+	credentialType := model.SiteCredentialTypeAccessToken
+	empty := ""
+	unchanged, err := SiteAccountUpdate(&model.SiteAccountUpdateRequest{
+		ID:             account.ID,
+		Name:           &name,
+		CredentialType: &credentialType,
+		Username:       &empty,
+		Password:       &empty,
+		APIKey:         &empty,
+		RefreshToken:   &refreshToken,
+	}, ctx)
+	if err != nil {
+		t.Fatalf("SiteAccountUpdate unchanged credentials: %v", err)
+	}
+	if unchanged.CredentialRevision != updated.CredentialRevision || unchanged.SessionCookieEncrypted != updated.SessionCookieEncrypted {
+		t.Fatalf("unchanged credentials advanced revision or replaced cookie: before=%+v after=%+v", updated, unchanged)
+	}
+}
+
+func TestSiteAccountJSONReportsStoredCookieWithoutExposingCiphertext(t *testing.T) {
+	account := model.SiteAccount{
+		ID:                     7,
+		SessionCookieEncrypted: "encrypted-session-cookie",
+		CredentialRevision:     4,
+	}
+	payload, err := json.Marshal(account)
+	if err != nil {
+		t.Fatalf("marshal site account: %v", err)
+	}
+	text := string(payload)
+	if !strings.Contains(text, `"has_stored_session_cookie":true`) {
+		t.Fatalf("stored cookie indicator missing from account JSON: %s", text)
+	}
+	if strings.Contains(text, "encrypted-session-cookie") || strings.Contains(text, "credential_revision") || strings.Contains(text, "session_cookie_encrypted") {
+		t.Fatalf("account JSON exposed stored credential metadata: %s", text)
+	}
+}
+
+func TestImportedCredentialChangeRevokesPriorVerificationSession(t *testing.T) {
+	ctx := setupSiteOpTestDB(t)
+	if err := InitCache(); err != nil {
+		t.Fatalf("initialize settings cache: %v", err)
+	}
+	if err := SettingSetString(model.SettingKeyJWTSecret, "site-import-fence-test-secret"); err != nil {
+		t.Fatalf("set jwt secret: %v", err)
+	}
+
+	site, account := createSiteOpTestSiteAccount(t, ctx, "Import Fence Site", "import-fence-account")
+	created, err := VerificationSessionCreate(ctx, VerificationSessionCreateRequest{SiteAccountID: account.ID})
+	if err != nil {
+		t.Fatalf("create verification session: %v", err)
+	}
+
+	var revokedVerificationSessionIDs []int64
+	if err := dbpkg.GetDB().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		_, _, _, upsertErr := upsertImportedAccount(tx, site, importedAccountInput{
+			Site:           importedSiteInput{Name: site.Name, Platform: site.Platform, BaseURL: site.BaseURL},
+			Name:           account.Name,
+			CredentialType: model.SiteCredentialTypeAccessToken,
+			AccessToken:    "replacement-import-token",
+			Enabled:        true,
+			AutoSync:       true,
+		}, &revokedVerificationSessionIDs)
+		return upsertErr
+	}); err != nil {
+		t.Fatalf("upsert imported account: %v", err)
+	}
+	cancelVerificationBrowserSessions(revokedVerificationSessionIDs, fmt.Errorf("test import replaced credentials"))
+
+	var reloadedSession model.VerificationSession
+	if err := dbpkg.GetDB().WithContext(ctx).First(&reloadedSession, created.Session.ID).Error; err != nil {
+		t.Fatalf("reload verification session: %v", err)
+	}
+	var reloadedAccount model.SiteAccount
+	if err := dbpkg.GetDB().WithContext(ctx).First(&reloadedAccount, account.ID).Error; err != nil {
+		t.Fatalf("reload imported account: %v", err)
+	}
+	if reloadedSession.Status != model.VerificationSessionRevoked ||
+		reloadedAccount.VerificationSessionFenceID != created.Session.ID {
+		t.Fatalf("import left prior verification session active: session=%+v account=%+v", reloadedSession, reloadedAccount)
+	}
+
+	unchangedSession, err := VerificationSessionCreate(ctx, VerificationSessionCreateRequest{SiteAccountID: account.ID})
+	if err != nil {
+		t.Fatalf("create unchanged-credential verification session: %v", err)
+	}
+	revisionBefore := reloadedAccount.CredentialRevision
+	if err := dbpkg.GetDB().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		_, _, _, upsertErr := upsertImportedAccount(tx, site, importedAccountInput{
+			Site:           importedSiteInput{Name: site.Name, Platform: site.Platform, BaseURL: site.BaseURL},
+			Name:           account.Name,
+			CredentialType: model.SiteCredentialTypeAccessToken,
+			AccessToken:    "replacement-import-token",
+			Enabled:        true,
+			AutoSync:       true,
+		}, &revokedVerificationSessionIDs)
+		return upsertErr
+	}); err != nil {
+		t.Fatalf("repeat imported account upsert: %v", err)
+	}
+	reloadedSession = model.VerificationSession{}
+	if err := dbpkg.GetDB().WithContext(ctx).First(&reloadedSession, unchangedSession.Session.ID).Error; err != nil {
+		t.Fatalf("reload unchanged verification session: %v", err)
+	}
+	if err := dbpkg.GetDB().WithContext(ctx).First(&reloadedAccount, account.ID).Error; err != nil {
+		t.Fatalf("reload unchanged imported account: %v", err)
+	}
+	if reloadedSession.Status != model.VerificationSessionPending || reloadedAccount.CredentialRevision != revisionBefore {
+		t.Fatalf("unchanged import revoked session or advanced revision: session=%+v account=%+v", reloadedSession, reloadedAccount)
+	}
+}
+
 func TestSiteUpdateMergesRouteBaseURLs(t *testing.T) {
 	ctx := setupSiteOpTestDB(t)
 
@@ -680,6 +894,12 @@ func TestSiteUpdateMergesRouteBaseURLs(t *testing.T) {
 
 func TestSiteImportAllAPIHubImportsAndUpdatesAccounts(t *testing.T) {
 	ctx := setupSiteOpTestDB(t)
+	if err := InitCache(); err != nil {
+		t.Fatalf("initialize settings cache: %v", err)
+	}
+	if err := SettingSetString(model.SettingKeyJWTSecret, "all-api-hub-import-test-secret"); err != nil {
+		t.Fatalf("set jwt secret: %v", err)
+	}
 
 	result, syncAccountIDs, err := SiteImportAllAPIHub(ctx, mustJSONMarshal(t, buildAllAPIHubImportPayload("managed-user")))
 	if err != nil {
@@ -749,8 +969,15 @@ func TestSiteImportAllAPIHubImportsAndUpdatesAccounts(t *testing.T) {
 		if account.CredentialType != model.SiteCredentialTypeAccessToken {
 			t.Fatalf("expected cookie account credential type %q, got %q", model.SiteCredentialTypeAccessToken, account.CredentialType)
 		}
-		if account.AccessToken != "sid=cookie-session" {
-			t.Fatalf("expected cookie session to be stored as access token, got %q", account.AccessToken)
+		if account.AccessToken != "" || account.SessionCookieEncrypted == "" {
+			t.Fatalf("expected encrypted cookie session without plaintext access token: %+v", account)
+		}
+		cookie, err := DecryptSecret(account.SessionCookieEncrypted)
+		if err != nil || cookie != "sid=cookie-session" {
+			t.Fatalf("unexpected encrypted cookie session: cookie=%q err=%v", cookie, err)
+		}
+		if account.CredentialRevision != 1 {
+			t.Fatalf("expected imported credential revision 1, got %d", account.CredentialRevision)
 		}
 		if account.AutoCheckin {
 			t.Fatalf("expected cookie account auto checkin to stay disabled")

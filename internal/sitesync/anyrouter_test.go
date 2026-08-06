@@ -9,6 +9,7 @@ import (
 
 	"github.com/bestruirui/octopus/internal/apperror"
 	"github.com/bestruirui/octopus/internal/model"
+	"github.com/bestruirui/octopus/internal/op"
 )
 
 const (
@@ -106,6 +107,32 @@ func TestResolveAnyRouterManagedAccessTokenFallsBackToSessionCookie(t *testing.T
 		if !strings.Contains(token, expected) {
 			t.Fatalf("expected returned session token to contain %q, got %q", expected, token)
 		}
+	}
+}
+
+func TestResolveAnyRouterManagedAccessTokenDecryptsStoredSessionCookie(t *testing.T) {
+	setupProjectTestDB(t)
+	if err := op.InitCache(); err != nil {
+		t.Fatalf("initialize settings cache: %v", err)
+	}
+	if err := op.SettingSetString(model.SettingKeyJWTSecret, "anyrouter-session-cookie-test"); err != nil {
+		t.Fatalf("set jwt secret: %v", err)
+	}
+	const cookie = "session=stored-cookie; auth_token=opaque"
+	encrypted, err := op.EncryptSecret(cookie)
+	if err != nil {
+		t.Fatalf("encrypt session cookie: %v", err)
+	}
+
+	token, err := resolveAnyRouterManagedAccessToken(context.Background(), nil, &model.SiteAccount{
+		CredentialType:         model.SiteCredentialTypeAccessToken,
+		SessionCookieEncrypted: encrypted,
+	})
+	if err != nil {
+		t.Fatalf("resolve encrypted session cookie: %v", err)
+	}
+	if token != cookie {
+		t.Fatalf("resolved cookie = %q, want %q", token, cookie)
 	}
 }
 

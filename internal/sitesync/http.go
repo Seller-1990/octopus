@@ -272,13 +272,13 @@ func formatSiteHTTPError(statusCode int, header http.Header, bodyBytes []byte) e
 	}
 	if payload, ok := parseSiteJSONMap(bodyBytes); ok {
 		if message := extractSiteResponseMessage(payload); message != "" {
-			return newSiteHTTPError(statusCode, message)
+			return newSiteHTTPErrorWithHeader(statusCode, message, header)
 		}
 	}
 	if summary := extractSiteHTMLResponseSummary(header.Get("Content-Type"), bodyBytes); summary != "" {
-		return newSiteHTTPError(statusCode, summary)
+		return newSiteHTTPErrorWithHeader(statusCode, summary, header)
 	}
-	return newSiteHTTPError(statusCode, "上游返回非 JSON 响应，无法解析为接口响应")
+	return newSiteHTTPErrorWithHeader(statusCode, "上游返回非 JSON 响应，无法解析为接口响应", header)
 }
 
 // IsCloudflareProtectionResponse 判断一次上游响应是否为 Cloudflare 防护拦截。
@@ -672,16 +672,16 @@ func buildManagedAuthHeaders(accessToken string) []map[string]string {
 	return candidates
 }
 
-func looksLikeCookieToken(token string) bool {
-	trimmed := strings.TrimSpace(token)
-	lowered := strings.ToLower(trimmed)
-	if trimmed == "" || strings.HasPrefix(lowered, "bearer ") {
-		return false
-	}
-	if strings.Contains(trimmed, ";") {
+func managedSessionRequestAvailable(ctx context.Context, accessToken string) bool {
+	if strings.TrimSpace(accessToken) != "" {
 		return true
 	}
-	return strings.Contains(trimmed, "=") && !strings.Contains(trimmed, " ")
+	_, ok := verificationBrowserTransportFromContext(ctx)
+	return ok
+}
+
+func looksLikeCookieToken(token string) bool {
+	return model.IsSiteCookieCredential(token)
 }
 
 func shouldTryAlternativeManagedAuth(err error) bool {

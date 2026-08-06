@@ -73,6 +73,10 @@ func exportExtendedLogTables(conn *gorm.DB, dump *model.DBDump) error {
 func sanitizeSiteAccountsForBackup(accounts []model.SiteAccount) {
 	for index := range accounts {
 		account := &accounts[index]
+		if model.IsSiteCookieCredential(account.AccessToken) {
+			account.AccessToken = ""
+		}
+		account.SessionCookieEncrypted = ""
 		account.VerificationCookieEncrypted = ""
 		account.VerificationSessionFenceID = 0
 		account.VerificationUserAgent = ""

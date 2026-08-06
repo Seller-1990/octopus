@@ -259,6 +259,10 @@ export function AccountEditDialog({ open, onOpenChange, site, account }: Account
                 toast.error(tForm('nameRequired'));
                 return;
             }
+            const canPreserveStoredSessionCookie =
+                account?.credential_type === SiteCredentialType.AccessToken &&
+                accountForm.credential_type === SiteCredentialType.AccessToken &&
+                Boolean(account.has_stored_session_cookie);
 
             if (accountForm.credential_type === SiteCredentialType.UsernamePassword) {
                 if (!accountForm.username.trim() || !accountForm.password.trim()) {
@@ -268,7 +272,8 @@ export function AccountEditDialog({ open, onOpenChange, site, account }: Account
             }
             if (
                 accountForm.credential_type === SiteCredentialType.AccessToken &&
-                !accountForm.access_token.trim()
+                !accountForm.access_token.trim() &&
+                !canPreserveStoredSessionCookie
             ) {
                 toast.error(tForm('accessTokenRequired'));
                 return;
@@ -351,6 +356,10 @@ export function AccountEditDialog({ open, onOpenChange, site, account }: Account
                 accountForm.credential_type === SiteCredentialType.UsernamePassword;
             const isAccessToken =
                 accountForm.credential_type === SiteCredentialType.AccessToken;
+            const preservesStoredSessionCookie =
+                isAccessToken &&
+                !trimmedAccessToken &&
+                canPreserveStoredSessionCookie;
 
             if (accountForm.proxy_mode === 'pool' && !accountForm.proxy_config_id) {
                 toast.error(tProxy('selectRequired'));
@@ -363,7 +372,7 @@ export function AccountEditDialog({ open, onOpenChange, site, account }: Account
                 credential_type: accountForm.credential_type,
                 username: isUsernamePassword ? accountForm.username.trim() : '',
                 password: isUsernamePassword ? accountForm.password.trim() : '',
-                access_token: trimmedAccessToken,
+                ...(preservesStoredSessionCookie ? {} : { access_token: trimmedAccessToken }),
                 api_key: trimmedAPIKey,
                 refresh_token: isAccessToken ? accountForm.refresh_token.trim() : '',
                 token_expires_at: isAccessToken ? parsedTokenExpiresAt : 0,
@@ -391,7 +400,10 @@ export function AccountEditDialog({ open, onOpenChange, site, account }: Account
                     await updateSiteAccount.mutateAsync({ id: account.id, ...payload });
                     toast.success(tForm('updated'));
                 } else {
-                    await createSiteAccount.mutateAsync(payload);
+                    await createSiteAccount.mutateAsync({
+                        ...payload,
+                        access_token: trimmedAccessToken,
+                    });
                     toast.success(tForm('created'));
                 }
                 onOpenChange(false);

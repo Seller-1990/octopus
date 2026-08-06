@@ -159,6 +159,32 @@ func TestRequestJSONDetectsCloudflareAttentionRequired(t *testing.T) {
 	}
 }
 
+func TestParseSiteRetryAfterSupportsHTTPDate(t *testing.T) {
+	retryAt := time.Now().Add(30 * time.Second).UTC().Truncate(time.Second)
+	delay := parseSiteRetryAfter(retryAt.Format(http.TimeFormat))
+	if delay < 28*time.Second || delay > 30*time.Second {
+		t.Fatalf("unexpected HTTP-date retry delay: %s", delay)
+	}
+	if got := parseSiteRetryAfter(time.Now().Add(-time.Minute).UTC().Format(http.TimeFormat)); got != 0 {
+		t.Fatalf("past Retry-After should be ignored, got %s", got)
+	}
+}
+
+func TestRequestJSONCarriesOrdinaryRetryAfter(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Retry-After", "3")
+		w.WriteHeader(http.StatusTooManyRequests)
+		_, _ = w.Write([]byte(`{"message":"slow down"}`))
+	}))
+	defer server.Close()
+
+	_, err := requestJSON(context.Background(), &model.Site{BaseURL: server.URL}, http.MethodGet, server.URL, nil, nil)
+	if err == nil || siteErrorRetryAfter(err) != 3*time.Second {
+		t.Fatalf("ordinary HTTP error lost Retry-After: %v", err)
+	}
+}
+
 func TestRequestJSONDetectsCloudflareAcrossChallengeStatuses(t *testing.T) {
 	for _, statusCode := range []int{
 		http.StatusOK,

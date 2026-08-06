@@ -13,19 +13,21 @@ import (
 )
 
 type syncSnapshot struct {
-	accessToken   string
-	groups        []model.SiteUserGroup
-	tokens        []model.SiteToken
-	models        []model.SiteModel
-	groupResults  []siteGroupSyncResult
-	status        model.SiteExecutionStatus
-	balance       float64
-	balanceUsed   float64
-	todayIncome   float64
-	message       string
-	proxyMode     model.ProxyUsageMode
-	proxyConfigID *int
-	clashNode     string
+	accessToken        string
+	credentialRevision int64
+	persistCredential  bool
+	groups             []model.SiteUserGroup
+	tokens             []model.SiteToken
+	models             []model.SiteModel
+	groupResults       []siteGroupSyncResult
+	status             model.SiteExecutionStatus
+	balance            float64
+	balanceUsed        float64
+	todayIncome        float64
+	message            string
+	proxyMode          model.ProxyUsageMode
+	proxyConfigID      *int
+	clashNode          string
 }
 
 type siteBatchAccount struct {
@@ -42,7 +44,7 @@ func SyncAccount(ctx context.Context, accountID int) (*model.SiteSyncResult, err
 	snapshot, syncErr := syncAccountStateWithRecovery(ctx, siteRecord, account)
 	if snapshot == nil && syncErr != nil {
 		message := sanitizeSiteStatusMessage(syncErr)
-		updateErr := updateAccountSyncState(ctx, account.ID, model.SiteExecutionStatusFailed, message, "")
+		updateErr := updateAccountSyncState(ctx, account.ID, model.SiteExecutionStatusFailed, message)
 		if updateErr != nil {
 			log.Warnf("failed to update site account sync state (account=%d): %v", account.ID, updateErr)
 		}
@@ -103,13 +105,7 @@ func SyncAccount(ctx context.Context, accountID int) (*model.SiteSyncResult, err
 			result.Status = model.SiteExecutionStatusPartial
 		}
 		result.Message = message
-		if updateErr := updateAccountSyncState(
-			ctx,
-			account.ID,
-			result.Status,
-			message,
-			snapshot.accessToken,
-		); updateErr != nil {
+		if updateErr := updateAccountSyncState(ctx, account.ID, result.Status, message); updateErr != nil {
 			log.Warnf("failed to persist partial catalog sync state (account=%d): %v", account.ID, updateErr)
 		}
 		return result, sanitizeSiteError(catalogErr)

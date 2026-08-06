@@ -224,6 +224,10 @@ type SiteAccount struct {
 	APIKey                      string             `json:"api_key"`
 	RefreshToken                string             `json:"refresh_token"`
 	TokenExpiresAt              int64              `json:"token_expires_at" gorm:"default:0"`
+	SessionCookieEncrypted      string             `json:"-" gorm:"type:text"`
+	CredentialRevision          int64              `json:"-" gorm:"not null;default:0"`
+	LastAuthFailureClass        string             `json:"last_auth_failure_class,omitempty" gorm:"size:64"`
+	LastAuthFailureAt           *time.Time         `json:"last_auth_failure_at,omitempty"`
 	PlatformUserID              *int               `json:"platform_user_id"`
 	ProxyMode                   ProxyUsageMode     `json:"proxy_mode" gorm:"type:varchar(16);not null;default:'inherit'"`
 	ProxyConfigID               *int               `json:"proxy_config_id"`
@@ -263,6 +267,29 @@ type SiteAccount struct {
 	UserGroups                 []SiteUserGroup      `json:"user_groups,omitempty" gorm:"foreignKey:SiteAccountID"`
 	Models                     []SiteModel          `json:"models,omitempty" gorm:"foreignKey:SiteAccountID"`
 	ChannelBindings            []SiteChannelBinding `json:"channel_bindings,omitempty" gorm:"foreignKey:SiteAccountID"`
+}
+
+func (a SiteAccount) MarshalJSON() ([]byte, error) {
+	type alias SiteAccount
+	return json.Marshal(struct {
+		alias
+		HasStoredSessionCookie bool `json:"has_stored_session_cookie"`
+	}{
+		alias:                  alias(a),
+		HasStoredSessionCookie: a.SessionCookieEncrypted != "",
+	})
+}
+
+func IsSiteCookieCredential(value string) bool {
+	trimmed := strings.TrimSpace(value)
+	lowered := strings.ToLower(trimmed)
+	if trimmed == "" || strings.HasPrefix(lowered, "bearer ") {
+		return false
+	}
+	if strings.Contains(trimmed, ";") {
+		return true
+	}
+	return strings.Contains(trimmed, "=") && !strings.Contains(trimmed, " ")
 }
 
 func (a *SiteAccount) UnmarshalJSON(data []byte) error {
@@ -1071,7 +1098,7 @@ func (a *SiteAccount) Validate() error {
 			return fmt.Errorf("username and password are required")
 		}
 	case SiteCredentialTypeAccessToken:
-		if a.AccessToken == "" {
+		if a.AccessToken == "" && a.SessionCookieEncrypted == "" {
 			return fmt.Errorf("access token is required")
 		}
 	case SiteCredentialTypeAPIKey:

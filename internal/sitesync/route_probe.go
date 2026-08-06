@@ -177,7 +177,7 @@ func detectManagedRoutesFromPath(
 		detections = mergeSiteModelRouteDetections(detections, collector(payload, source, modelFilter))
 	}
 
-	if strings.TrimSpace(accessToken) != "" {
+	if managedSessionRequestAvailable(ctx, accessToken) {
 		if payload, err := requestJSONWithManagedAccessToken(
 			ctx,
 			siteRecord,
@@ -233,7 +233,7 @@ func detectAnyRouterPricingRoutes(
 	modelFilter map[string]struct{},
 ) map[string]siteModelRouteDetection {
 	token := strings.TrimSpace(accessToken)
-	if token == "" || siteRecord == nil || account == nil {
+	if !managedSessionRequestAvailable(ctx, token) || siteRecord == nil || account == nil {
 		return nil
 	}
 

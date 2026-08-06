@@ -1,14 +1,63 @@
 package sitesync
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 
 	dbpkg "github.com/bestruirui/octopus/internal/db"
 	"github.com/bestruirui/octopus/internal/model"
 	"github.com/bestruirui/octopus/internal/op"
 )
+
+func TestRefreshSitePricingUsesBrowserSessionWithoutExtractedToken(t *testing.T) {
+	ctx := setupProjectTestDB(t)
+	var directCalls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		directCalls.Add(1)
+		w.WriteHeader(http.StatusBadGateway)
+	}))
+	defer server.Close()
+
+	site := model.Site{Name: "Browser Pricing Site", Platform: model.SitePlatformNewAPI, BaseURL: server.URL, Enabled: true}
+	if err := op.SiteCreate(&site, ctx); err != nil {
+		t.Fatalf("create site: %v", err)
+	}
+	account := model.SiteAccount{
+		SiteID: site.ID, Name: "Browser Pricing Account",
+		CredentialType: model.SiteCredentialTypeUsernamePassword,
+		Username:       "browser-user", Password: "password", Enabled: true,
+	}
+	if err := op.SiteAccountCreate(&account, ctx); err != nil {
+		t.Fatalf("create account: %v", err)
+	}
+
+	var browserCalls atomic.Int32
+	browserCtx := withVerificationBrowserTransport(
+		ctx,
+		op.VerificationBrowserBinding{PairingID: 27, TaskID: 28, SessionID: 29, TargetURL: server.URL},
+		func(_ context.Context, request op.VerificationBrowserRequestInput) (*op.VerificationBrowserResponse, error) {
+			browserCalls.Add(1)
+			if request.URL != server.URL+"/api/pricing" {
+				t.Fatalf("unexpected browser pricing URL: %s", request.URL)
+			}
+			return &op.VerificationBrowserResponse{
+				Status:  http.StatusOK,
+				Headers: map[string]string{"content-type": "application/json"},
+				Body:    `{"group_ratio":{},"data":[]}`,
+			}, nil
+		},
+	)
+
+	if err := refreshSitePricingQuotes(browserCtx, &site, &account, ""); err != nil {
+		t.Fatalf("refresh pricing through browser session: %v", err)
+	}
+	if browserCalls.Load() != 1 || directCalls.Load() != 0 {
+		t.Fatalf("pricing did not stay on browser transport: browser=%d direct=%d", browserCalls.Load(), directCalls.Load())
+	}
+}
 
 func TestParseSitePricingQuotesAppliesGroupMultiplierOnlyInResolver(t *testing.T) {
 	payload := map[string]any{

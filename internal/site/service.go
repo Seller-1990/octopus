@@ -36,6 +36,10 @@ func SyncAccountsWithOptions(ctx context.Context, accountIDs []int, opts sitesyn
 	return sitesync.SyncAccountsWithOptions(ctx, accountIDs, opts)
 }
 
+func RefreshDueSub2APIAccounts(ctx context.Context, workerLimit int) (sitesync.Sub2APIRefreshSummary, error) {
+	return sitesync.RefreshDueSub2APIAccounts(ctx, workerLimit)
+}
+
 func CheckinAll(ctx context.Context) {
 	sitesync.CheckinAll(ctx)
 }
