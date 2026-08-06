@@ -38,7 +38,9 @@ type wsRelayResult struct {
 // HandleWSResponse handles WebSocket upgrade for /v1/responses.
 func HandleWSResponse(c *gin.Context) {
 	conn, err := websocket.Accept(c.Writer, c.Request, &websocket.AcceptOptions{
-		InsecureSkipVerify: true, // Allow cross-origin
+		// 内网信域部署：允许任意 Origin 跨域升级 WS。
+		// 若未来暴露到公网，须改为校验 Origin 白名单，不能保持全放开。
+		InsecureSkipVerify: true,
 	})
 	if err != nil {
 		log.Warnf("websocket upgrade failed: %v", err)
@@ -169,8 +171,6 @@ func processWSResponseCreate(
 		}
 		delete(reqBody, "generate")
 	}
-
-	injectWSPreviousResponseID(reqBody, conversationState)
 
 	// Force stream mode
 	reqBody["stream"] = json.RawMessage("true")
@@ -708,11 +708,6 @@ func finalizeWSRelay(ctx context.Context, conn *websocket.Conn, req *relayReques
 	}
 	writeWSError(ctx, conn, 502, "all_channels_failed", "All channels failed")
 	return result
-}
-
-func injectWSPreviousResponseID(reqBody map[string]json.RawMessage, state *wsConversationState) {
-	// Local continuation now prefers exact replay over implicit previous_response_id injection.
-	// Explicit client-supplied previous_response_id is still preserved elsewhere.
 }
 
 func rewriteWSPreviousResponseID(reqBody map[string]json.RawMessage, state *wsConversationState) {

@@ -54,12 +54,15 @@ func FetchModels(ctx context.Context, request model.Channel) ([]string, error) {
 
 // refer: https://platform.openai.com/docs/api-reference/models/list
 func fetchOpenAIModels(client *http.Client, ctx context.Context, request model.Channel) ([]string, error) {
-	req, _ := http.NewRequestWithContext(
+	req, err := http.NewRequestWithContext(
 		ctx,
 		http.MethodGet,
 		request.GetBaseUrl()+"/models",
 		nil,
 	)
+	if err != nil {
+		return nil, err
+	}
 	applyDefaultModelRequestHeaders(req, request)
 	req.Header.Set("Authorization", "Bearer "+request.GetChannelKey().ChannelKey)
 
@@ -87,12 +90,15 @@ func fetchGeminiModels(client *http.Client, ctx context.Context, request model.C
 	pageToken := ""
 
 	for {
-		req, _ := http.NewRequestWithContext(
+		req, err := http.NewRequestWithContext(
 			ctx,
 			http.MethodGet,
 			request.GetBaseUrl()+"/models",
 			nil,
 		)
+		if err != nil {
+			return nil, err
+		}
 		applyDefaultModelRequestHeaders(req, request)
 		req.Header.Set("X-Goog-Api-Key", request.GetChannelKey().ChannelKey)
 		if pageToken != "" {
@@ -134,12 +140,15 @@ func fetchAnthropicModels(client *http.Client, ctx context.Context, request mode
 	var allModels []string
 	var afterID string
 	for {
-		req, _ := http.NewRequestWithContext(
+		req, err := http.NewRequestWithContext(
 			ctx,
 			http.MethodGet,
 			request.GetBaseUrl()+"/models",
 			nil,
 		)
+		if err != nil {
+			return nil, err
+		}
 		applyDefaultModelRequestHeaders(req, request)
 		req.Header.Set("X-Api-Key", request.GetChannelKey().ChannelKey)
 		req.Header.Set("Anthropic-Version", "2023-06-01")
@@ -177,10 +186,9 @@ func fetchAnthropicModels(client *http.Client, ctx context.Context, request mode
 	return allModels, nil
 }
 
+// applyDefaultModelRequestHeaders 为模型拉取请求设置默认头。
+// 前置条件：req 非 nil（调用方须先处理 NewRequestWithContext 的错误）。
 func applyDefaultModelRequestHeaders(req *http.Request, request model.Channel) {
-	if req == nil {
-		return
-	}
 	if req.Header.Get("User-Agent") == "" {
 		req.Header.Set("User-Agent", modelFetchUserAgent)
 	}

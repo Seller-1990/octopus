@@ -103,7 +103,6 @@ func InitDB(dbType, dsn string, debug bool) error {
 		&model.SiteModelPriceQuote{},
 		&model.CurrencyRate{},
 		&model.ClashController{},
-		&model.ClashSwitchLease{},
 		&model.SiteProxyPreference{},
 		&model.SiteOperationAttempt{},
 		&model.VerificationSession{},

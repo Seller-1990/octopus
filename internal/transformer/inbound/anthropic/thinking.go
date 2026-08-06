@@ -11,10 +11,3 @@ func thinkingBudgetToReasoningEffort(budgetTokens int64) string {
 		return EffortHigh
 	}
 }
-
-// getDefaultReasoningEffortMapping returns the default mapping from ReasoningEffort to thinking budget tokens.
-var defaultReasoningEffortMapping = map[string]int64{
-	EffortLow:    5000,
-	EffortMedium: 15000,
-	EffortHigh:   30000,
-}

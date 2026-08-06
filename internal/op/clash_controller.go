@@ -16,7 +16,6 @@ import (
 
 	"github.com/bestruirui/octopus/internal/db"
 	"github.com/bestruirui/octopus/internal/model"
-	"github.com/bestruirui/octopus/internal/utils/log"
 	"gorm.io/gorm"
 )
 
@@ -38,8 +37,6 @@ type ClashGroupState struct {
 var clashControllerLocks sync.Map
 
 const (
-	clashSwitchLeaseTTL        = 90 * time.Second
-	clashSwitchLeaseRetryDelay = 50 * time.Millisecond
 	clashSwitchConfirmAttempts = 5
 	clashSwitchConfirmDelay    = 100 * time.Millisecond
 	clashControllerHTTPTimeout = 15 * time.Second
@@ -290,6 +287,9 @@ func switchClashNode(ctx context.Context, controller *model.ClashController, nod
 	return nil
 }
 
+// acquireClashOperationGuard 对单个控制器的切换操作加进程内互斥锁。
+// 本项目为单实例部署，进程内互斥已保证并发安全，无需跨实例 DB 租约；
+// 若未来改为多实例部署，需在此恢复分布式锁（见 git 历史 clashSwitchLease 实现）。
 func acquireClashOperationGuard(
 	ctx context.Context,
 	controller *model.ClashController,
@@ -306,95 +306,12 @@ func acquireClashOperationGuard(
 		return nil, ctx.Err()
 	case <-lock:
 	}
-	lease, err := acquireClashSwitchLease(ctx, controller)
-	if err != nil {
-		lock <- struct{}{}
-		return nil, err
-	}
 	var once sync.Once
 	return func() {
 		once.Do(func() {
-			releaseCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			defer cancel()
-			if err := releaseClashSwitchLease(releaseCtx, lease); err != nil {
-				log.Warnw(
-					"release clash switch lease failed",
-					"lease_key", lease.key,
-					"error", err,
-				)
-			}
 			lock <- struct{}{}
 		})
 	}, nil
-}
-
-type clashSwitchLeaseHandle struct {
-	key   string
-	owner string
-}
-
-func acquireClashSwitchLease(
-	ctx context.Context,
-	controller *model.ClashController,
-) (*clashSwitchLeaseHandle, error) {
-	if controller == nil || controller.ID <= 0 {
-		return nil, fmt.Errorf("clash controller is required")
-	}
-	owner, err := randomHexToken(24)
-	if err != nil {
-		return nil, err
-	}
-	key := fmt.Sprintf("%d:%s", controller.ID, strings.ToLower(strings.TrimSpace(controller.GroupName)))
-	for {
-		now := time.Now()
-		expiresAt := now.Add(clashSwitchLeaseTTL)
-		result := db.GetDB().WithContext(ctx).Model(&model.ClashSwitchLease{}).
-			Where("lease_key = ? AND expires_at <= ?", key, now).
-			Updates(map[string]any{
-				"owner_token": owner,
-				"expires_at":  expiresAt,
-				"updated_at":  now,
-			})
-		if result.Error != nil {
-			return nil, result.Error
-		}
-		if result.RowsAffected == 1 {
-			return &clashSwitchLeaseHandle{key: key, owner: owner}, nil
-		}
-
-		lease := model.ClashSwitchLease{
-			LeaseKey: key, OwnerToken: owner, ExpiresAt: expiresAt, UpdatedAt: now,
-		}
-		if createErr := db.GetDB().WithContext(ctx).Create(&lease).Error; createErr == nil {
-			return &clashSwitchLeaseHandle{key: key, owner: owner}, nil
-		} else {
-			var count int64
-			if countErr := db.GetDB().WithContext(ctx).Model(&model.ClashSwitchLease{}).
-				Where("lease_key = ?", key).Count(&count).Error; countErr != nil {
-				return nil, createErr
-			}
-			if count == 0 {
-				return nil, createErr
-			}
-		}
-
-		timer := time.NewTimer(clashSwitchLeaseRetryDelay)
-		select {
-		case <-ctx.Done():
-			timer.Stop()
-			return nil, ctx.Err()
-		case <-timer.C:
-		}
-	}
-}
-
-func releaseClashSwitchLease(ctx context.Context, lease *clashSwitchLeaseHandle) error {
-	if lease == nil {
-		return nil
-	}
-	return db.GetDB().WithContext(ctx).
-		Where("lease_key = ? AND owner_token = ?", lease.key, lease.owner).
-		Delete(&model.ClashSwitchLease{}).Error
 }
 
 func randomHexToken(size int) (string, error) {

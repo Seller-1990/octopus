@@ -77,15 +77,6 @@ func (r *Route) Validate() error {
 	return nil
 }
 
-// GetRouterCount returns the total count of registered routes
-func GetRouterCount() int {
-	count := 0
-	for _, router := range registeredRouters {
-		count += len(router.Routes)
-	}
-	return count
-}
-
 // RegisterAll registers all globally registered route groups to the Gin engine
 func RegisterAll(engine *gin.Engine) error {
 	for _, router := range registeredRouters {
