@@ -3,7 +3,7 @@
 > 生成日期：2026-08-06
 > 范围：`internal/relay/`、`internal/sitesync/`、`internal/op/`（验证/离群/备份/任务）、`internal/transformer/`、`internal/server/`（middleware/auth）、`internal/client|helper|grouphealth|globalprice|outlierwindow|update|webdav|utils|conf/`
 > 方法：全量源码通读 + 全仓 grep 调用方/测试引用；判定标准：基础合同不可删（认证边界、凭据加密脱敏、CAS/事务一致性、context cancellation、真实输入校验、关键错误分类、可观测性）
-> 状态：**执行中**（2026-08-06 已在 feature/slim-pr0 分支执行，见下方"执行记录"）
+> 状态：**执行完毕**（2026-08-06，feature/slim-pr0；条件裁剪 6 类经用户确认全部保留）
 
 ---
 
@@ -22,7 +22,7 @@
 | 缺口修复 2 | ✅ | `helper/fetch.go` 3 处 NewRequest 错误传播；`applyDefaultModelRequestHeaders` 删除不可达的 `req==nil` 检查（加前置条件注释） |
 | 缺口修复 3 | ✅ | `ws_client.go` InsecureSkipVerify 加内网信域决策注释 |
 | 缺口修复 4 | ✅ | `stream/processor.go` `terminalEventFromSSE` 改用 `StreamConfig.MaxEventSize`（3 处生产调用传入 `maxSSEEventSize`，0=默认 32MB 不变） |
-| 条件裁剪 6 类 | ⏸️ 待用户按部署形态确认 | /images、route_learning、CF 链、浏览器验证、POR、Clash（见第三章） |
+| 条件裁剪 6 类 | ✅ **用户确认全部保留**（2026-08-06） | /images、route_learning、CF 链、浏览器验证、POR、Clash 均保留——已全部满足"不配置即零成本"（事件驱动/开关化），删除属特性移除不可逆，保留作保险丝 |
 | P2/P3 重构项 | ⏸️ 未执行 | 流实现统一、双心跳合并、首字超时统一、7 处关键字分类收敛等属重构级，逐个 PR 单独 review |
 
 ---
