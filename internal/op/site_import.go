@@ -29,6 +29,7 @@ type importedAccountInput struct {
 	Username       string
 	Password       string
 	AccessToken    string
+	SessionCookie  string
 	APIKey         string
 	RefreshToken   string
 	TokenExpiresAt int64
@@ -104,6 +105,7 @@ func SiteImportAllAPIHub(ctx context.Context, body []byte) (*model.AllAPIHubImpo
 	createdSiteIDs := make(map[int]struct{})
 	reusedSiteIDs := make(map[int]struct{})
 	syncAccountIDs := make(map[int]struct{})
+	var revokedVerificationSessionIDs []int64
 
 	if err := db.GetDB().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		for _, input := range inputs {
@@ -117,7 +119,7 @@ func SiteImportAllAPIHub(ctx context.Context, body []byte) (*model.AllAPIHubImpo
 				reusedSiteIDs[siteRecord.ID] = struct{}{}
 			}
 
-			accountRecord, createdAccount, updatedAccount, err := upsertImportedAccount(tx, siteRecord, input)
+			accountRecord, createdAccount, updatedAccount, err := upsertImportedAccount(tx, siteRecord, input, &revokedVerificationSessionIDs)
 			if err != nil {
 				return err
 			}
@@ -135,6 +137,10 @@ func SiteImportAllAPIHub(ctx context.Context, body []byte) (*model.AllAPIHubImpo
 	}); err != nil {
 		return nil, nil, wrapSiteImportPersistFailedError(err)
 	}
+	cancelVerificationBrowserSessions(
+		revokedVerificationSessionIDs,
+		fmt.Errorf("verification account credentials were replaced by import"),
+	)
 
 	result.CreatedSites = len(createdSiteIDs)
 	result.ReusedSites = len(reusedSiteIDs)
@@ -172,6 +178,7 @@ func SiteImportMetAPI(ctx context.Context, body []byte) (*model.MetAPIImportResu
 	}
 	createdSiteIDs := make(map[int]struct{})
 	reusedSiteIDs := make(map[int]struct{})
+	var revokedVerificationSessionIDs []int64
 
 	if err := db.GetDB().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		for _, input := range inputs {
@@ -185,7 +192,7 @@ func SiteImportMetAPI(ctx context.Context, body []byte) (*model.MetAPIImportResu
 				reusedSiteIDs[siteRecord.ID] = struct{}{}
 			}
 
-			accountRecord, createdAccount, updatedAccount, err := upsertImportedAccount(tx, siteRecord, input.Input)
+			accountRecord, createdAccount, updatedAccount, err := upsertImportedAccount(tx, siteRecord, input.Input, &revokedVerificationSessionIDs)
 			if err != nil {
 				return err
 			}
@@ -209,6 +216,10 @@ func SiteImportMetAPI(ctx context.Context, body []byte) (*model.MetAPIImportResu
 	}); err != nil {
 		return nil, wrapSiteImportPersistFailedError(err)
 	}
+	cancelVerificationBrowserSessions(
+		revokedVerificationSessionIDs,
+		fmt.Errorf("verification account credentials were replaced by import"),
+	)
 
 	result.CreatedSites = len(createdSiteIDs)
 	result.ReusedSites = len(reusedSiteIDs)
@@ -567,8 +578,8 @@ func parseAllAPIHubAccountRow(row rawImportObject) (importedAccountInput, string
 		if cookieSession == "" {
 			return importedAccountInput{}, fmt.Sprintf("跳过 ALL-API-Hub 账号 %s：cookieAuth.sessionCookie 缺失", rowID), false
 		}
-		input.CredentialType = model.SiteCredentialTypeAccessToken
-		input.AccessToken = cookieSession
+		input.CredentialType = model.SiteCredentialTypeCookie
+		input.SessionCookie = cookieSession
 	case "access_token", "session":
 		if accessTokenCandidate == "" {
 			return importedAccountInput{}, fmt.Sprintf("跳过 ALL-API-Hub 账号 %s：access_token 缺失", rowID), false
@@ -590,6 +601,9 @@ func parseAllAPIHubAccountRow(row rawImportObject) (importedAccountInput, string
 		input.AutoCheckin = false
 	default:
 		return importedAccountInput{}, fmt.Sprintf("跳过 ALL-API-Hub 账号 %s：authType=%s 不支持离线导入", rowID, firstNonEmptyString(authType, "unknown")), false
+	}
+	if err := validateSiteCredentialForPlatform(platform, input.CredentialType); err != nil {
+		return importedAccountInput{}, fmt.Sprintf("跳过 ALL-API-Hub 账号 %s：%v", rowID, err), false
 	}
 
 	return input, "", true
@@ -811,7 +825,7 @@ func uniqueSiteName(tx *gorm.DB, baseName string) string {
 	}
 }
 
-func upsertImportedAccount(tx *gorm.DB, siteRecord *model.Site, input importedAccountInput) (*model.SiteAccount, bool, bool, error) {
+func upsertImportedAccount(tx *gorm.DB, siteRecord *model.Site, input importedAccountInput, revokedVerificationSessionIDs *[]int64) (*model.SiteAccount, bool, bool, error) {
 	accountRecord, err := findImportedAccount(tx, siteRecord.ID, input)
 	if err != nil {
 		return nil, false, false, err
@@ -820,6 +834,13 @@ func upsertImportedAccount(tx *gorm.DB, siteRecord *model.Site, input importedAc
 	proxyMode, proxyConfigID, err := importedAccountProxyMode(tx, input.AccountProxy)
 	if err != nil {
 		return nil, false, false, err
+	}
+	sessionCookieEncrypted := ""
+	if strings.TrimSpace(input.SessionCookie) != "" {
+		sessionCookieEncrypted, err = EncryptSecret(input.SessionCookie)
+		if err != nil {
+			return nil, false, false, fmt.Errorf("encrypt imported site session cookie: %w", err)
+		}
 	}
 
 	if accountRecord == nil {
@@ -830,6 +851,8 @@ func upsertImportedAccount(tx *gorm.DB, siteRecord *model.Site, input importedAc
 			Username:                   strings.TrimSpace(input.Username),
 			Password:                   strings.TrimSpace(input.Password),
 			AccessToken:                strings.TrimSpace(input.AccessToken),
+			SessionCookieEncrypted:     sessionCookieEncrypted,
+			CredentialRevision:         1,
 			APIKey:                     strings.TrimSpace(input.APIKey),
 			RefreshToken:               strings.TrimSpace(input.RefreshToken),
 			TokenExpiresAt:             input.TokenExpiresAt,
@@ -856,6 +879,8 @@ func upsertImportedAccount(tx *gorm.DB, siteRecord *model.Site, input importedAc
 			"username":                      created.Username,
 			"password":                      created.Password,
 			"access_token":                  created.AccessToken,
+			"session_cookie_encrypted":      created.SessionCookieEncrypted,
+			"credential_revision":           created.CredentialRevision,
 			"api_key":                       created.APIKey,
 			"refresh_token":                 created.RefreshToken,
 			"token_expires_at":              created.TokenExpiresAt,
@@ -892,6 +917,7 @@ func upsertImportedAccount(tx *gorm.DB, siteRecord *model.Site, input importedAc
 	merged.Username = strings.TrimSpace(input.Username)
 	merged.Password = strings.TrimSpace(input.Password)
 	merged.AccessToken = strings.TrimSpace(input.AccessToken)
+	merged.SessionCookieEncrypted = sessionCookieEncrypted
 	merged.APIKey = strings.TrimSpace(input.APIKey)
 	merged.RefreshToken = strings.TrimSpace(input.RefreshToken)
 	merged.TokenExpiresAt = input.TokenExpiresAt
@@ -900,42 +926,74 @@ func upsertImportedAccount(tx *gorm.DB, siteRecord *model.Site, input importedAc
 	merged.ProxyConfigID = proxyConfigID
 	merged.AccountProxy = nil
 	merged.AutoCheckin = input.AutoCheckin
+	credentialsChanged, err := importedAccountCredentialsChanged(accountRecord, input)
+	if err != nil {
+		return nil, false, false, err
+	}
+	if !credentialsChanged {
+		merged.SessionCookieEncrypted = accountRecord.SessionCookieEncrypted
+	}
 	if err := merged.Validate(); err != nil {
 		return nil, false, false, err
 	}
 
 	updates := map[string]any{
-		"name":             merged.Name,
-		"credential_type":  merged.CredentialType,
-		"username":         merged.Username,
-		"password":         merged.Password,
-		"access_token":     merged.AccessToken,
-		"api_key":          merged.APIKey,
-		"refresh_token":    merged.RefreshToken,
-		"token_expires_at": merged.TokenExpiresAt,
-		"platform_user_id": merged.PlatformUserID,
-		"proxy_mode":       merged.ProxyMode,
-		"proxy_config_id":  merged.ProxyConfigID,
-		"account_proxy":    merged.AccountProxy,
-		"auto_checkin":     merged.AutoCheckin,
+		"name":                     merged.Name,
+		"credential_type":          merged.CredentialType,
+		"username":                 merged.Username,
+		"password":                 merged.Password,
+		"access_token":             merged.AccessToken,
+		"session_cookie_encrypted": merged.SessionCookieEncrypted,
+		"api_key":                  merged.APIKey,
+		"refresh_token":            merged.RefreshToken,
+		"token_expires_at":         merged.TokenExpiresAt,
+		"platform_user_id":         merged.PlatformUserID,
+		"proxy_mode":               merged.ProxyMode,
+		"proxy_config_id":          merged.ProxyConfigID,
+		"account_proxy":            merged.AccountProxy,
+		"auto_checkin":             merged.AutoCheckin,
+	}
+	if credentialsChanged {
+		sessionIDs, err := clearVerificationSessionsForAccountTx(tx, accountRecord.ID)
+		if err != nil {
+			return nil, false, false, fmt.Errorf("clear prior verification sessions for imported account: %w", err)
+		}
+		if revokedVerificationSessionIDs != nil {
+			*revokedVerificationSessionIDs = append(*revokedVerificationSessionIDs, sessionIDs...)
+		}
+		updates["credential_revision"] = gorm.Expr("credential_revision + 1")
 	}
 	if err := tx.Model(&model.SiteAccount{}).Where("id = ?", accountRecord.ID).Updates(updates).Error; err != nil {
 		return nil, false, false, fmt.Errorf("update site account failed: %w", err)
 	}
-	accountRecord.Name = merged.Name
-	accountRecord.CredentialType = merged.CredentialType
-	accountRecord.Username = merged.Username
-	accountRecord.Password = merged.Password
-	accountRecord.AccessToken = merged.AccessToken
-	accountRecord.APIKey = merged.APIKey
-	accountRecord.RefreshToken = merged.RefreshToken
-	accountRecord.TokenExpiresAt = merged.TokenExpiresAt
-	accountRecord.PlatformUserID = merged.PlatformUserID
-	accountRecord.ProxyMode = merged.ProxyMode
-	accountRecord.ProxyConfigID = merged.ProxyConfigID
-	accountRecord.AccountProxy = merged.AccountProxy
-	accountRecord.AutoCheckin = merged.AutoCheckin
+	if err := tx.First(accountRecord, accountRecord.ID).Error; err != nil {
+		return nil, false, false, fmt.Errorf("reload updated site account failed: %w", err)
+	}
 	return accountRecord, false, true, nil
+}
+
+func importedAccountCredentialsChanged(account *model.SiteAccount, input importedAccountInput) (bool, error) {
+	if account == nil {
+		return true, nil
+	}
+	if account.CredentialType != input.CredentialType ||
+		account.Username != strings.TrimSpace(input.Username) ||
+		account.Password != strings.TrimSpace(input.Password) ||
+		account.AccessToken != strings.TrimSpace(input.AccessToken) ||
+		account.APIKey != strings.TrimSpace(input.APIKey) ||
+		account.RefreshToken != strings.TrimSpace(input.RefreshToken) ||
+		account.TokenExpiresAt != input.TokenExpiresAt {
+		return true, nil
+	}
+	existingCookie := ""
+	if account.SessionCookieEncrypted != "" {
+		decrypted, err := DecryptSecret(account.SessionCookieEncrypted)
+		if err != nil {
+			return false, fmt.Errorf("decrypt imported site session cookie: %w", err)
+		}
+		existingCookie = strings.TrimSpace(decrypted)
+	}
+	return existingCookie != strings.TrimSpace(input.SessionCookie), nil
 }
 
 func importedAccountProxyMode(tx *gorm.DB, rawProxy *string) (model.ProxyUsageMode, *int, error) {
@@ -1008,6 +1066,22 @@ func findImportedAccount(tx *gorm.DB, siteID int, input importedAccountInput) (*
 			record, err := findByQuery("site_id = ? AND credential_type = ? AND username = ?", siteID, input.CredentialType, strings.TrimSpace(input.Username))
 			if record != nil || err != nil {
 				return record, err
+			}
+		}
+	case model.SiteCredentialTypeCookie:
+		if input.SessionCookie != "" {
+			var candidates []model.SiteAccount
+			if err := tx.Where("site_id = ? AND credential_type = ? AND session_cookie_encrypted <> ''", siteID, input.CredentialType).Find(&candidates).Error; err != nil {
+				return nil, err
+			}
+			for index := range candidates {
+				cookie, err := DecryptSecret(candidates[index].SessionCookieEncrypted)
+				if err != nil {
+					return nil, fmt.Errorf("decrypt imported site session cookie: %w", err)
+				}
+				if cookie == input.SessionCookie {
+					return &candidates[index], nil
+				}
 			}
 		}
 	case model.SiteCredentialTypeAccessToken:

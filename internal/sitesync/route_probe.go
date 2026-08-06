@@ -177,7 +177,7 @@ func detectManagedRoutesFromPath(
 		detections = mergeSiteModelRouteDetections(detections, collector(payload, source, modelFilter))
 	}
 
-	if strings.TrimSpace(accessToken) != "" {
+	if managedSessionRequestAvailable(ctx, accessToken) {
 		if payload, err := requestJSONWithManagedAccessToken(
 			ctx,
 			siteRecord,
@@ -233,7 +233,7 @@ func detectAnyRouterPricingRoutes(
 	modelFilter map[string]struct{},
 ) map[string]siteModelRouteDetection {
 	token := strings.TrimSpace(accessToken)
-	if token == "" || siteRecord == nil || account == nil {
+	if !managedSessionRequestAvailable(ctx, token) || siteRecord == nil || account == nil {
 		return nil
 	}
 
@@ -259,7 +259,7 @@ func detectAnyRouterPricingRoutes(
 		detections = mergeSiteModelRouteDetections(detections, collectPricingRouteDetections(payload, "/api/pricing", modelFilter))
 	}
 
-	for _, cookie := range anyRouterBuildCookieCandidates(token) {
+	for _, cookie := range anyRouterBuildAccountCookieCandidates(account, token) {
 		headers := map[string]string{"Cookie": cookie}
 		anyRouterAddUserIDHeaders(headers, userID)
 		payload, _, err := anyRouterRequestJSONWithCookies(ctx, siteRecord, "GET", requestURL, nil, headers, account)

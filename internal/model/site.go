@@ -28,6 +28,7 @@ type SiteCredentialType string
 const (
 	SiteCredentialTypeUsernamePassword SiteCredentialType = "username_password"
 	SiteCredentialTypeAccessToken      SiteCredentialType = "access_token"
+	SiteCredentialTypeCookie           SiteCredentialType = "cookie"
 	SiteCredentialTypeAPIKey           SiteCredentialType = "api_key"
 )
 
@@ -224,6 +225,10 @@ type SiteAccount struct {
 	APIKey                      string             `json:"api_key"`
 	RefreshToken                string             `json:"refresh_token"`
 	TokenExpiresAt              int64              `json:"token_expires_at" gorm:"default:0"`
+	SessionCookieEncrypted      string             `json:"-" gorm:"type:text"`
+	CredentialRevision          int64              `json:"-" gorm:"not null;default:0"`
+	LastAuthFailureClass        string             `json:"last_auth_failure_class,omitempty" gorm:"size:64"`
+	LastAuthFailureAt           *time.Time         `json:"last_auth_failure_at,omitempty"`
 	PlatformUserID              *int               `json:"platform_user_id"`
 	ProxyMode                   ProxyUsageMode     `json:"proxy_mode" gorm:"type:varchar(16);not null;default:'inherit'"`
 	ProxyConfigID               *int               `json:"proxy_config_id"`
@@ -263,6 +268,47 @@ type SiteAccount struct {
 	UserGroups                 []SiteUserGroup      `json:"user_groups,omitempty" gorm:"foreignKey:SiteAccountID"`
 	Models                     []SiteModel          `json:"models,omitempty" gorm:"foreignKey:SiteAccountID"`
 	ChannelBindings            []SiteChannelBinding `json:"channel_bindings,omitempty" gorm:"foreignKey:SiteAccountID"`
+}
+
+func (a SiteAccount) MarshalJSON() ([]byte, error) {
+	type alias SiteAccount
+	return json.Marshal(struct {
+		alias
+		HasStoredSessionCookie bool `json:"has_stored_session_cookie"`
+	}{
+		alias:                  alias(a),
+		HasStoredSessionCookie: a.SessionCookieEncrypted != "",
+	})
+}
+
+func IsSiteCookieCredential(value string) bool {
+	trimmed := strings.TrimSpace(value)
+	lowered := strings.ToLower(trimmed)
+	if trimmed == "" || strings.HasPrefix(lowered, "bearer ") {
+		return false
+	}
+	pairs := strings.Split(trimmed, ";")
+	if len(pairs) > 1 {
+		validPairs := 0
+		for _, pair := range pairs {
+			parts := strings.SplitN(strings.TrimSpace(pair), "=", 2)
+			if len(parts) != 2 || strings.TrimSpace(parts[0]) == "" {
+				return false
+			}
+			validPairs++
+		}
+		return validPairs > 1
+	}
+	parts := strings.SplitN(trimmed, "=", 2)
+	if len(parts) != 2 || strings.Contains(parts[0], " ") {
+		return false
+	}
+	switch strings.ToLower(strings.TrimSpace(parts[0])) {
+	case "session", "sid", "auth_token", "access_token", "token", "jwt", "jwt_token", "cf_clearance":
+		return true
+	default:
+		return false
+	}
 }
 
 func (a *SiteAccount) UnmarshalJSON(data []byte) error {
@@ -869,9 +915,18 @@ func (p SitePlatform) Validate() error {
 	}
 }
 
+func (p SitePlatform) SupportsCookieCredential() bool {
+	switch p {
+	case SitePlatformNewAPI, SitePlatformAnyRouter, SitePlatformOneAPI, SitePlatformOneHub, SitePlatformDoneHub:
+		return true
+	default:
+		return false
+	}
+}
+
 func (t SiteCredentialType) Validate() error {
 	switch t {
-	case SiteCredentialTypeUsernamePassword, SiteCredentialTypeAccessToken, SiteCredentialTypeAPIKey:
+	case SiteCredentialTypeUsernamePassword, SiteCredentialTypeAccessToken, SiteCredentialTypeCookie, SiteCredentialTypeAPIKey:
 		return nil
 	default:
 		return fmt.Errorf("unsupported site credential type: %s", t)
@@ -1071,8 +1126,12 @@ func (a *SiteAccount) Validate() error {
 			return fmt.Errorf("username and password are required")
 		}
 	case SiteCredentialTypeAccessToken:
-		if a.AccessToken == "" {
+		if a.AccessToken == "" && a.SessionCookieEncrypted == "" {
 			return fmt.Errorf("access token is required")
+		}
+	case SiteCredentialTypeCookie:
+		if a.AccessToken == "" && a.SessionCookieEncrypted == "" {
+			return fmt.Errorf("cookie is required")
 		}
 	case SiteCredentialTypeAPIKey:
 		if a.APIKey == "" {

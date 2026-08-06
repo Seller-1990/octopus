@@ -733,6 +733,54 @@ func TestOlderVerificationSessionCannotReplaceNewerCredential(t *testing.T) {
 	}
 }
 
+func TestVerificationSessionCannotCompleteAfterCredentialRevisionChanges(t *testing.T) {
+	ctx := setupBackupTestDB(t)
+	_, account := createVerificationFixture(t, ctx)
+	if err := dbpkg.GetDB().WithContext(ctx).Model(&model.SiteAccount{}).
+		Where("id = ?", account.ID).
+		Update("credential_revision", 7).Error; err != nil {
+		t.Fatalf("set credential revision: %v", err)
+	}
+	created, err := VerificationSessionCreate(ctx, VerificationSessionCreateRequest{
+		SiteAccountID: account.ID,
+	})
+	if err != nil {
+		t.Fatalf("create verification session: %v", err)
+	}
+	if created.Session.CredentialRevision != 7 {
+		t.Fatalf("session credential revision = %d, want 7", created.Session.CredentialRevision)
+	}
+	if err := dbpkg.GetDB().WithContext(ctx).Model(&model.SiteAccount{}).
+		Where("id = ?", account.ID).
+		Update("credential_revision", 8).Error; err != nil {
+		t.Fatalf("replace account credentials: %v", err)
+	}
+
+	if _, err := VerificationSessionManualComplete(
+		ctx,
+		created.Session.ID,
+		"cf_clearance=stale",
+		"",
+	); !errors.Is(err, errVerificationSessionSuperseded) {
+		t.Fatalf("completion error = %v, want superseded", err)
+	}
+
+	var reloadedAccount model.SiteAccount
+	if err := dbpkg.GetDB().WithContext(ctx).First(&reloadedAccount, account.ID).Error; err != nil {
+		t.Fatalf("reload account: %v", err)
+	}
+	if reloadedAccount.VerificationSessionFenceID != 0 || reloadedAccount.VerificationCookieEncrypted != "" {
+		t.Fatalf("stale session installed verification credentials: %+v", reloadedAccount)
+	}
+	var reloadedSession model.VerificationSession
+	if err := dbpkg.GetDB().WithContext(ctx).First(&reloadedSession, created.Session.ID).Error; err != nil {
+		t.Fatalf("reload session: %v", err)
+	}
+	if reloadedSession.Status != model.VerificationSessionSuperseded || reloadedSession.CookieEncrypted != "" {
+		t.Fatalf("stale session was not superseded: %+v", reloadedSession)
+	}
+}
+
 func TestRevokingCredentialRetainsVerificationFence(t *testing.T) {
 	ctx := setupBackupTestDB(t)
 	_, account := createVerificationFixture(t, ctx)

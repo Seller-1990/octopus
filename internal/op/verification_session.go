@@ -55,13 +55,14 @@ func createVerificationSession(
 		ttl = 15
 	}
 	session := model.VerificationSession{
-		SiteID:        account.SiteID,
-		SiteAccountID: account.ID,
-		ProxyConfigID: cloneOptionalInt(request.ProxyConfigID),
-		ClashNode:     request.ClashNode,
-		UserAgent:     request.UserAgent,
-		Status:        model.VerificationSessionPending,
-		ExpiresAt:     time.Now().Add(time.Duration(ttl) * time.Minute),
+		SiteID:             account.SiteID,
+		SiteAccountID:      account.ID,
+		CredentialRevision: account.CredentialRevision,
+		ProxyConfigID:      cloneOptionalInt(request.ProxyConfigID),
+		ClashNode:          request.ClashNode,
+		UserAgent:          request.UserAgent,
+		Status:             model.VerificationSessionPending,
+		ExpiresAt:          time.Now().Add(time.Duration(ttl) * time.Minute),
 	}
 	siteRecord, err := SiteGet(account.SiteID, ctx)
 	if err != nil {
@@ -84,6 +85,14 @@ func createVerificationSession(
 		RetryStatus:   verificationRetryStatusForOperation(request.Operation),
 	}
 	if err := db.GetDB().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var currentAccount model.SiteAccount
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			Select("id", "site_id", "credential_revision").
+			First(&currentAccount, account.ID).Error; err != nil {
+			return fmt.Errorf("site account not found")
+		}
+		session.SiteID = currentAccount.SiteID
+		session.CredentialRevision = currentAccount.CredentialRevision
 		if err := tx.Create(&session).Error; err != nil {
 			return err
 		}
@@ -138,8 +147,9 @@ func VerificationSessionEnsure(
 	now := time.Now()
 	var session model.VerificationSession
 	query := db.GetDB().WithContext(ctx).
-		Where("site_account_id = ? AND status = ? AND expires_at > ?",
+		Where("site_account_id = ? AND credential_revision = ? AND status = ? AND expires_at > ?",
 			request.SiteAccountID,
+			account.CredentialRevision,
 			model.VerificationSessionPending,
 			now,
 		)
@@ -259,66 +269,77 @@ func VerificationSessionClearAccount(ctx context.Context, accountID int) error {
 	}
 	var sessionIDs []int64
 	err := db.GetDB().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		var account model.SiteAccount
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
-			First(&account, accountID).Error; err != nil {
-			return fmt.Errorf("site account not found")
-		}
-		if err := tx.Model(&model.VerificationSession{}).
-			Where("site_account_id = ? AND status IN ?", accountID, []model.VerificationSessionStatus{
-				model.VerificationSessionPending,
-				model.VerificationSessionCompleted,
-			}).
-			Pluck("id", &sessionIDs).Error; err != nil {
-			return err
-		}
-		if len(sessionIDs) > 0 {
-			if err := tx.Model(&model.VerificationSession{}).
-				Where("id IN ?", sessionIDs).
-				Updates(map[string]any{
-					"status":           model.VerificationSessionRevoked,
-					"cookie_encrypted": "",
-				}).Error; err != nil {
-				return err
-			}
-			if err := tx.Model(&model.VerificationTask{}).
-				Where("session_id IN ? AND status IN ?", sessionIDs, []model.VerificationTaskStatus{
-					model.VerificationTaskPending,
-					model.VerificationTaskClaimed,
-				}).
-				Updates(canceledVerificationTaskFields()).Error; err != nil {
-				return err
-			}
-			if err := tx.Model(&model.VerificationTask{}).
-				Where("session_id IN ? AND retry_status IN ?", sessionIDs, []model.VerificationRetryStatus{
-					model.VerificationRetryPending,
-					model.VerificationRetryRunning,
-				}).
-				Update("retry_status", model.VerificationRetryCanceled).Error; err != nil {
-				return err
-			}
-		}
-		fenceID := account.VerificationSessionFenceID
-		for _, sessionID := range sessionIDs {
-			if sessionID > fenceID {
-				fenceID = sessionID
-			}
-		}
-		fields := clearedVerificationCredentialFields()
-		fields["verification_session_fence_id"] = fenceID
-		return tx.Model(&model.SiteAccount{}).
-			Where("id = ?", accountID).
-			Updates(fields).Error
+		var err error
+		sessionIDs, err = clearVerificationSessionsForAccountTx(tx, accountID)
+		return err
 	})
 	if err == nil {
-		for _, sessionID := range sessionIDs {
-			defaultVerificationBrowserBroker.cancelSession(
-				sessionID,
-				fmt.Errorf("verification account session was cleared"),
-			)
-		}
+		cancelVerificationBrowserSessions(sessionIDs, fmt.Errorf("verification account session was cleared"))
 	}
 	return err
+}
+
+func clearVerificationSessionsForAccountTx(tx *gorm.DB, accountID int) ([]int64, error) {
+	if tx == nil || accountID <= 0 {
+		return nil, fmt.Errorf("site account id is required")
+	}
+	var account model.SiteAccount
+	if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&account, accountID).Error; err != nil {
+		return nil, fmt.Errorf("site account not found")
+	}
+	var sessionIDs []int64
+	if err := tx.Model(&model.VerificationSession{}).
+		Where("site_account_id = ? AND status IN ?", accountID, []model.VerificationSessionStatus{
+			model.VerificationSessionPending,
+			model.VerificationSessionCompleted,
+		}).
+		Pluck("id", &sessionIDs).Error; err != nil {
+		return nil, err
+	}
+	if len(sessionIDs) > 0 {
+		if err := tx.Model(&model.VerificationSession{}).
+			Where("id IN ?", sessionIDs).
+			Updates(map[string]any{
+				"status":           model.VerificationSessionRevoked,
+				"cookie_encrypted": "",
+			}).Error; err != nil {
+			return nil, err
+		}
+		if err := tx.Model(&model.VerificationTask{}).
+			Where("session_id IN ? AND status IN ?", sessionIDs, []model.VerificationTaskStatus{
+				model.VerificationTaskPending,
+				model.VerificationTaskClaimed,
+			}).
+			Updates(canceledVerificationTaskFields()).Error; err != nil {
+			return nil, err
+		}
+		if err := tx.Model(&model.VerificationTask{}).
+			Where("session_id IN ? AND retry_status IN ?", sessionIDs, []model.VerificationRetryStatus{
+				model.VerificationRetryPending,
+				model.VerificationRetryRunning,
+			}).
+			Update("retry_status", model.VerificationRetryCanceled).Error; err != nil {
+			return nil, err
+		}
+	}
+	fenceID := account.VerificationSessionFenceID
+	for _, sessionID := range sessionIDs {
+		if sessionID > fenceID {
+			fenceID = sessionID
+		}
+	}
+	fields := clearedVerificationCredentialFields()
+	fields["verification_session_fence_id"] = fenceID
+	if err := tx.Model(&model.SiteAccount{}).Where("id = ?", accountID).Updates(fields).Error; err != nil {
+		return nil, err
+	}
+	return sessionIDs, nil
+}
+
+func cancelVerificationBrowserSessions(sessionIDs []int64, reason error) {
+	for _, sessionID := range sessionIDs {
+		defaultVerificationBrowserBroker.cancelSession(sessionID, reason)
+	}
 }
 
 func VerificationHeadersForAccount(

@@ -78,6 +78,24 @@ func TestBuildManagedAuthHeadersUsesBearerOnlyForPlainToken(t *testing.T) {
 	}
 }
 
+func TestBuildManagedAuthHeadersKeepsExplicitAccessTokenWithPaddingAsBearer(t *testing.T) {
+	headers := buildManagedAuthHeaders("opaque==", &model.SiteAccount{
+		CredentialType: model.SiteCredentialTypeAccessToken,
+	})
+	if len(headers) != 1 || headers[0]["Authorization"] != "Bearer opaque==" || headers[0]["Cookie"] != "" {
+		t.Fatalf("explicit access token was not kept as bearer: %#v", headers)
+	}
+}
+
+func TestBuildManagedAuthHeadersUsesCookieForExplicitCookieCredential(t *testing.T) {
+	headers := buildManagedAuthHeaders("opaque==", &model.SiteAccount{
+		CredentialType: model.SiteCredentialTypeCookie,
+	})
+	if len(headers) != 1 || headers[0]["Cookie"] != "opaque==" || headers[0]["Authorization"] != "" {
+		t.Fatalf("explicit cookie credential was not sent as cookie: %#v", headers)
+	}
+}
+
 func TestLooksLikeCookieToken(t *testing.T) {
 	cases := []struct {
 		name  string
@@ -86,6 +104,8 @@ func TestLooksLikeCookieToken(t *testing.T) {
 	}{
 		{name: "cookie-pair", token: "sid=cookie-session", want: true},
 		{name: "cookie-chain", token: "sid=a; theme=dark", want: true},
+		{name: "opaque-padding", token: "opaque==", want: false},
+		{name: "unknown-pair", token: "abc=def", want: false},
 		{name: "bearer-token", token: "Bearer plain-token", want: false},
 		{name: "plain-token", token: "plain-token", want: false},
 	}

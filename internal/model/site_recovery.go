@@ -91,18 +91,19 @@ const (
 )
 
 type VerificationSession struct {
-	ID              int64                     `json:"id" gorm:"primaryKey;autoIncrement"`
-	SiteID          int                       `json:"site_id" gorm:"not null;index"`
-	SiteAccountID   int                       `json:"site_account_id" gorm:"not null;index"`
-	ProxyConfigID   *int                      `json:"proxy_config_id,omitempty"`
-	ClashNode       string                    `json:"clash_node,omitempty"`
-	UserAgent       string                    `json:"user_agent,omitempty" gorm:"type:text"`
-	CookieEncrypted string                    `json:"-" gorm:"type:text"`
-	Status          VerificationSessionStatus `json:"status" gorm:"type:varchar(24);not null;index"`
-	ExpiresAt       time.Time                 `json:"expires_at" gorm:"index"`
-	CompletedAt     *time.Time                `json:"completed_at,omitempty"`
-	Source          string                    `json:"source,omitempty" gorm:"size:24"`
-	CreatedAt       time.Time                 `json:"created_at"`
+	ID                 int64                     `json:"id" gorm:"primaryKey;autoIncrement"`
+	SiteID             int                       `json:"site_id" gorm:"not null;index"`
+	SiteAccountID      int                       `json:"site_account_id" gorm:"not null;index"`
+	CredentialRevision int64                     `json:"-" gorm:"not null;default:0;index"`
+	ProxyConfigID      *int                      `json:"proxy_config_id,omitempty"`
+	ClashNode          string                    `json:"clash_node,omitempty"`
+	UserAgent          string                    `json:"user_agent,omitempty" gorm:"type:text"`
+	CookieEncrypted    string                    `json:"-" gorm:"type:text"`
+	Status             VerificationSessionStatus `json:"status" gorm:"type:varchar(24);not null;index"`
+	ExpiresAt          time.Time                 `json:"expires_at" gorm:"index"`
+	CompletedAt        *time.Time                `json:"completed_at,omitempty"`
+	Source             string                    `json:"source,omitempty" gorm:"size:24"`
+	CreatedAt          time.Time                 `json:"created_at"`
 }
 
 type VerificationBridgePairing struct {

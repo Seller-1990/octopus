@@ -7,6 +7,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/bestruirui/octopus/internal/apperror"
 )
 
 type CloudflareProtectionError struct {
@@ -47,16 +49,31 @@ func newCloudflareProtectionError(statusCode int, header http.Header) *Cloudflar
 }
 
 func parseSiteRetryAfter(header string) time.Duration {
+	header = strings.TrimSpace(header)
 	if header == "" {
 		return 0
 	}
-	secs, err := strconv.Atoi(strings.TrimSpace(header))
-	if err != nil || secs <= 0 {
+	if secs, err := strconv.Atoi(header); err == nil {
+		return boundSiteRetryAfter(time.Duration(secs) * time.Second)
+	}
+	parsed, err := http.ParseTime(header)
+	if err != nil {
 		return 0
 	}
-	delay := time.Duration(secs) * time.Second
+	return boundSiteRetryAfter(time.Until(parsed))
+}
+
+func boundSiteRetryAfter(delay time.Duration) time.Duration {
+	if delay <= 0 {
+		return 0
+	}
 	if delay > 60*time.Second {
 		return 60 * time.Second
 	}
 	return delay
+}
+
+func siteErrorRetryAfter(err error) time.Duration {
+	millis := anyToInt64(apperror.Params(err)["retryAfterMillis"])
+	return boundSiteRetryAfter(time.Duration(millis) * time.Millisecond)
 }

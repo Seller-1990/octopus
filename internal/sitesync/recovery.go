@@ -52,6 +52,9 @@ func syncAccountStateWithRecovery(
 		func(runCtx context.Context, siteCopy *model.Site, accountCopy *model.SiteAccount) (*syncSnapshot, error) {
 			snapshot, err := syncAccountState(runCtx, siteCopy, accountCopy)
 			if snapshot != nil {
+				snapshot.credentialRevision = accountCopy.CredentialRevision
+				snapshot.persistCredential = shouldPersistSiteCredential(accountCopy, snapshot.accessToken)
+				snapshot.credentialIsCookie = siteCredentialIsCookie(accountCopy, snapshot.accessToken)
 				snapshot.proxyMode = accountCopy.ProxyMode
 				snapshot.proxyConfigID = cloneInt(accountCopy.ProxyConfigID)
 				snapshot.clashNode = accountCopy.PreferredClashNode

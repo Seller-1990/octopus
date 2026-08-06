@@ -7,6 +7,7 @@ import (
 	"github.com/bestruirui/octopus/internal/model"
 	"github.com/bestruirui/octopus/internal/op"
 	"github.com/bestruirui/octopus/internal/price"
+	"github.com/bestruirui/octopus/internal/site"
 	"github.com/bestruirui/octopus/internal/utils/log"
 )
 
@@ -23,6 +24,7 @@ const (
 	TaskWebDAVBackup      = "webdav_backup"
 	TaskUsageMaintenance  = "usage_maintenance"
 	TaskVerificationRetry = "verification_retry"
+	TaskSub2APIRefresh    = "sub2api_refresh"
 )
 
 func Init() {
@@ -97,6 +99,7 @@ func Init() {
 
 	Register(TaskUsageMaintenance, 10*time.Minute, true, UsageMaintenanceTask)
 	Register(TaskVerificationRetry, time.Minute, true, VerificationRetryTask)
+	Register(TaskSub2APIRefresh, site.Sub2APIRefreshTaskInterval, true, Sub2APIRefreshTask)
 
 	// 注册被动离群退役(POR)任务（默认间隔 2 分钟，总开关在任务内判断）
 	outlierIntervalMinutes, err := op.SettingGetInt(model.SettingKeyOutlierRetireInterval)

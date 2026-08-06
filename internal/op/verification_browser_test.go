@@ -2,6 +2,7 @@ package op
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -192,6 +193,48 @@ func TestVerificationTaskBrowserReadyCompletesWithoutCookie(t *testing.T) {
 		"Browser-Test-UA",
 	); err == nil {
 		t.Fatal("browser-ready task accepted duplicate completion")
+	}
+}
+
+func TestVerificationTaskBrowserReadyRejectsChangedCredentialRevision(t *testing.T) {
+	ctx := setupBackupTestDB(t)
+	_, account := createVerificationFixture(t, ctx)
+	created, err := VerificationSessionCreate(ctx, VerificationSessionCreateRequest{
+		SiteAccountID: account.ID,
+		Operation:     model.SiteOperationCheckin,
+	})
+	if err != nil {
+		t.Fatalf("create verification session: %v", err)
+	}
+	pairing, err := VerificationBridgePairingCreate(ctx, "Chrome", 30, account.ID)
+	if err != nil {
+		t.Fatalf("create pairing: %v", err)
+	}
+	claimed, err := VerificationTaskClaim(ctx, pairing.Token)
+	if err != nil {
+		t.Fatalf("claim verification task: %v", err)
+	}
+	if err := dbpkg.GetDB().WithContext(ctx).Model(&model.SiteAccount{}).
+		Where("id = ?", account.ID).
+		Update("credential_revision", created.Session.CredentialRevision+1).Error; err != nil {
+		t.Fatalf("replace account credentials: %v", err)
+	}
+
+	if _, err := VerificationTaskBrowserReady(
+		ctx,
+		pairing.Token,
+		claimed.TaskToken,
+		"Browser-Test-UA",
+	); !errors.Is(err, errVerificationSessionSuperseded) {
+		t.Fatalf("browser completion error = %v, want superseded", err)
+	}
+
+	var reloaded model.SiteAccount
+	if err := dbpkg.GetDB().WithContext(ctx).First(&reloaded, account.ID).Error; err != nil {
+		t.Fatalf("reload account: %v", err)
+	}
+	if reloaded.VerificationSessionFenceID != 0 || reloaded.VerificationCookieEncrypted != "" {
+		t.Fatalf("stale browser session installed verification state: %+v", reloaded)
 	}
 }
 
