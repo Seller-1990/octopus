@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useMemo, useCallback, useEffect, useRef } from 'react';
-import { Trash2, X, Pencil, Pin, PinOff, ArrowDownWideNarrow } from 'lucide-react';
+import { Trash2, X, Pencil, Pin, PinOff, ArrowDownWideNarrow, HeartPulse } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { type Group, useDeleteGroup, useUpdateGroup, useToggleGroupPin } from '@/api/endpoints/group';
 import { useModelChannelList } from '@/api/endpoints/model';
@@ -14,6 +14,7 @@ import type { SelectedMember } from './ItemList';
 import { MemberList } from './ItemList';
 import { GroupEditor, type GroupEditorValues } from './Editor';
 import { GroupHealthBadge } from './health';
+import { useRunGroupHealth } from '@/api/endpoints/group-health';
 import { modelChannelKey, MODE_LABELS } from './utils';
 import { GroupMode, type GroupUpdateRequest } from '@/api/endpoints/group';
 import { PresetPopover } from './PresetPopover';
@@ -376,7 +377,12 @@ export function GroupCard({ group }: { group: Group }) {
                 ))}
             </div>
 
-            <GroupHealthBadge groupId={group.id} />
+            <div className="flex items-center gap-1.5">
+                <GroupHealthBadge groupId={group.id} />
+                {group.id ? (
+                    <ManualProbeButton groupId={group.id} />
+                ) : null}
+            </div>
 
             {/* Sort strategy selector + auto-sort button */}
             <div className="flex items-center gap-1.5 mb-2">
@@ -523,5 +529,20 @@ export function GroupCard({ group }: { group: Group }) {
                 )}
             </AnimatePresence>
         </article >
+    );
+}
+
+function ManualProbeButton({ groupId }: { groupId: number }) {
+    const runHealth = useRunGroupHealth();
+    return (
+        <button
+            type="button"
+            onClick={() => runHealth.mutate({ groupId })}
+            disabled={runHealth.isPending}
+            className="shrink-0 rounded-md p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-50"
+            title="Manual probe"
+        >
+            <HeartPulse className={`size-3.5 ${runHealth.isPending ? 'animate-pulse' : ''}`} />
+        </button>
     );
 }
