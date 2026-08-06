@@ -10,11 +10,18 @@ import (
 	"net/http"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/bestruirui/octopus/internal/client"
 	"github.com/bestruirui/octopus/internal/model"
 	"github.com/bestruirui/octopus/internal/op"
 	"github.com/bestruirui/octopus/internal/utils/log"
+)
+
+const (
+	siteSafeReadMaxAttempts    = 3
+	siteSafeReadBaseRetryDelay = 25 * time.Millisecond
+	siteSafeReadMaxRetryDelay  = 2 * time.Second
 )
 
 func siteHTTPClient(ctx context.Context, siteRecord *model.Site, accounts ...*model.SiteAccount) (*http.Client, error) {
@@ -67,55 +74,140 @@ func requestJSON(ctx context.Context, siteRecord *model.Site, method string, req
 		}
 	}
 
-	req, err := http.NewRequestWithContext(
-		ctx,
-		method,
-		requestURL,
-		bytes.NewReader(payloadBytes),
-	)
-	if err != nil {
-		return nil, err
-	}
-	applyDefaultSiteRequestHeaders(req, body != nil)
 	account := firstSiteAccount(accounts...)
 	policy := resolveSiteRequestHeaderPolicy(ctx, siteRecord, account)
-	op.ApplyHeaderPolicy(req.Header, nil, siteRecord.CustomHeader, policy)
 	verificationCookie, verificationUserAgent := siteVerificationHeaders(ctx, siteRecord, account)
-	applyTrustedSiteRequestHeaders(req.Header, headers, verificationCookie, verificationUserAgent)
-
-	if transport, ok := verificationBrowserTransportFromContext(ctx); ok {
-		response, err := transport.request(ctx, op.VerificationBrowserRequestInput{
-			Binding: transport.binding,
-			Method:  req.Method,
-			URL:     req.URL.String(),
-			Headers: verificationBrowserHeaders(req.Header),
-			Body:    string(payloadBytes),
-		})
+	buildRequest := func() (*http.Request, error) {
+		req, err := http.NewRequestWithContext(
+			ctx,
+			method,
+			requestURL,
+			bytes.NewReader(payloadBytes),
+		)
 		if err != nil {
 			return nil, err
 		}
-		return parseSiteJSONResponse(
-			response.Status,
-			verificationBrowserResponseHeader(response.Headers),
-			[]byte(response.Body),
-		)
+		applyDefaultSiteRequestHeaders(req, body != nil)
+		op.ApplyHeaderPolicy(req.Header, nil, siteRecord.CustomHeader, policy)
+		applyTrustedSiteRequestHeaders(req.Header, headers, verificationCookie, verificationUserAgent)
+		return req, nil
+	}
+
+	if transport, ok := verificationBrowserTransportFromContext(ctx); ok {
+		for attempt := 0; attempt < siteSafeReadMaxAttempts; attempt++ {
+			req, err := buildRequest()
+			if err != nil {
+				return nil, err
+			}
+			response, err := transport.request(ctx, op.VerificationBrowserRequestInput{
+				Binding: transport.binding,
+				Method:  req.Method,
+				URL:     req.URL.String(),
+				Headers: verificationBrowserHeaders(req.Header),
+				Body:    string(payloadBytes),
+			})
+			if err != nil {
+				if !shouldRetrySiteReadTransport(ctx, method, attempt, err) {
+					return nil, err
+				}
+				if err := waitForSiteReadRetry(ctx, attempt, nil); err != nil {
+					return nil, err
+				}
+				continue
+			}
+			responseHeader := verificationBrowserResponseHeader(response.Headers)
+			responseBody := []byte(response.Body)
+			if shouldRetrySiteReadResponse(method, attempt, response.Status, responseHeader, responseBody) {
+				if err := waitForSiteReadRetry(ctx, attempt, responseHeader); err != nil {
+					return nil, err
+				}
+				continue
+			}
+			return parseSiteJSONResponse(response.Status, responseHeader, responseBody)
+		}
+		return nil, fmt.Errorf("site read retry attempts exhausted")
 	}
 
 	httpClient, err := siteHTTPClient(ctx, siteRecord, accounts...)
 	if err != nil {
 		return nil, err
 	}
-	resp, err := httpClient.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
+	for attempt := 0; attempt < siteSafeReadMaxAttempts; attempt++ {
+		req, err := buildRequest()
+		if err != nil {
+			return nil, err
+		}
+		resp, err := httpClient.Do(req)
+		if err != nil {
+			if !shouldRetrySiteReadTransport(ctx, method, attempt, err) {
+				return nil, err
+			}
+			if err := waitForSiteReadRetry(ctx, attempt, nil); err != nil {
+				return nil, err
+			}
+			continue
+		}
 
-	bodyBytes, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, err
+		bodyBytes, readErr := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if readErr != nil {
+			if !shouldRetrySiteReadTransport(ctx, method, attempt, readErr) {
+				return nil, readErr
+			}
+			if err := waitForSiteReadRetry(ctx, attempt, nil); err != nil {
+				return nil, err
+			}
+			continue
+		}
+		if shouldRetrySiteReadResponse(method, attempt, resp.StatusCode, resp.Header, bodyBytes) {
+			if err := waitForSiteReadRetry(ctx, attempt, resp.Header); err != nil {
+				return nil, err
+			}
+			continue
+		}
+		return parseSiteJSONResponse(resp.StatusCode, resp.Header, bodyBytes)
 	}
-	return parseSiteJSONResponse(resp.StatusCode, resp.Header, bodyBytes)
+	return nil, fmt.Errorf("site read retry attempts exhausted")
+}
+
+func shouldRetrySiteReadTransport(ctx context.Context, method string, attempt int, err error) bool {
+	return err != nil && method == http.MethodGet && attempt+1 < siteSafeReadMaxAttempts && ctx.Err() == nil
+}
+
+func shouldRetrySiteReadResponse(method string, attempt int, statusCode int, header http.Header, body []byte) bool {
+	if method != http.MethodGet || attempt+1 >= siteSafeReadMaxAttempts {
+		return false
+	}
+	if IsCloudflareProtectionResponse(statusCode, header, body) {
+		return false
+	}
+	switch statusCode {
+	case http.StatusTooManyRequests, http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout:
+		return true
+	default:
+		return false
+	}
+}
+
+func waitForSiteReadRetry(ctx context.Context, attempt int, header http.Header) error {
+	delay := time.Duration(0)
+	if header != nil {
+		delay = parseSiteRetryAfter(header.Get("Retry-After"))
+	}
+	if delay <= 0 {
+		delay = siteSafeReadBaseRetryDelay * time.Duration(1<<attempt)
+	}
+	if delay > siteSafeReadMaxRetryDelay {
+		delay = siteSafeReadMaxRetryDelay
+	}
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
 }
 
 func parseSiteJSONResponse(
@@ -272,13 +364,13 @@ func formatSiteHTTPError(statusCode int, header http.Header, bodyBytes []byte) e
 	}
 	if payload, ok := parseSiteJSONMap(bodyBytes); ok {
 		if message := extractSiteResponseMessage(payload); message != "" {
-			return newSiteHTTPError(statusCode, message)
+			return newSiteHTTPErrorWithHeader(statusCode, message, header)
 		}
 	}
 	if summary := extractSiteHTMLResponseSummary(header.Get("Content-Type"), bodyBytes); summary != "" {
-		return newSiteHTTPError(statusCode, summary)
+		return newSiteHTTPErrorWithHeader(statusCode, summary, header)
 	}
-	return newSiteHTTPError(statusCode, "上游返回非 JSON 响应，无法解析为接口响应")
+	return newSiteHTTPErrorWithHeader(statusCode, "上游返回非 JSON 响应，无法解析为接口响应", header)
 }
 
 // IsCloudflareProtectionResponse 判断一次上游响应是否为 Cloudflare 防护拦截。
@@ -643,7 +735,7 @@ func requestJSONWithManagedAccessToken(ctx context.Context, siteRecord *model.Si
 
 func requestJSONWithManagedHeaders(ctx context.Context, siteRecord *model.Site, method string, requestURL string, body any, accessToken string, extraHeaders map[string]string, accounts ...*model.SiteAccount) (map[string]any, error) {
 	var firstErr error
-	for _, headers := range buildManagedAuthHeaders(accessToken) {
+	for _, headers := range buildManagedAuthHeaders(accessToken, accounts...) {
 		payload, err := requestJSON(ctx, siteRecord, method, requestURL, body, mergeHeaders(headers, extraHeaders), accounts...)
 		if err == nil {
 			return payload, nil
@@ -658,10 +750,18 @@ func requestJSONWithManagedHeaders(ctx context.Context, siteRecord *model.Site, 
 	return nil, firstErr
 }
 
-func buildManagedAuthHeaders(accessToken string) []map[string]string {
+func buildManagedAuthHeaders(accessToken string, accounts ...*model.SiteAccount) []map[string]string {
 	token := strings.TrimSpace(accessToken)
 	if token == "" {
 		return []map[string]string{{}}
+	}
+	if account := firstSiteAccount(accounts...); account != nil {
+		switch account.CredentialType {
+		case model.SiteCredentialTypeCookie:
+			return []map[string]string{{"Cookie": token}}
+		case model.SiteCredentialTypeAccessToken, model.SiteCredentialTypeAPIKey:
+			return []map[string]string{{"Authorization": ensureBearer(token)}}
+		}
 	}
 
 	candidates := make([]map[string]string, 0, 2)
@@ -672,16 +772,16 @@ func buildManagedAuthHeaders(accessToken string) []map[string]string {
 	return candidates
 }
 
-func looksLikeCookieToken(token string) bool {
-	trimmed := strings.TrimSpace(token)
-	lowered := strings.ToLower(trimmed)
-	if trimmed == "" || strings.HasPrefix(lowered, "bearer ") {
-		return false
-	}
-	if strings.Contains(trimmed, ";") {
+func managedSessionRequestAvailable(ctx context.Context, accessToken string) bool {
+	if strings.TrimSpace(accessToken) != "" {
 		return true
 	}
-	return strings.Contains(trimmed, "=") && !strings.Contains(trimmed, " ")
+	_, ok := verificationBrowserTransportFromContext(ctx)
+	return ok
+}
+
+func looksLikeCookieToken(token string) bool {
+	return model.IsSiteCookieCredential(token)
 }
 
 func shouldTryAlternativeManagedAuth(err error) bool {

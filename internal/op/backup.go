@@ -653,6 +653,7 @@ func importDBDump(
 			return err
 		}
 		account.VerificationCookieEncrypted = ""
+		account.SessionCookieEncrypted = ""
 		account.VerificationSessionFenceID = 0
 		account.VerificationUserAgent = ""
 		account.VerificationProxyConfigID = nil

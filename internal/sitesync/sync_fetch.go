@@ -391,7 +391,7 @@ func fetchManagementModels(
 }
 
 func fetchManagedSessionModels(ctx context.Context, siteRecord *model.Site, account *model.SiteAccount, accessToken string) ([]string, error) {
-	if strings.TrimSpace(accessToken) == "" {
+	if !managedSessionRequestAvailable(ctx, accessToken) {
 		return nil, nil
 	}
 	payload, err := requestJSONWithManagedAccessToken(ctx, siteRecord, "GET", buildSiteURL(siteRecord.BaseURL, "/api/user/models"), nil, accessToken, account)

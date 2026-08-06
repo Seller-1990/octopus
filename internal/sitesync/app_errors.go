@@ -87,6 +87,14 @@ func newSiteHTTPError(statusCode int, message string) *apperror.Error {
 		WithParam("statusCode", statusCode)
 }
 
+func newSiteHTTPErrorWithHeader(statusCode int, message string, header http.Header) *apperror.Error {
+	err := newSiteHTTPError(statusCode, message)
+	if retryAfter := parseSiteRetryAfter(header.Get("Retry-After")); retryAfter > 0 {
+		err.WithParam("retryAfterMillis", retryAfter.Milliseconds())
+	}
+	return err
+}
+
 func wrapSiteDecodeError(message string, err error) *apperror.Error {
 	if message == "" {
 		message = "decode response failed"

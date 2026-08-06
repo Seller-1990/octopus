@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/cookiejar"
+	"net/url"
 	"regexp"
 	"slices"
 	"strconv"
@@ -16,6 +18,7 @@ import (
 
 	"github.com/bestruirui/octopus/internal/model"
 	"github.com/bestruirui/octopus/internal/op"
+	"golang.org/x/net/publicsuffix"
 )
 
 const anyRouterUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36"
@@ -160,22 +163,29 @@ func checkinAnyRouter(ctx context.Context, siteRecord *model.Site, account *mode
 }
 
 func resolveAnyRouterManagedAccessToken(ctx context.Context, siteRecord *model.Site, account *model.SiteAccount) (string, error) {
-	if account.CredentialType == model.SiteCredentialTypeAccessToken {
+	switch account.CredentialType {
+	case model.SiteCredentialTypeCookie:
+		return decryptManagedSessionCookie(account)
+	case model.SiteCredentialTypeAccessToken:
 		token := strings.TrimSpace(account.AccessToken)
-		if token == "" {
-			return "", newAccessTokenRequiredError()
+		if token != "" {
+			return token, nil
 		}
-		return token, nil
+		return decryptManagedSessionCookie(account)
 	}
 	if account.CredentialType != model.SiteCredentialTypeUsernamePassword {
 		return "", fmt.Errorf("managed access token is not available for credential type %s", account.CredentialType)
 	}
+	if account.SessionCookieEncrypted != "" {
+		return decryptManagedSessionCookie(account)
+	}
 
-	payload, cookieHeader, err := anyRouterRequestJSONWithCookies(
+	payload, cookieHeader, err := anyRouterRequestJSONWithCookieScope(
 		ctx,
 		siteRecord,
 		http.MethodPost,
 		buildSiteURL(siteRecord.BaseURL, "/api/user/login"),
+		buildSiteURL(siteRecord.BaseURL, "/api/"),
 		map[string]any{"username": account.Username, "password": account.Password},
 		map[string]string{"X-Requested-With": "XMLHttpRequest"},
 		account,
@@ -205,6 +215,9 @@ func resolveAnyRouterManagedAccessToken(ctx context.Context, siteRecord *model.S
 	}
 	if anyRouterHasUsableSessionCookie(cookieHeader) {
 		return cookieHeader, nil
+	}
+	if _, ok := verificationBrowserTransportFromContext(ctx); ok {
+		return "", nil
 	}
 	return "", newSiteLoginTokenMissingError()
 }
@@ -282,7 +295,7 @@ func fetchAnyRouterSessionModels(ctx context.Context, siteRecord *model.Site, ac
 		}
 	}
 
-	for _, cookie := range anyRouterBuildCookieCandidates(accessToken) {
+	for _, cookie := range anyRouterBuildAccountCookieCandidates(account, accessToken) {
 		headers := map[string]string{"Cookie": cookie}
 		anyRouterAddUserIDHeaders(headers, userID)
 		payload, _, requestErr := anyRouterRequestJSONWithCookies(ctx, siteRecord, http.MethodGet, requestURL, nil, headers, account)
@@ -320,7 +333,7 @@ func anyRouterTryCheckinWithBearer(ctx context.Context, siteRecord *model.Site, 
 
 func anyRouterTryCheckinWithCookies(ctx context.Context, siteRecord *model.Site, account *model.SiteAccount, accessToken string, userID int) (*model.SiteCheckinResult, string) {
 	firstFailure := ""
-	for _, cookie := range anyRouterBuildCookieCandidates(accessToken) {
+	for _, cookie := range anyRouterBuildAccountCookieCandidates(account, accessToken) {
 		signInPayload, _, signInErr := anyRouterRequestJSONWithCookies(
 			ctx,
 			siteRecord,
@@ -469,7 +482,7 @@ func anyRouterTestBearerUserID(ctx context.Context, siteRecord *model.Site, acco
 
 func anyRouterFetchUserSelfByCookie(ctx context.Context, siteRecord *model.Site, account *model.SiteAccount, accessToken string, userID int) (map[string]any, string, error) {
 	requestURL := buildSiteURL(siteRecord.BaseURL, "/api/user/self")
-	for _, cookie := range anyRouterBuildCookieCandidates(accessToken) {
+	for _, cookie := range anyRouterBuildAccountCookieCandidates(account, accessToken) {
 		headers := map[string]string{"Cookie": cookie}
 		anyRouterAddUserIDHeaders(headers, userID)
 		payload, cookieHeader, err := anyRouterRequestJSONWithCookies(ctx, siteRecord, http.MethodGet, requestURL, nil, headers, account)
@@ -485,7 +498,7 @@ func anyRouterFetchUserSelfByCookie(ctx context.Context, siteRecord *model.Site,
 
 func anyRouterProbeUserIDByCookie(ctx context.Context, siteRecord *model.Site, account *model.SiteAccount, accessToken string) (int, error) {
 	requestURL := buildSiteURL(siteRecord.BaseURL, "/api/user/self")
-	for _, cookie := range anyRouterBuildCookieCandidates(accessToken) {
+	for _, cookie := range anyRouterBuildAccountCookieCandidates(account, accessToken) {
 		for _, userID := range anyRouterBuildUserIDProbeCandidates(accessToken) {
 			headers := map[string]string{"Cookie": cookie}
 			anyRouterAddUserIDHeaders(headers, userID)
@@ -515,7 +528,7 @@ func anyRouterProbeAlternateUserIDByCookie(ctx context.Context, siteRecord *mode
 func fetchAnyRouterTokensByCookie(ctx context.Context, siteRecord *model.Site, account *model.SiteAccount, accessToken string, userID int) ([]model.SiteToken, error) {
 	requestURL := buildSiteURL(siteRecord.BaseURL, "/api/token/?p=0&size=100")
 	fetchForUserID := func(candidateUserID int) []model.SiteToken {
-		for _, cookie := range anyRouterBuildCookieCandidates(accessToken) {
+		for _, cookie := range anyRouterBuildAccountCookieCandidates(account, accessToken) {
 			headers := map[string]string{"Cookie": cookie}
 			anyRouterAddUserIDHeaders(headers, candidateUserID)
 			payload, _, err := anyRouterRequestJSONWithCookies(ctx, siteRecord, http.MethodGet, requestURL, nil, headers, account)
@@ -547,7 +560,7 @@ func fetchAnyRouterGroupsByCookie(ctx context.Context, siteRecord *model.Site, a
 		var terminalErr error
 		for _, endpoint := range endpoints {
 			requestURL := buildSiteURL(siteRecord.BaseURL, endpoint)
-			for _, cookie := range anyRouterBuildCookieCandidates(accessToken) {
+			for _, cookie := range anyRouterBuildAccountCookieCandidates(account, accessToken) {
 				headers := map[string]string{"Cookie": cookie}
 				anyRouterAddUserIDHeaders(headers, candidateUserID)
 				payload, _, err := anyRouterRequestJSONWithCookies(ctx, siteRecord, http.MethodGet, requestURL, nil, headers, account)
@@ -677,6 +690,7 @@ func anyRouterAddUserIDHeaders(headers map[string]string, userID int) {
 	}
 	value := strconv.Itoa(userID)
 	headers["New-API-User"] = value
+	headers["X-User-Id"] = value
 	headers["Veloera-User"] = value
 	headers["voapi-user"] = value
 	headers["User-id"] = value
@@ -711,6 +725,14 @@ func anyRouterBuildCookieCandidates(token string) []string {
 	appendCandidate("session=" + raw)
 	appendCandidate("token=" + raw)
 	return candidates
+}
+
+func anyRouterBuildAccountCookieCandidates(account *model.SiteAccount, token string) []string {
+	if account != nil && account.CredentialType != model.SiteCredentialTypeCookie &&
+		account.CredentialType != model.SiteCredentialTypeUsernamePassword {
+		return nil
+	}
+	return anyRouterBuildCookieCandidates(token)
 }
 
 func anyRouterTryDecodeJWTUserID(token string) int {
@@ -772,12 +794,17 @@ func anyRouterParseInt(value any) int {
 }
 
 func anyRouterRequestJSONWithCookies(ctx context.Context, siteRecord *model.Site, method string, requestURL string, body any, headers map[string]string, accounts ...*model.SiteAccount) (map[string]any, string, error) {
-	httpClient, err := siteHTTPClient(ctx, siteRecord, accounts...)
-	if err != nil {
-		return nil, "", err
+	return anyRouterRequestJSONWithCookieScope(ctx, siteRecord, method, requestURL, requestURL, body, headers, accounts...)
+}
+
+func anyRouterRequestJSONWithCookieScope(ctx context.Context, siteRecord *model.Site, method string, requestURL string, cookieScopeURL string, body any, headers map[string]string, accounts ...*model.SiteAccount) (map[string]any, string, error) {
+	if _, ok := verificationBrowserTransportFromContext(ctx); ok {
+		payload, err := requestJSON(ctx, siteRecord, method, requestURL, body, headers, accounts...)
+		return payload, "", err
 	}
 
 	var payloadBytes []byte
+	var err error
 	if body != nil {
 		payloadBytes, err = json.Marshal(body)
 		if err != nil {
@@ -805,6 +832,27 @@ func anyRouterRequestJSONWithCookies(ctx context.Context, siteRecord *model.Site
 	account := firstSiteAccount(accounts...)
 	policy := resolveSiteRequestHeaderPolicy(ctx, siteRecord, account)
 	verificationCookie, verificationUserAgent := siteVerificationHeaders(ctx, siteRecord, account)
+	requestURI, err := url.Parse(requestURL)
+	if err != nil {
+		return nil, "", err
+	}
+	scopeURI, err := url.Parse(cookieScopeURL)
+	if err != nil {
+		return nil, "", err
+	}
+	jar, err := cookiejar.New(&cookiejar.Options{PublicSuffixList: publicsuffix.List})
+	if err != nil {
+		return nil, "", err
+	}
+	jar.SetCookies(requestURI, anyRouterCookiesFromHeader(mergeCookieHeaderValues(cookieHeader, verificationCookie)))
+	excludedCookieNames := anyRouterCookieNames(verificationCookie)
+	baseClient, err := siteHTTPClient(ctx, siteRecord, accounts...)
+	if err != nil {
+		return nil, "", err
+	}
+	httpClient := *baseClient
+	httpClient.Jar = jar
+	cookieHeader = anyRouterCookieHeaderForURL(jar, scopeURI, excludedCookieNames)
 
 	for attempt := 0; attempt < 3; attempt++ {
 		var bodyReader io.Reader
@@ -818,43 +866,58 @@ func anyRouterRequestJSONWithCookies(ctx context.Context, siteRecord *model.Site
 		}
 		applyDefaultSiteRequestHeaders(req, len(payloadBytes) > 0)
 		op.ApplyHeaderPolicy(req.Header, nil, siteRecord.CustomHeader, policy)
-		attemptHeaders := make(map[string]string, len(mergedHeaders)+1)
+		attemptHeaders := make(map[string]string, len(mergedHeaders))
 		for key, value := range mergedHeaders {
 			attemptHeaders[key] = value
 		}
-		attemptHeaders["Cookie"] = cookieHeader
 		applyTrustedSiteRequestHeaders(
 			req.Header,
 			attemptHeaders,
-			verificationCookie,
+			"",
 			verificationUserAgent,
 		)
 
 		resp, err := httpClient.Do(req)
 		if err != nil {
-			return nil, cookieHeader, err
+			if !shouldRetrySiteReadTransport(ctx, method, attempt, err) {
+				return nil, cookieHeader, err
+			}
+			if err := waitForSiteReadRetry(ctx, attempt, nil); err != nil {
+				return nil, cookieHeader, err
+			}
+			continue
 		}
 
 		bodyBytes, readErr := io.ReadAll(resp.Body)
 		resp.Body.Close()
 		if readErr != nil {
-			return nil, cookieHeader, readErr
-		}
-
-		cookieHeader = anyRouterMergeSetCookiePairs(cookieHeader, resp.Header.Values("Set-Cookie"))
-
-		if payload, ok := anyRouterParseJSONObject(bodyBytes); ok {
-			if IsCloudflareProtectionResponse(resp.StatusCode, resp.Header, bodyBytes) {
-				return nil, cookieHeader, wrapCloudflareProtectionError(
-					newCloudflareProtectionError(resp.StatusCode, resp.Header),
-				)
+			if !shouldRetrySiteReadTransport(ctx, method, attempt, readErr) {
+				return nil, cookieHeader, readErr
 			}
-			return payload, cookieHeader, nil
+			if err := waitForSiteReadRetry(ctx, attempt, nil); err != nil {
+				return nil, cookieHeader, err
+			}
+			continue
 		}
+
+		cookieHeader = anyRouterCookieHeaderForURL(jar, scopeURI, excludedCookieNames)
+
 		if IsCloudflareProtectionResponse(resp.StatusCode, resp.Header, bodyBytes) {
 			return nil, cookieHeader, wrapCloudflareProtectionError(
 				newCloudflareProtectionError(resp.StatusCode, resp.Header),
 			)
+		}
+		if shouldRetrySiteReadResponse(method, attempt, resp.StatusCode, resp.Header, bodyBytes) {
+			if err := waitForSiteReadRetry(ctx, attempt, resp.Header); err != nil {
+				return nil, cookieHeader, err
+			}
+			continue
+		}
+		if payload, ok := anyRouterParseJSONObject(bodyBytes); ok {
+			if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+				return nil, cookieHeader, anyRouterFormatHTTPError(resp.StatusCode, resp.Header, string(bodyBytes))
+			}
+			return payload, cookieHeader, nil
 		}
 
 		text := strings.TrimSpace(string(bodyBytes))
@@ -862,7 +925,8 @@ func anyRouterRequestJSONWithCookies(ctx context.Context, siteRecord *model.Site
 			if anyRouterIsShieldChallenge(resp.Header.Get("Content-Type"), text) && cookieHeader != "" {
 				acwScV2 := anyRouterSolveAcwScV2(text)
 				if acwScV2 != "" {
-					cookieHeader = anyRouterUpsertCookie(cookieHeader, "acw_sc__v2", acwScV2)
+					jar.SetCookies(requestURI, []*http.Cookie{{Name: "acw_sc__v2", Value: acwScV2, Path: "/"}})
+					cookieHeader = anyRouterCookieHeaderForURL(jar, scopeURI, excludedCookieNames)
 					continue
 				}
 			}
@@ -898,7 +962,7 @@ func anyRouterParseJSONObject(body []byte) (map[string]any, bool) {
 func anyRouterFormatHTTPError(statusCode int, header http.Header, body string) error {
 	if payload, ok := anyRouterParseJSONObject([]byte(body)); ok {
 		if message := anyRouterExtractResponseMessage(payload); message != "" {
-			return newSiteHTTPError(statusCode, message)
+			return newSiteHTTPErrorWithHeader(statusCode, message, header)
 		}
 	}
 	bodyBytes := []byte(body)
@@ -906,9 +970,9 @@ func anyRouterFormatHTTPError(statusCode int, header http.Header, body string) e
 		return wrapCloudflareProtectionError(newCloudflareProtectionError(statusCode, header))
 	}
 	if summary := extractHTMLErrorSummary(body); summary != "" {
-		return newSiteHTTPError(statusCode, summary)
+		return newSiteHTTPErrorWithHeader(statusCode, summary, header)
 	}
-	return newSiteHTTPError(statusCode, "上游返回非 JSON 响应，无法解析为接口响应")
+	return newSiteHTTPErrorWithHeader(statusCode, "上游返回非 JSON 响应，无法解析为接口响应", header)
 }
 
 func anyRouterExtractResponseMessage(payload map[string]any) string {
@@ -967,21 +1031,38 @@ func anyRouterHasUsableSessionCookie(cookieHeader string) bool {
 	return false
 }
 
-func anyRouterMergeSetCookiePairs(cookieHeader string, setCookieHeaders []string) string {
-	merged := strings.TrimSpace(cookieHeader)
-	for _, raw := range setCookieHeaders {
-		raw = strings.TrimSpace(raw)
-		if raw == "" {
+func anyRouterCookiesFromHeader(cookieHeader string) []*http.Cookie {
+	cookies := make([]*http.Cookie, 0)
+	for _, part := range strings.Split(cookieHeader, ";") {
+		pair := strings.SplitN(strings.TrimSpace(part), "=", 2)
+		if len(pair) != 2 || strings.TrimSpace(pair[0]) == "" {
 			continue
 		}
-		firstPair := strings.TrimSpace(strings.SplitN(raw, ";", 2)[0])
-		parts := strings.SplitN(firstPair, "=", 2)
-		if len(parts) != 2 {
-			continue
-		}
-		merged = anyRouterUpsertCookie(merged, strings.TrimSpace(parts[0]), parts[1])
+		cookies = append(cookies, &http.Cookie{Name: strings.TrimSpace(pair[0]), Value: pair[1]})
 	}
-	return merged
+	return cookies
+}
+
+func anyRouterCookieNames(cookieHeader string) map[string]struct{} {
+	names := make(map[string]struct{})
+	for _, cookie := range anyRouterCookiesFromHeader(cookieHeader) {
+		names[strings.ToLower(cookie.Name)] = struct{}{}
+	}
+	return names
+}
+
+func anyRouterCookieHeaderForURL(jar http.CookieJar, target *url.URL, excludedNames map[string]struct{}) string {
+	if jar == nil || target == nil {
+		return ""
+	}
+	parts := make([]string, 0)
+	for _, cookie := range jar.Cookies(target) {
+		if _, excluded := excludedNames[strings.ToLower(cookie.Name)]; excluded {
+			continue
+		}
+		parts = append(parts, cookie.Name+"="+cookie.Value)
+	}
+	return strings.Join(parts, "; ")
 }
 
 func anyRouterUpsertCookie(cookieHeader string, name string, value string) string {

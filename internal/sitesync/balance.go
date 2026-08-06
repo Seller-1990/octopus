@@ -45,7 +45,7 @@ func fetchSiteAccountBalance(ctx context.Context, siteRecord *model.Site, accoun
 }
 
 func fetchManagementQuotaBalance(ctx context.Context, siteRecord *model.Site, account *model.SiteAccount, accessToken string, userID int, quotaIsRemaining bool) (float64, float64, float64) {
-	if strings.TrimSpace(accessToken) == "" {
+	if !managedSessionRequestAvailable(ctx, accessToken) {
 		return 0, 0, 0
 	}
 	knownUserID := userID > 0
@@ -145,7 +145,7 @@ func supportsTodayIncomeLogFallback(platform model.SitePlatform) bool {
 }
 
 func fetchTodayIncomeFromLogs(ctx context.Context, siteRecord *model.Site, account *model.SiteAccount, accessToken string, userID int) (float64, bool) {
-	if strings.TrimSpace(accessToken) == "" {
+	if !managedSessionRequestAvailable(ctx, accessToken) {
 		return 0, false
 	}
 

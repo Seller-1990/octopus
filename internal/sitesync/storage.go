@@ -2,6 +2,7 @@ package sitesync
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -13,6 +14,8 @@ import (
 	"github.com/bestruirui/octopus/internal/utils/log"
 	"gorm.io/gorm"
 )
+
+var errSiteAccountCredentialRevisionChanged = errors.New("site account credentials changed during operation")
 
 func loadSiteAccount(ctx context.Context, accountID int) (*model.Site, *model.SiteAccount, error) {
 	account, err := op.SiteAccountGet(accountID, ctx)
@@ -63,7 +66,36 @@ func persistSyncSnapshot(ctx context.Context, accountID int, snapshot *syncSnaps
 		return newSnapshotNilError()
 	}
 	now := time.Now()
+	writeRevision := snapshot.credentialRevision
 	err := db.GetDB().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if snapshot.persistCredential {
+			updated, err := persistSiteCredentialCAS(tx, accountID, writeRevision, snapshot.accessToken, snapshot.credentialIsCookie)
+			if err != nil {
+				return err
+			}
+			if !updated {
+				return errSiteAccountCredentialRevisionChanged
+			}
+			writeRevision++
+		}
+		updatePayload := map[string]any{
+			"last_sync_at":      &now,
+			"last_sync_status":  snapshot.status,
+			"last_sync_message": sanitizeSiteStatusText(snapshot.message),
+			"balance":           snapshot.balance,
+			"balance_used":      snapshot.balanceUsed,
+			"today_income":      snapshot.todayIncome,
+		}
+		accountResult := tx.Model(&model.SiteAccount{}).
+			Where("id = ? AND credential_revision = ?", accountID, writeRevision).
+			Updates(updatePayload)
+		if accountResult.Error != nil {
+			return accountResult.Error
+		}
+		if accountResult.RowsAffected != 1 {
+			return errSiteAccountCredentialRevisionChanged
+		}
+
 		var existingGroups []model.SiteUserGroup
 		if err := tx.Where("site_account_id = ?", accountID).Find(&existingGroups).Error; err != nil {
 			return err
@@ -90,21 +122,6 @@ func persistSyncSnapshot(ctx context.Context, accountID int, snapshot *syncSnaps
 		for _, item := range existingModels {
 			key := model.NormalizeSiteGroupKey(item.GroupKey) + "\x00" + strings.TrimSpace(item.ModelName)
 			existingModelMap[key] = item
-		}
-
-		updatePayload := map[string]any{
-			"last_sync_at":      &now,
-			"last_sync_status":  snapshot.status,
-			"last_sync_message": sanitizeSiteStatusText(snapshot.message),
-			"balance":           snapshot.balance,
-			"balance_used":      snapshot.balanceUsed,
-			"today_income":      snapshot.todayIncome,
-		}
-		if strings.TrimSpace(snapshot.accessToken) != "" {
-			updatePayload["access_token"] = strings.TrimSpace(snapshot.accessToken)
-		}
-		if err := tx.Model(&model.SiteAccount{}).Where("id = ?", accountID).Updates(updatePayload).Error; err != nil {
-			return err
 		}
 
 		groupResultMap := make(map[string]siteGroupSyncResult, len(snapshot.groupResults))
@@ -164,7 +181,63 @@ func persistSyncSnapshot(ctx context.Context, accountID int, snapshot *syncSnaps
 	if err != nil {
 		return err
 	}
+	snapshot.credentialRevision = writeRevision
 	return nil
+}
+
+func shouldPersistSiteCredential(account *model.SiteAccount, credential string) bool {
+	credential = strings.TrimSpace(credential)
+	if account == nil || credential == "" {
+		return false
+	}
+	if siteCredentialIsCookie(account, credential) {
+		if account.SessionCookieEncrypted == "" {
+			return true
+		}
+		stored, err := op.DecryptSecret(account.SessionCookieEncrypted)
+		return err != nil || strings.TrimSpace(stored) != credential
+	}
+	return strings.TrimSpace(account.AccessToken) != credential || account.SessionCookieEncrypted != ""
+}
+
+func siteCredentialIsCookie(account *model.SiteAccount, credential string) bool {
+	if account != nil {
+		switch account.CredentialType {
+		case model.SiteCredentialTypeCookie:
+			return true
+		case model.SiteCredentialTypeAccessToken, model.SiteCredentialTypeAPIKey:
+			return account.SessionCookieEncrypted != "" && strings.TrimSpace(account.AccessToken) == ""
+		}
+	}
+	return looksLikeCookieToken(credential)
+}
+
+func persistSiteCredentialCAS(tx *gorm.DB, accountID int, revision int64, credential string, cookieCredential bool) (bool, error) {
+	credential = strings.TrimSpace(credential)
+	if credential == "" {
+		return true, nil
+	}
+	updates := map[string]any{
+		"credential_revision": gorm.Expr("credential_revision + 1"),
+	}
+	if cookieCredential {
+		encrypted, err := op.EncryptSecret(credential)
+		if err != nil {
+			return false, fmt.Errorf("encrypt site session cookie: %w", err)
+		}
+		updates["access_token"] = ""
+		updates["session_cookie_encrypted"] = encrypted
+	} else {
+		updates["access_token"] = credential
+		updates["session_cookie_encrypted"] = ""
+	}
+	result := tx.Model(&model.SiteAccount{}).
+		Where("id = ? AND credential_revision = ?", accountID, revision).
+		Updates(updates)
+	if result.Error != nil {
+		return false, result.Error
+	}
+	return result.RowsAffected == 1, nil
 }
 
 func preparePersistedSyncModels(accountID int, incoming []model.SiteModel, existingModelMap map[string]model.SiteModel, now time.Time) []model.SiteModel {
@@ -649,17 +722,23 @@ func resolveExplicitSyncRoute(item *model.SiteModel, existing *model.SiteModel) 
 	return "", "", false
 }
 
-func updateAccountSyncState(ctx context.Context, accountID int, status model.SiteExecutionStatus, message string, accessToken string) error {
+func updateAccountSyncState(ctx context.Context, accountID int, credentialRevision int64, status model.SiteExecutionStatus, message string) error {
 	now := time.Now()
 	updatePayload := map[string]any{
 		"last_sync_at":      &now,
 		"last_sync_status":  status,
 		"last_sync_message": sanitizeSiteStatusText(message),
 	}
-	if strings.TrimSpace(accessToken) != "" {
-		updatePayload["access_token"] = strings.TrimSpace(accessToken)
+	result := db.GetDB().WithContext(ctx).Model(&model.SiteAccount{}).
+		Where("id = ? AND credential_revision = ?", accountID, credentialRevision).
+		Updates(updatePayload)
+	if result.Error != nil {
+		return result.Error
 	}
-	return db.GetDB().WithContext(ctx).Model(&model.SiteAccount{}).Where("id = ?", accountID).Updates(updatePayload).Error
+	if result.RowsAffected != 1 {
+		return errSiteAccountCredentialRevisionChanged
+	}
+	return nil
 }
 
 func updateAccountCheckinState(ctx context.Context, account *model.SiteAccount, status model.SiteExecutionStatus, message string, success bool, accessToken string) error {
@@ -690,8 +769,33 @@ func updateAccountCheckinState(ctx context.Context, account *model.SiteAccount, 
 		account.NextAutoCheckinAt = nextAt
 		updatePayload["next_auto_checkin_at"] = nextAt
 	}
-	if strings.TrimSpace(accessToken) != "" {
-		updatePayload["access_token"] = strings.TrimSpace(accessToken)
-	}
-	return db.GetDB().WithContext(ctx).Model(&model.SiteAccount{}).Where("id = ?", account.ID).Updates(updatePayload).Error
+	return db.GetDB().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		writeRevision := account.CredentialRevision
+		if shouldPersistSiteCredential(account, accessToken) {
+			updated, err := persistSiteCredentialCAS(
+				tx,
+				account.ID,
+				writeRevision,
+				accessToken,
+				siteCredentialIsCookie(account, accessToken),
+			)
+			if err != nil {
+				return err
+			}
+			if !updated {
+				return errSiteAccountCredentialRevisionChanged
+			}
+			writeRevision++
+		}
+		result := tx.Model(&model.SiteAccount{}).
+			Where("id = ? AND credential_revision = ?", account.ID, writeRevision).
+			Updates(updatePayload)
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected != 1 {
+			return errSiteAccountCredentialRevisionChanged
+		}
+		return nil
+	})
 }

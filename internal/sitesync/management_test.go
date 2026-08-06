@@ -5,10 +5,12 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/bestruirui/octopus/internal/apperror"
 	"github.com/bestruirui/octopus/internal/model"
+	"github.com/bestruirui/octopus/internal/op"
 )
 
 func TestSyncManagementPlatformDiscoversNewAPIUserID(t *testing.T) {
@@ -25,7 +27,7 @@ func TestSyncManagementPlatformDiscoversNewAPIUserID(t *testing.T) {
 				_, _ = w.Write([]byte(`{"success":false,"message":"unauthorized"}`))
 				return
 			}
-			if r.Header.Get("New-API-User") != "11494" {
+			if r.Header.Get("New-API-User") != "11494" || r.Header.Get("X-User-Id") != "11494" {
 				w.WriteHeader(http.StatusUnauthorized)
 				_, _ = w.Write([]byte(`{"success":false,"message":"无权进行此操作，未提供 New-Api-User"}`))
 				return
@@ -33,7 +35,7 @@ func TestSyncManagementPlatformDiscoversNewAPIUserID(t *testing.T) {
 			_, _ = w.Write([]byte(`{"success":true,"data":{"id":11494,"username":"managed-user"}}`))
 		case r.URL.Path == "/api/token/":
 			observedTokenUserHeader = r.Header.Get("New-API-User")
-			if r.Header.Get("Authorization") != "Bearer test-access-token" || observedTokenUserHeader != "11494" {
+			if r.Header.Get("Authorization") != "Bearer test-access-token" || observedTokenUserHeader != "11494" || r.Header.Get("X-User-Id") != "11494" {
 				w.WriteHeader(http.StatusUnauthorized)
 				_, _ = w.Write([]byte(`{"success":false,"message":"无权进行此操作，未提供 New-Api-User"}`))
 				return
@@ -41,7 +43,7 @@ func TestSyncManagementPlatformDiscoversNewAPIUserID(t *testing.T) {
 			_, _ = w.Write([]byte(`{"data":{"items":[{"name":"primary","key":"managed-key","group":"vip","status":1}]}}`))
 		case r.URL.Path == "/api/user/self/groups":
 			observedGroupUserHeader = r.Header.Get("New-API-User")
-			if r.Header.Get("Authorization") != "Bearer test-access-token" || observedGroupUserHeader != "11494" {
+			if r.Header.Get("Authorization") != "Bearer test-access-token" || observedGroupUserHeader != "11494" || r.Header.Get("X-User-Id") != "11494" {
 				w.WriteHeader(http.StatusUnauthorized)
 				_, _ = w.Write([]byte(`{"success":false,"message":"无权进行此操作，未提供 New-Api-User"}`))
 				return
@@ -87,6 +89,181 @@ func TestSyncManagementPlatformDiscoversNewAPIUserID(t *testing.T) {
 	}
 	if len(snapshot.models) != 1 || snapshot.models[0].ModelName != "gpt-4o-mini" {
 		t.Fatalf("unexpected synced models: %+v", snapshot.models)
+	}
+}
+
+func TestSyncManagementPlatformUsesLoginSetCookieSession(t *testing.T) {
+	const sessionCookie = "session=cookie-only-session"
+	platformUserID := 11494
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/user/login":
+			w.Header().Add("Set-Cookie", sessionCookie+"; Path=/api; HttpOnly")
+			w.Header().Add("Set-Cookie", "login_nonce=must-not-leak; Path=/api/user/login; HttpOnly")
+			_, _ = w.Write([]byte(`{"success":true,"data":{}}`))
+		case "/api/token/":
+			if r.Header.Get("Cookie") != sessionCookie || r.Header.Get("X-User-Id") != "11494" {
+				w.WriteHeader(http.StatusUnauthorized)
+				_, _ = w.Write([]byte(`{"success":false,"message":"cookie session required"}`))
+				return
+			}
+			_, _ = w.Write([]byte(`{"data":{"items":[{"name":"primary","key":"managed-key","group":"default","status":1}]}}`))
+		case "/api/user/self/groups":
+			if r.Header.Get("Cookie") != sessionCookie || r.Header.Get("X-User-Id") != "11494" {
+				w.WriteHeader(http.StatusUnauthorized)
+				_, _ = w.Write([]byte(`{"success":false,"message":"cookie session required"}`))
+				return
+			}
+			_, _ = w.Write([]byte(`{"data":[{"id":"default","name":"default"}]}`))
+		case "/models":
+			if r.Header.Get("Authorization") != "Bearer sk-managed-key" {
+				w.WriteHeader(http.StatusUnauthorized)
+				_, _ = w.Write([]byte(`{"error":"api key required"}`))
+				return
+			}
+			_, _ = w.Write([]byte(`{"data":[{"id":"gpt-4o-mini"}]}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	snapshot, err := syncManagementPlatform(context.Background(), &model.Site{
+		Platform: model.SitePlatformNewAPI,
+		BaseURL:  server.URL,
+	}, &model.SiteAccount{
+		CredentialType: model.SiteCredentialTypeUsernamePassword,
+		Username:       "cookie-user",
+		Password:       "password",
+		PlatformUserID: &platformUserID,
+		Enabled:        true,
+		AutoSync:       true,
+	})
+	if err != nil {
+		t.Fatalf("syncManagementPlatform returned error: %v", err)
+	}
+	if snapshot.accessToken != sessionCookie {
+		t.Fatalf("expected cookie session credential, got %q", snapshot.accessToken)
+	}
+	if len(snapshot.tokens) != 1 || snapshot.tokens[0].Token != "managed-key" {
+		t.Fatalf("unexpected synced tokens: %+v", snapshot.tokens)
+	}
+	if len(snapshot.models) != 1 || snapshot.models[0].ModelName != "gpt-4o-mini" {
+		t.Fatalf("unexpected synced models: %+v", snapshot.models)
+	}
+}
+
+func TestLoginManagedSessionUsesVerificationBrowserTransport(t *testing.T) {
+	var directCalls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		directCalls.Add(1)
+		w.WriteHeader(http.StatusBadGateway)
+	}))
+	defer server.Close()
+
+	var browserCalls atomic.Int32
+	ctx := withVerificationBrowserTransport(
+		context.Background(),
+		op.VerificationBrowserBinding{PairingID: 7, TaskID: 8, SessionID: 9, TargetURL: server.URL},
+		func(_ context.Context, request op.VerificationBrowserRequestInput) (*op.VerificationBrowserResponse, error) {
+			browserCalls.Add(1)
+			if request.URL != server.URL+"/api/user/login" || request.Method != http.MethodPost {
+				t.Fatalf("unexpected browser login request: %+v", request)
+			}
+			if request.Headers["Cookie"] != "" || request.Headers["User-Agent"] != "" {
+				t.Fatalf("browser-managed headers leaked into broker request: %+v", request.Headers)
+			}
+			return &op.VerificationBrowserResponse{
+				Status:  http.StatusOK,
+				Headers: map[string]string{"content-type": "application/json"},
+				Body:    `{"success":true,"data":{}}`,
+			}, nil
+		},
+	)
+
+	token, err := loginManagedSession(ctx, &model.Site{BaseURL: server.URL}, &model.SiteAccount{
+		CredentialType: model.SiteCredentialTypeUsernamePassword,
+		Username:       "browser-user",
+		Password:       "password",
+	})
+	if err != nil {
+		t.Fatalf("browser-managed login failed: %v", err)
+	}
+	if token != "" || browserCalls.Load() != 1 || directCalls.Load() != 0 {
+		t.Fatalf("unexpected browser login result: token=%q browser=%d direct=%d", token, browserCalls.Load(), directCalls.Load())
+	}
+}
+
+func TestSyncManagementPlatformUsesBrowserSessionWithoutExtractedToken(t *testing.T) {
+	var directManagementCalls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/api/") {
+			directManagementCalls.Add(1)
+		}
+		w.WriteHeader(http.StatusBadGateway)
+	}))
+	defer server.Close()
+
+	requested := make(map[string]int)
+	ctx := withVerificationBrowserTransport(
+		context.Background(),
+		op.VerificationBrowserBinding{PairingID: 17, TaskID: 18, SessionID: 19, TargetURL: server.URL},
+		func(_ context.Context, request op.VerificationBrowserRequestInput) (*op.VerificationBrowserResponse, error) {
+			path := strings.SplitN(strings.TrimPrefix(request.URL, server.URL), "?", 2)[0]
+			requested[path]++
+			body := `{"success":true,"data":{}}`
+			switch path {
+			case "/api/user/login":
+				body = `{"success":true,"data":{}}`
+			case "/api/token/":
+				body = `{"data":{"items":[{"name":"primary","key":"managed-key","group":"default","status":1}]}}`
+			case "/api/user/self/groups":
+				body = `{"data":[{"id":"default","name":"default"}]}`
+			case "/api/user/models":
+				body = `{"data":["gpt-browser-session"]}`
+			case "/api/user/self":
+				body = `{"success":true,"data":{"id":11494,"quota":500000,"used_quota":100000,"today_income":50000}}`
+			case "/api/pricing":
+				body = `{"data":[{"model_name":"gpt-browser-session","enable_groups":["default"]}]}`
+			case "/api/available_model":
+				body = `{"data":[]}`
+			default:
+				return &op.VerificationBrowserResponse{Status: http.StatusNotFound, Body: `{"message":"not found"}`}, nil
+			}
+			return &op.VerificationBrowserResponse{
+				Status:  http.StatusOK,
+				Headers: map[string]string{"content-type": "application/json"},
+				Body:    body,
+			}, nil
+		},
+	)
+
+	snapshot, err := syncManagementPlatform(ctx, &model.Site{
+		Platform: model.SitePlatformNewAPI,
+		BaseURL:  server.URL,
+	}, &model.SiteAccount{
+		CredentialType: model.SiteCredentialTypeUsernamePassword,
+		Username:       "browser-user",
+		Password:       "password",
+		Enabled:        true,
+		AutoSync:       true,
+	})
+	if err != nil {
+		t.Fatalf("browser-only management sync failed: %v", err)
+	}
+	for _, path := range []string{"/api/user/login", "/api/token/", "/api/user/self/groups", "/api/user/models", "/api/user/self"} {
+		if requested[path] == 0 {
+			t.Fatalf("browser-only sync skipped %s: requests=%+v", path, requested)
+		}
+	}
+	if directManagementCalls.Load() != 0 {
+		t.Fatalf("management request bypassed browser transport: %d", directManagementCalls.Load())
+	}
+	if len(snapshot.models) != 1 || snapshot.models[0].ModelName != "gpt-browser-session" ||
+		snapshot.balance != 1 || snapshot.balanceUsed != 0.2 || snapshot.todayIncome != 0.1 {
+		t.Fatalf("browser-only sync omitted models or balance: %+v", snapshot)
 	}
 }
 

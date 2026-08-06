@@ -30,6 +30,24 @@ type extendedBackupSeed struct {
 	quote      model.SiteModelPriceQuote
 }
 
+func TestSanitizeSiteAccountsForBackupRemovesLegacyPlaintextCookie(t *testing.T) {
+	accounts := []model.SiteAccount{
+		{AccessToken: "session=legacy-cookie"},
+		{CredentialType: model.SiteCredentialTypeAccessToken, AccessToken: "token=explicit-access-token", CredentialRevision: 1},
+		{CredentialType: model.SiteCredentialTypeAccessToken, AccessToken: "bearer-token", CredentialRevision: 1},
+	}
+	sanitizeSiteAccountsForBackup(accounts)
+	if accounts[0].AccessToken != "" {
+		t.Fatalf("legacy plaintext cookie remained in backup: %q", accounts[0].AccessToken)
+	}
+	if accounts[1].AccessToken != "token=explicit-access-token" {
+		t.Fatalf("explicit access token was unexpectedly changed: %q", accounts[1].AccessToken)
+	}
+	if accounts[2].AccessToken != "bearer-token" {
+		t.Fatalf("non-cookie access token was unexpectedly changed: %q", accounts[2].AccessToken)
+	}
+}
+
 func TestDBExportImportExtendedDataRoundTrip(t *testing.T) {
 	ctx := setupBackupTestDB(t)
 	seed := seedExtendedBackupData(t, ctx)
@@ -50,6 +68,7 @@ func TestDBExportImportExtendedDataRoundTrip(t *testing.T) {
 		}
 	}
 	if len(dump.SiteAccounts) != 1 ||
+		dump.SiteAccounts[0].SessionCookieEncrypted != "" ||
 		dump.SiteAccounts[0].VerificationCookieEncrypted != "" ||
 		dump.SiteAccounts[0].VerificationUserAgent != "" ||
 		dump.SiteAccounts[0].VerificationProxyConfigID != nil ||
