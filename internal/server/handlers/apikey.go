@@ -58,6 +58,10 @@ func createAPIKey(c *gin.Context) {
 		resp.ErrorWithAppError(c, http.StatusBadRequest, apperror.New(apperror.CodeCommonInvalidParam, "max_rpm must be non-negative").WithStatus(http.StatusBadRequest))
 		return
 	}
+	if err := op.ValidateAPIKeyQuota(req.QuotaLimit, req.QuotaPeriod); err != nil {
+		resp.ErrorWithAppError(c, http.StatusBadRequest, apperror.New(apperror.CodeCommonInvalidParam, err.Error()).WithStatus(http.StatusBadRequest))
+		return
+	}
 	req.APIKey = auth.GenerateAPIKey()
 	if err := op.APIKeyCreate(&req, c.Request.Context()); err != nil {
 		resp.Error(c, http.StatusInternalServerError, err.Error())
@@ -83,6 +87,10 @@ func updateAPIKey(c *gin.Context) {
 	}
 	if req.MaxRPM < 0 {
 		resp.ErrorWithAppError(c, http.StatusBadRequest, apperror.New(apperror.CodeCommonInvalidParam, "max_rpm must be non-negative").WithStatus(http.StatusBadRequest))
+		return
+	}
+	if err := op.ValidateAPIKeyQuota(req.QuotaLimit, req.QuotaPeriod); err != nil {
+		resp.ErrorWithAppError(c, http.StatusBadRequest, apperror.New(apperror.CodeCommonInvalidParam, err.Error()).WithStatus(http.StatusBadRequest))
 		return
 	}
 	if err := op.APIKeyUpdate(&req, c.Request.Context()); err != nil {

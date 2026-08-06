@@ -17,6 +17,10 @@ export interface APIKey {
     max_cost?: number; // 不传表示无限制
     max_rpm?: number; // 不传表示无限制
     supported_models?: string; // 不传表示支持所有模型
+    quota_limit: number; // 费用额度上限，0 表示不限制
+    quota_period: 'daily' | 'weekly' | 'monthly';
+    quota_used: number;
+    quota_reset_at?: number;
 }
 
 /**

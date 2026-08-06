@@ -548,6 +548,11 @@ func (m *imagesRelayMetrics) SaveOutcomeWithChannelStats(
 	op.StatsHourlyUpdate(globalStats)
 	op.StatsDailyUpdate(context.Background(), globalStats)
 	op.StatsAPIKeyUpdate(m.APIKeyID, globalStats)
+	if outcome == model.RequestOutcomeSuccess {
+		if err := op.APIKeyIncrementQuotaUsed(ctx, m.APIKeyID, m.Stats.InputCost+m.Stats.OutputCost); err != nil {
+			log.Warnf("failed to update API key quota for image request: %v", err)
+		}
+	}
 	channelStats := globalStats
 	channelStats.RequestCanceled = 0
 	channelStats.RequestIndeterminate = 0

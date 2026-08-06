@@ -113,3 +113,39 @@ type EffectivePrice struct {
 	Convertible       bool             `json:"convertible"`
 	MatchReason       string           `json:"match_reason,omitempty"`
 }
+
+// CatalogPriceSummary is the effective site price used by the model catalog.
+// CostUSD is populated only when the quote can be compared with other
+// per-million-token prices.
+type CatalogPriceSummary struct {
+	CanonicalModelID  int                  `json:"canonical_model_id"`
+	RouteCandidateID  int                  `json:"route_candidate_id"`
+	SiteID            int                  `json:"site_id"`
+	SiteName          string               `json:"site_name,omitempty"`
+	SiteAccountID     *int                 `json:"site_account_id,omitempty"`
+	SiteAccountName   string               `json:"site_account_name,omitempty"`
+	GroupKey          string               `json:"group_key,omitempty"`
+	UpstreamModelName string               `json:"upstream_model_name"`
+	CandidateStatus   RouteCandidateStatus `json:"candidate_status"`
+	Source            PriceQuoteSource     `json:"source"`
+	Unit              PriceUnit            `json:"unit"`
+	Currency          string               `json:"currency"`
+	Input             float64              `json:"input"`
+	Output            float64              `json:"output"`
+	CacheRead         float64              `json:"cache_read"`
+	CacheWrite        float64              `json:"cache_write"`
+	PerRequest        float64              `json:"per_request"`
+	GroupMultiplier   float64              `json:"group_multiplier"`
+	ExchangeRateToUSD float64              `json:"exchange_rate_to_usd"`
+	ObservedAt        *time.Time           `json:"observed_at,omitempty"`
+	Stale             bool                 `json:"stale"`
+	Convertible       bool                 `json:"convertible"`
+	Comparable        bool                 `json:"comparable"`
+	CostUSD           float64              `json:"cost_usd,omitempty"`
+}
+
+type CatalogPriceOverview struct {
+	CanonicalModelID int                   `json:"canonical_model_id"`
+	Best             *CatalogPriceSummary  `json:"best,omitempty"`
+	Prices           []CatalogPriceSummary `json:"prices"`
+}

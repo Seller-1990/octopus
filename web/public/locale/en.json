@@ -55,6 +55,7 @@
     "key": "Key",
     "model": "Models",
     "log": "Log",
+    "apikey": "API Key",
     "setting": "Setting"
   },
   "toolbar": {
@@ -224,6 +225,11 @@
       "label": "Group Health Checks",
       "description": "When enabled, show the home health summary, group-card health status, and allow manual health checks."
     },
+    "groupHealthProbePrompt": {
+      "label": "Custom Health Probe Prompt",
+      "description": "One prompt per line. A non-empty line is selected randomly for each probe; empty input uses the built-in prompt pool.",
+      "placeholder": "Leave empty to use built-in prompts"
+    },
     "circuitBreaker": {
       "title": "Circuit Breaker",
       "threshold": {
@@ -331,10 +337,16 @@
     "apiKey": {
       "title": "API Keys",
       "empty": "No API keys",
+      "searchPlaceholder": "Search by name or key...",
+      "noSearchResults": "No matching API keys",
       "add": "Add Key",
       "expand": "Open API key manager",
       "close": "Close API key manager",
       "dialogDescription": "Manage API keys, access limits, and expiration.",
+      "status": {
+        "enabled": "Enabled",
+        "disabled": "Disabled"
+      },
       "actions": {
         "stats": "View statistics for {name}",
         "edit": "Edit {name}",
@@ -364,6 +376,15 @@
         "unlimited": "Unlimited",
         "maxRPM": "Max RPM (Requests/Min)",
         "maxRPMPlaceholder": "Enter limit",
+        "quotaLimit": "Period quota limit (USD)",
+        "quotaLimitPlaceholder": "0 means unlimited",
+        "quotaPeriod": "Reset period",
+        "quotaHint": "Accumulates the actual cost of successful requests; over-limit requests return 429.",
+        "period": {
+          "daily": "Daily",
+          "weekly": "Weekly",
+          "monthly": "Monthly"
+        },
         "expireAt": "Expire Date",
         "selectDate": "Select date",
         "neverExpire": "Never Expire",
@@ -383,7 +404,11 @@
         "inputCost": "Input Cost",
         "outputCost": "Output Cost",
         "requestSuccess": "Request Success",
-        "requestFailed": "Request Failed"
+        "requestFailed": "Request Failed",
+        "totalCost": "Total cost",
+        "requestCount": "Requests",
+        "quota": "Quota usage",
+        "unlimited": "Unlimited"
       },
       "toast": {
         "createSuccess": "API key created",
@@ -921,6 +946,17 @@
       "aliasDeleteFailed": "Failed to delete alias",
       "candidates": "Route candidates",
       "noCandidates": "No route candidates",
+      "pricingOverview": "Pricing",
+      "noPricing": "No pricing data available",
+      "pricingLoading": "Loading prices...",
+      "pricingLoadFailed": "Price overview failed to load",
+      "pricingUnavailable": "Price overview unavailable",
+      "routeCount": "{count} routes",
+      "perMillion": "/ M tokens",
+      "lowest": "Lowest",
+      "lowestPrice": "Lowest comparable price",
+      "noComparablePrice": "No comparable site price",
+      "notComparable": "Not comparable",
       "statusLabel": "Lifecycle status",
       "priority": "Priority",
       "weight": "Weight",

@@ -156,6 +156,15 @@ export function AppContainer() {
                     );
                     break;
                 }
+                case 'apikey': {
+                    prefetches.push(
+                        queryClient.prefetchQuery({
+                            queryKey: ['apikeys', 'list'],
+                            queryFn: async () => apiClient.get('/api/v1/apikey/list'),
+                        })
+                    );
+                    break;
+                }
                 default:
                     break;
             }

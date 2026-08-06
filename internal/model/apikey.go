@@ -9,4 +9,8 @@ type APIKey struct {
 	MaxCost         float64 `json:"max_cost,omitempty"`
 	MaxRPM          int     `json:"max_rpm,omitempty"`
 	SupportedModels string  `json:"supported_models,omitempty"`
+	QuotaLimit      float64 `json:"quota_limit" gorm:"default:0"`
+	QuotaPeriod     string  `json:"quota_period" gorm:"size:16;default:'monthly'"`
+	QuotaUsed       float64 `json:"quota_used" gorm:"default:0"`
+	QuotaResetAt    int64   `json:"quota_reset_at" gorm:"default:0"`
 }

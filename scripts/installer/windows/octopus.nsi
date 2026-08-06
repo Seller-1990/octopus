@@ -2,7 +2,7 @@
 ; 用法: makensis /DVERSION=x.y.z /DBIN_PATH=octopus-desktop.exe octopus.nsi
 
 !ifndef VERSION
-  !define VERSION "v0.1.0"
+  !define VERSION "v1.1.0"
 !endif
 !ifndef BIN_PATH
   !define BIN_PATH "octopus-desktop.exe"

@@ -537,6 +537,178 @@ func CatalogList(ctx context.Context) ([]model.CanonicalModel, error) {
 	return items, err
 }
 
+// CatalogPriceOverviewList returns one effective site quote per routable
+// candidate, plus the lowest comparable per-million-token quote per model.
+// The batch quote lookup keeps the catalog page from issuing one request per
+// model or candidate.
+func CatalogPriceOverviewList(ctx context.Context) ([]model.CatalogPriceOverview, error) {
+	catalog, err := CatalogList(ctx)
+	if err != nil {
+		return nil, err
+	}
+	candidates := make([]model.RouteCandidate, 0)
+	for _, canonical := range catalog {
+		for _, candidate := range canonical.RouteCandidates {
+			if !catalogPriceCandidateVisible(candidate.Status) {
+				continue
+			}
+			candidates = append(candidates, candidate)
+		}
+	}
+	quotesByCandidate, err := batchPriceQuotesForCandidates(ctx, candidates)
+	if err != nil {
+		return nil, err
+	}
+	siteNames, accountNames, err := catalogPriceScopeNames(ctx, candidates, quotesByCandidate)
+	if err != nil {
+		return nil, err
+	}
+
+	now := time.Now()
+	result := make([]model.CatalogPriceOverview, 0, len(catalog))
+	for _, canonical := range catalog {
+		overview := model.CatalogPriceOverview{
+			CanonicalModelID: canonical.ID,
+			Prices:           make([]model.CatalogPriceSummary, 0, len(canonical.RouteCandidates)),
+		}
+		bestIndex := -1
+		for _, candidate := range canonical.RouteCandidates {
+			if !catalogPriceCandidateVisible(candidate.Status) {
+				continue
+			}
+			quote := pickBestPriceQuote(quotesByCandidate[candidate.ID], candidate, now)
+			if quote == nil {
+				continue
+			}
+			fresh := priceQuoteFresh(*quote, now)
+			source, _ := effectiveQuoteSource(*quote, candidate, fresh)
+			effective := effectivePriceFromQuote(ctx, *quote, candidate.ID, source, !fresh, "catalog price overview")
+			summary := model.CatalogPriceSummary{
+				CanonicalModelID:  canonical.ID,
+				RouteCandidateID:  candidate.ID,
+				SiteID:            quote.SiteID,
+				SiteName:          siteNames[quote.SiteID],
+				SiteAccountID:     quote.SiteAccountID,
+				GroupKey:          quote.GroupKey,
+				UpstreamModelName: candidate.UpstreamModelName,
+				CandidateStatus:   candidate.Status,
+				Source:            effective.Source,
+				Unit:              effective.Unit,
+				Currency:          effective.Currency,
+				Input:             effective.Input,
+				Output:            effective.Output,
+				CacheRead:         effective.CacheRead,
+				CacheWrite:        effective.CacheWrite,
+				PerRequest:        effective.PerRequest,
+				GroupMultiplier:   effective.GroupMultiplier,
+				ExchangeRateToUSD: effective.ExchangeRateToUSD,
+				ObservedAt:        effective.ObservedAt,
+				Stale:             effective.Stale,
+				Convertible:       effective.Convertible,
+			}
+			if quote.SiteAccountID != nil {
+				summary.SiteAccountName = accountNames[*quote.SiteAccountID]
+			}
+			summary.Comparable = effective.Unit == model.PriceUnitPerMillionTokens &&
+				effective.PerRequest == 0 && effective.Convertible &&
+				!math.IsNaN(effective.Input+effective.Output) &&
+				!math.IsInf(effective.Input+effective.Output, 0)
+			if summary.Comparable {
+				summary.CostUSD = (effective.Input + effective.Output) * effective.ExchangeRateToUSD
+				if math.IsNaN(summary.CostUSD) || math.IsInf(summary.CostUSD, 0) {
+					summary.Comparable = false
+					summary.CostUSD = 0
+				}
+			}
+			overview.Prices = append(overview.Prices, summary)
+			if summary.Comparable && (bestIndex < 0 || summary.CostUSD < overview.Prices[bestIndex].CostUSD) {
+				bestIndex = len(overview.Prices) - 1
+			}
+		}
+		if bestIndex >= 0 {
+			best := overview.Prices[bestIndex]
+			overview.Best = &best
+		}
+		result = append(result, overview)
+	}
+	return result, nil
+}
+
+func catalogPriceCandidateVisible(status model.RouteCandidateStatus) bool {
+	switch status {
+	case model.RouteCandidateUnavailable, model.RouteCandidateDisabled, model.RouteCandidateArchived:
+		return false
+	default:
+		return true
+	}
+}
+
+func catalogPriceScopeNames(
+	ctx context.Context,
+	candidates []model.RouteCandidate,
+	quotesByCandidate map[int][]model.SiteModelPriceQuote,
+) (map[int]string, map[int]string, error) {
+	siteIDs := make([]int, 0, len(candidates))
+	accountIDs := make([]int, 0, len(candidates))
+	seenSites := make(map[int]struct{})
+	seenAccounts := make(map[int]struct{})
+	for _, candidate := range candidates {
+		if candidate.SiteID != nil && *candidate.SiteID > 0 {
+			if _, ok := seenSites[*candidate.SiteID]; !ok {
+				seenSites[*candidate.SiteID] = struct{}{}
+				siteIDs = append(siteIDs, *candidate.SiteID)
+			}
+		}
+		if candidate.SiteAccountID != nil && *candidate.SiteAccountID > 0 {
+			if _, ok := seenAccounts[*candidate.SiteAccountID]; !ok {
+				seenAccounts[*candidate.SiteAccountID] = struct{}{}
+				accountIDs = append(accountIDs, *candidate.SiteAccountID)
+			}
+		}
+		for _, quote := range quotesByCandidate[candidate.ID] {
+			if quote.SiteID > 0 {
+				if _, ok := seenSites[quote.SiteID]; !ok {
+					seenSites[quote.SiteID] = struct{}{}
+					siteIDs = append(siteIDs, quote.SiteID)
+				}
+			}
+			if quote.SiteAccountID != nil && *quote.SiteAccountID > 0 {
+				if _, ok := seenAccounts[*quote.SiteAccountID]; !ok {
+					seenAccounts[*quote.SiteAccountID] = struct{}{}
+					accountIDs = append(accountIDs, *quote.SiteAccountID)
+				}
+			}
+		}
+	}
+	siteNames := make(map[int]string, len(siteIDs))
+	if len(siteIDs) > 0 {
+		var sites []struct {
+			ID   int    `gorm:"column:id"`
+			Name string `gorm:"column:name"`
+		}
+		if err := db.GetDB().WithContext(ctx).Table("sites").Select("id, name").Where("id IN ?", siteIDs).Find(&sites).Error; err != nil {
+			return nil, nil, err
+		}
+		for _, site := range sites {
+			siteNames[site.ID] = site.Name
+		}
+	}
+	accountNames := make(map[int]string, len(accountIDs))
+	if len(accountIDs) > 0 {
+		var accounts []struct {
+			ID   int    `gorm:"column:id"`
+			Name string `gorm:"column:name"`
+		}
+		if err := db.GetDB().WithContext(ctx).Table("site_accounts").Select("id, name").Where("id IN ?", accountIDs).Find(&accounts).Error; err != nil {
+			return nil, nil, err
+		}
+		for _, account := range accounts {
+			accountNames[account.ID] = account.Name
+		}
+	}
+	return siteNames, accountNames, nil
+}
+
 func CatalogAliasUpsert(ctx context.Context, canonicalModelID int, alias string) (*model.ModelAlias, error) {
 	normalized := NormalizeModelIdentity(alias)
 	if canonicalModelID <= 0 || normalized == "" {

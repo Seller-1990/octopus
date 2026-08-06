@@ -1257,6 +1257,74 @@ func TestCandidateMultiplierAppliesGroupMultiplierToPriceFallback(t *testing.T) 
 	}
 }
 
+func TestCatalogPriceOverviewSelectsLowestComparableSite(t *testing.T) {
+	ctx := setupBackupTestDB(t)
+	sites := []model.Site{
+		{Name: "overview-cheap", Platform: model.SitePlatformNewAPI, BaseURL: "https://cheap.example.com", Enabled: true},
+		{Name: "overview-expensive", Platform: model.SitePlatformNewAPI, BaseURL: "https://expensive.example.com", Enabled: true},
+	}
+	for i := range sites {
+		if err := dbpkg.GetDB().WithContext(ctx).Create(&sites[i]).Error; err != nil {
+			t.Fatalf("create site %d: %v", i, err)
+		}
+	}
+	accounts := []model.SiteAccount{
+		{SiteID: sites[0].ID, Name: "cheap-account", CredentialType: model.SiteCredentialTypeAPIKey, APIKey: "cheap-key", Enabled: true},
+		{SiteID: sites[1].ID, Name: "expensive-account", CredentialType: model.SiteCredentialTypeAPIKey, APIKey: "expensive-key", Enabled: true},
+	}
+	for i := range accounts {
+		if err := dbpkg.GetDB().WithContext(ctx).Create(&accounts[i]).Error; err != nil {
+			t.Fatalf("create account %d: %v", i, err)
+		}
+	}
+	channels := []model.Channel{
+		{Name: "overview-cheap-channel", Model: "overview-model", Enabled: true},
+		{Name: "overview-expensive-channel", Model: "overview-model", Enabled: true},
+	}
+	for i := range channels {
+		if err := ChannelCreate(&channels[i], ctx); err != nil {
+			t.Fatalf("create channel %d: %v", i, err)
+		}
+	}
+	canonical := model.CanonicalModel{
+		Name: "overview-model", NormalizedName: "overview-model",
+		RoutingStrategy: model.RoutingStrategyBalanced, ProtocolPolicy: model.ProtocolPolicyAuto, Enabled: true,
+	}
+	if err := dbpkg.GetDB().WithContext(ctx).Create(&canonical).Error; err != nil {
+		t.Fatalf("create canonical: %v", err)
+	}
+	candidates := []model.RouteCandidate{
+		{CanonicalModelID: canonical.ID, ChannelID: channels[0].ID, UpstreamModelName: "overview-model", SiteID: &sites[0].ID, SiteAccountID: &accounts[0].ID, SiteGroupKey: model.SiteDefaultGroupKey, Status: model.RouteCandidateActive, LastSeenAt: time.Now()},
+		{CanonicalModelID: canonical.ID, ChannelID: channels[1].ID, UpstreamModelName: "overview-model", SiteID: &sites[1].ID, SiteAccountID: &accounts[1].ID, SiteGroupKey: model.SiteDefaultGroupKey, Status: model.RouteCandidateActive, LastSeenAt: time.Now()},
+	}
+	for i := range candidates {
+		if err := dbpkg.GetDB().WithContext(ctx).Create(&candidates[i]).Error; err != nil {
+			t.Fatalf("create candidate %d: %v", i, err)
+		}
+	}
+	quotes := []model.SiteModelPriceQuote{
+		{RouteCandidateID: &candidates[0].ID, SiteID: sites[0].ID, SiteAccountID: &accounts[0].ID, GroupKey: model.SiteDefaultGroupKey, ModelName: "overview-model", Source: model.PriceQuoteSourceSiteExact, Unit: model.PriceUnitPerMillionTokens, Currency: "USD", Input: 1, Output: 2, GroupMultiplier: 1, ExchangeRateToUSD: 1, ObservedAt: time.Now()},
+		{RouteCandidateID: &candidates[1].ID, SiteID: sites[1].ID, SiteAccountID: &accounts[1].ID, GroupKey: model.SiteDefaultGroupKey, ModelName: "overview-model", Source: model.PriceQuoteSourceSiteExact, Unit: model.PriceUnitPerMillionTokens, Currency: "USD", Input: 4, Output: 5, GroupMultiplier: 1, ExchangeRateToUSD: 1, ObservedAt: time.Now()},
+	}
+	if err := SiteModelPriceQuotesUpsert(ctx, quotes); err != nil {
+		t.Fatalf("create quotes: %v", err)
+	}
+
+	overviews, err := CatalogPriceOverviewList(ctx)
+	if err != nil {
+		t.Fatalf("CatalogPriceOverviewList: %v", err)
+	}
+	if len(overviews) != 1 || overviews[0].Best == nil {
+		t.Fatalf("unexpected overviews: %+v", overviews)
+	}
+	if overviews[0].Best.SiteName != "overview-cheap" || overviews[0].Best.CostUSD != 3 {
+		t.Fatalf("best price mismatch: %+v", *overviews[0].Best)
+	}
+	if len(overviews[0].Prices) != 2 {
+		t.Fatalf("expected two site prices, got %d", len(overviews[0].Prices))
+	}
+}
+
 func TestCatalogPlanGroupTierFallsBackToSiteReserve(t *testing.T) {
 	ctx := setupBackupTestDB(t)
 	site := model.Site{

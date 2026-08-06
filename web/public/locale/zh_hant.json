@@ -55,6 +55,7 @@
     "key": "金鑰",
     "model": "模型",
     "log": "日誌",
+    "apikey": "金鑰",
     "setting": "設定"
   },
   "toolbar": {
@@ -224,6 +225,11 @@
       "label": "分組健康檢查",
       "description": "啟用後顯示首頁分組健康摘要、分組卡片健康狀態，並允許手動執行健康檢查。"
     },
+    "groupHealthProbePrompt": {
+      "label": "自訂探活 Prompt",
+      "description": "每行一條 Prompt，每次探活隨機選擇非空行；留白時使用內建 Prompt 池。",
+      "placeholder": "留白使用內建 Prompt"
+    },
     "circuitBreaker": {
       "title": "熔斷器配置",
       "threshold": {
@@ -331,10 +337,16 @@
     "apiKey": {
       "title": "API 金鑰",
       "empty": "暫無 API 金鑰",
+      "searchPlaceholder": "搜尋名稱或金鑰...",
+      "noSearchResults": "沒有符合的 API 金鑰",
       "add": "新增金鑰",
       "expand": "開啟 API 金鑰管理",
       "close": "關閉 API 金鑰管理",
       "dialogDescription": "管理 API 金鑰、存取限制和到期時間。",
+      "status": {
+        "enabled": "啟用",
+        "disabled": "停用"
+      },
       "actions": {
         "stats": "檢視 {name} 的統計",
         "edit": "編輯 {name}",
@@ -364,6 +376,15 @@
         "unlimited": "無限制",
         "maxRPM": "每分鐘最大請求數 (RPM)",
         "maxRPMPlaceholder": "請輸入限制",
+        "quotaLimit": "週期額度上限（美元）",
+        "quotaLimitPlaceholder": "0 表示不限制",
+        "quotaPeriod": "重置週期",
+        "quotaHint": "按成功請求的實際費用累計，超限後返回 429。",
+        "period": {
+          "daily": "每日",
+          "weekly": "每週",
+          "monthly": "每月"
+        },
         "expireAt": "過期日期",
         "selectDate": "選擇日期",
         "neverExpire": "永不過期",
@@ -383,7 +404,11 @@
         "inputCost": "輸入費用",
         "outputCost": "輸出費用",
         "requestSuccess": "成功請求",
-        "requestFailed": "失敗請求"
+        "requestFailed": "失敗請求",
+        "totalCost": "總費用",
+        "requestCount": "請求數",
+        "quota": "額度使用",
+        "unlimited": "不限制"
       },
       "toast": {
         "createSuccess": "API 金鑰建立成功",
@@ -921,6 +946,17 @@
       "aliasDeleteFailed": "刪除別名失敗",
       "candidates": "路由候選",
       "noCandidates": "暫無路由候選",
+      "pricingOverview": "定價資訊",
+      "noPricing": "暫無定價資料",
+      "pricingLoading": "價格載入中...",
+      "pricingLoadFailed": "價格總覽載入失敗",
+      "pricingUnavailable": "價格總覽不可用",
+      "routeCount": "{count} 條路由",
+      "perMillion": "/ 百萬 Token",
+      "lowest": "最低",
+      "lowestPrice": "最低可比較價格",
+      "noComparablePrice": "暫無可比較的站點價格",
+      "notComparable": "不可比較",
       "statusLabel": "生命週期狀態",
       "priority": "優先級",
       "weight": "權重",

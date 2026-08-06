@@ -92,6 +92,39 @@ export type CanonicalModelUpdate = Pick<
     'id' | 'routing_strategy' | 'protocol_policy' | 'allow_lossy' | 'enabled'
 > & { vendor?: string };
 
+export type CatalogPriceSummary = {
+    canonical_model_id: number;
+    route_candidate_id: number;
+    site_id: number;
+    site_name?: string;
+    site_account_id?: number | null;
+    site_account_name?: string;
+    group_key?: string;
+    upstream_model_name: string;
+    candidate_status: RouteCandidateStatus;
+    source: 'manual_override' | 'site_exact' | 'site_wide' | 'site_stale' | 'global' | 'unknown';
+    unit: 'per_million_tokens' | 'per_request' | 'site_credit';
+    currency: string;
+    input: number;
+    output: number;
+    cache_read: number;
+    cache_write: number;
+    per_request: number;
+    group_multiplier: number;
+    exchange_rate_to_usd: number;
+    observed_at?: string;
+    stale: boolean;
+    convertible: boolean;
+    comparable: boolean;
+    cost_usd?: number;
+};
+
+export type CatalogPriceOverview = {
+    canonical_model_id: number;
+    best?: CatalogPriceSummary;
+    prices: CatalogPriceSummary[];
+};
+
 export type RouteCandidateUpdate = Pick<
     RouteCandidate,
     'id' | 'status' | 'priority' | 'weight' | 'protocol_policy' | 'allow_lossy'
@@ -210,6 +243,7 @@ export type RoutePreviewRequest = {
 
 function invalidateCatalog(queryClient: ReturnType<typeof useQueryClient>) {
     queryClient.invalidateQueries({ queryKey: ['models', 'catalog'] });
+    queryClient.invalidateQueries({ queryKey: ['models', 'catalog-prices'] });
     queryClient.invalidateQueries({ queryKey: ['models', 'prices'] });
     queryClient.invalidateQueries({ queryKey: ['models', 'effective-price'] });
     queryClient.invalidateQueries({ queryKey: ['header-policies'] });
@@ -259,6 +293,15 @@ export function useModelCatalog() {
                 aliases: item.aliases ?? [],
                 route_candidates: item.route_candidates ?? [],
             })),
+        refetchInterval: 30000,
+    });
+}
+
+export function useCatalogPriceOverview() {
+    return useQuery({
+        queryKey: ['models', 'catalog-prices'],
+        queryFn: () => apiClient.get<CatalogPriceOverview[]>('/api/v1/model/catalog/prices'),
+        select: (items) => items ?? [],
         refetchInterval: 30000,
     });
 }

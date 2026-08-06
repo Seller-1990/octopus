@@ -55,6 +55,7 @@
     "key": "密钥",
     "model": "模型",
     "log": "日志",
+    "apikey": "密钥",
     "setting": "设置"
   },
   "toolbar": {
@@ -224,6 +225,11 @@
       "label": "分组健康检查",
       "description": "启用后显示首页分组健康摘要、分组卡片健康状态，并允许手动运行健康检查。"
     },
+    "groupHealthProbePrompt": {
+      "label": "自定义测活 Prompt",
+      "description": "每行一条 Prompt，每次探活随机选择非空行；留空时使用内置 Prompt 池。",
+      "placeholder": "留空使用内置 Prompt"
+    },
     "circuitBreaker": {
       "title": "熔断器配置",
       "threshold": {
@@ -331,10 +337,16 @@
     "apiKey": {
       "title": "API 密钥",
       "empty": "暂无 API 密钥",
+      "searchPlaceholder": "搜索名称或密钥...",
+      "noSearchResults": "没有匹配的 API 密钥",
       "add": "添加密钥",
       "expand": "打开 API 密钥管理",
       "close": "关闭 API 密钥管理",
       "dialogDescription": "管理 API 密钥、访问限制和过期时间。",
+      "status": {
+        "enabled": "启用",
+        "disabled": "停用"
+      },
       "actions": {
         "stats": "查看 {name} 的统计",
         "edit": "编辑 {name}",
@@ -364,6 +376,15 @@
         "unlimited": "无限制",
         "maxRPM": "每分钟最大请求数 (RPM)",
         "maxRPMPlaceholder": "请输入限制",
+        "quotaLimit": "周期额度上限（美元）",
+        "quotaLimitPlaceholder": "0 表示不限制",
+        "quotaPeriod": "重置周期",
+        "quotaHint": "额度按成功请求的实际费用累计，超限后返回 429。",
+        "period": {
+          "daily": "每日",
+          "weekly": "每周",
+          "monthly": "每月"
+        },
         "expireAt": "过期日期",
         "selectDate": "选择日期",
         "neverExpire": "永不过期",
@@ -383,7 +404,11 @@
         "inputCost": "输入费用",
         "outputCost": "输出费用",
         "requestSuccess": "成功请求",
-        "requestFailed": "失败请求"
+        "requestFailed": "失败请求",
+        "totalCost": "总费用",
+        "requestCount": "请求数",
+        "quota": "额度使用",
+        "unlimited": "无限制"
       },
       "toast": {
         "createSuccess": "API 密钥创建成功",
@@ -921,6 +946,17 @@
       "aliasDeleteFailed": "删除别名失败",
       "candidates": "路由候选",
       "noCandidates": "暂无路由候选",
+      "pricingOverview": "定价信息",
+      "noPricing": "暂无定价数据",
+      "pricingLoading": "价格加载中...",
+      "pricingLoadFailed": "价格总览加载失败",
+      "pricingUnavailable": "价格总览不可用",
+      "routeCount": "{count} 条路由",
+      "perMillion": "/ 百万 Token",
+      "lowest": "最低",
+      "lowestPrice": "最低可比较价格",
+      "noComparablePrice": "暂无可比较的站点价格",
+      "notComparable": "不可比较",
       "statusLabel": "生命周期状态",
       "priority": "优先级",
       "weight": "权重",

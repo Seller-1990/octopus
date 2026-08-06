@@ -3,16 +3,59 @@ package op
 import (
 	"context"
 	"fmt"
+	"strings"
+	"sync"
+	"time"
 
 	"github.com/bestruirui/octopus/internal/db"
 	"github.com/bestruirui/octopus/internal/model"
 	"github.com/bestruirui/octopus/internal/utils/cache"
+	"gorm.io/gorm"
 )
 
 var apiKeyCache = cache.New[int, model.APIKey](16)
 var apiKeyIDMap = cache.New[string, int](16)
+var apiKeyQuotaMu sync.Mutex
+
+const defaultAPIKeyQuotaPeriod = "monthly"
+
+func normalizeAPIKeyQuotaPeriod(period string) (string, error) {
+	period = strings.ToLower(strings.TrimSpace(period))
+	if period == "" {
+		return defaultAPIKeyQuotaPeriod, nil
+	}
+	switch period {
+	case "daily", "weekly", "monthly":
+		return period, nil
+	default:
+		return "", fmt.Errorf("quota_period must be daily, weekly, or monthly")
+	}
+}
+
+// ValidateAPIKeyQuota validates the public quota settings accepted by the API.
+func ValidateAPIKeyQuota(limit float64, period string) error {
+	if limit < 0 {
+		return fmt.Errorf("quota_limit must be non-negative")
+	}
+	_, err := normalizeAPIKeyQuotaPeriod(period)
+	return err
+}
 
 func APIKeyCreate(key *model.APIKey, ctx context.Context) error {
+	period, err := normalizeAPIKeyQuotaPeriod(key.QuotaPeriod)
+	if err != nil {
+		return err
+	}
+	if key.QuotaLimit < 0 {
+		return fmt.Errorf("quota_limit must be non-negative")
+	}
+	key.QuotaPeriod = period
+	key.QuotaUsed = 0
+	if key.QuotaLimit > 0 {
+		key.QuotaResetAt = computeNextQuotaReset(period, time.Now())
+	} else {
+		key.QuotaResetAt = 0
+	}
 	if err := db.GetDB().WithContext(ctx).Create(key).Error; err != nil {
 		return fmt.Errorf("failed to create API key: %w", err)
 	}
@@ -22,14 +65,37 @@ func APIKeyCreate(key *model.APIKey, ctx context.Context) error {
 }
 
 func APIKeyUpdate(key *model.APIKey, ctx context.Context) error {
+	apiKeyQuotaMu.Lock()
+	defer apiKeyQuotaMu.Unlock()
 	existing, ok := apiKeyCache.Get(key.ID)
 	if !ok {
 		return fmt.Errorf("API key not found")
 	}
+	period, err := normalizeAPIKeyQuotaPeriod(key.QuotaPeriod)
+	if err != nil {
+		return err
+	}
+	if key.QuotaLimit < 0 {
+		return fmt.Errorf("quota_limit must be non-negative")
+	}
+	key.APIKey = existing.APIKey
+	key.QuotaPeriod = period
+	if key.QuotaLimit <= 0 {
+		key.QuotaUsed = 0
+		key.QuotaResetAt = 0
+	} else if existing.QuotaLimit <= 0 || existing.QuotaPeriod != period {
+		key.QuotaUsed = 0
+		key.QuotaResetAt = computeNextQuotaReset(period, time.Now())
+	} else {
+		key.QuotaUsed = existing.QuotaUsed
+		key.QuotaResetAt = existing.QuotaResetAt
+		if key.QuotaResetAt == 0 {
+			key.QuotaResetAt = computeNextQuotaReset(period, time.Now())
+		}
+	}
 	if err := db.GetDB().WithContext(ctx).Omit("api_key").Save(key).Error; err != nil {
 		return fmt.Errorf("failed to update API key: %w", err)
 	}
-	key.APIKey = existing.APIKey
 	apiKeyCache.Set(key.ID, *key)
 	return nil
 }
@@ -59,8 +125,9 @@ func APIKeyGetByAPIKey(apiKey string, ctx context.Context) (model.APIKey, error)
 }
 
 func APIKeyDelete(id int, ctx context.Context) error {
-	k := model.APIKey{
-		ID: id,
+	k, ok := apiKeyCache.Get(id)
+	if !ok {
+		return fmt.Errorf("API key not found")
 	}
 	if err := StatsAPIKeyDel(id); err != nil {
 		return fmt.Errorf("failed to delete stats API key: %v", err)
@@ -83,9 +150,75 @@ func apiKeyRefreshCache(ctx context.Context) error {
 	if err := db.GetDB().WithContext(ctx).Find(&apiKeys).Error; err != nil {
 		return err
 	}
+	apiKeyCache.Clear()
+	apiKeyIDMap.Clear()
 	for _, apiKey := range apiKeys {
 		apiKeyCache.Set(apiKey.ID, apiKey)
 		apiKeyIDMap.Set(apiKey.APIKey, apiKey.ID)
+	}
+	return nil
+}
+
+func computeNextQuotaReset(period string, now time.Time) int64 {
+	local := now.In(now.Location())
+	switch period {
+	case "daily":
+		next := local.AddDate(0, 0, 1)
+		return time.Date(next.Year(), next.Month(), next.Day(), 0, 0, 0, 0, local.Location()).Unix()
+	case "weekly":
+		daysUntilMonday := (8 - int(local.Weekday())) % 7
+		if daysUntilMonday == 0 {
+			daysUntilMonday = 7
+		}
+		next := local.AddDate(0, 0, daysUntilMonday)
+		return time.Date(next.Year(), next.Month(), next.Day(), 0, 0, 0, 0, local.Location()).Unix()
+	case "monthly":
+		return time.Date(local.Year(), local.Month()+1, 1, 0, 0, 0, 0, local.Location()).Unix()
+	default:
+		return time.Date(local.Year(), local.Month()+1, 1, 0, 0, 0, 0, local.Location()).Unix()
+	}
+}
+
+func APIKeyResetQuota(ctx context.Context, id int, period string, now time.Time) error {
+	period, err := normalizeAPIKeyQuotaPeriod(period)
+	if err != nil {
+		return err
+	}
+	nextReset := computeNextQuotaReset(period, now)
+	apiKeyQuotaMu.Lock()
+	defer apiKeyQuotaMu.Unlock()
+	if err := db.GetDB().WithContext(ctx).Model(&model.APIKey{}).Where("id = ?", id).Updates(map[string]interface{}{
+		"quota_used":     0,
+		"quota_reset_at": nextReset,
+		"quota_period":   period,
+	}).Error; err != nil {
+		return fmt.Errorf("failed to reset API key quota: %w", err)
+	}
+	if key, ok := apiKeyCache.Get(id); ok {
+		key.QuotaUsed = 0
+		key.QuotaResetAt = nextReset
+		apiKeyCache.Set(id, key)
+	}
+	return nil
+}
+
+func APIKeyIncrementQuotaUsed(ctx context.Context, id int, cost float64) error {
+	if id == 0 || cost <= 0 {
+		return nil
+	}
+	apiKeyQuotaMu.Lock()
+	defer apiKeyQuotaMu.Unlock()
+	if err := db.GetDB().WithContext(ctx).Model(&model.APIKey{}).Where("id = ?", id).Update("quota_used", gorm.Expr("quota_used + ?", cost)).Error; err != nil {
+		return fmt.Errorf("failed to increment API key quota: %w", err)
+	}
+	var current model.APIKey
+	if err := db.GetDB().WithContext(ctx).First(&current, id).Error; err != nil {
+		return fmt.Errorf("failed to reload API key quota: %w", err)
+	}
+	if key, ok := apiKeyCache.Get(id); ok {
+		key.QuotaUsed = current.QuotaUsed
+		key.QuotaResetAt = current.QuotaResetAt
+		apiKeyCache.Set(id, key)
 	}
 	return nil
 }

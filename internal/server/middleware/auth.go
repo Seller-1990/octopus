@@ -86,6 +86,35 @@ func APIKeyAuth() gin.HandlerFunc {
 				return
 			}
 		}
+		if apiKeyObj.QuotaLimit > 0 {
+			now := time.Now()
+			if apiKeyObj.QuotaResetAt > 0 && now.Unix() >= apiKeyObj.QuotaResetAt {
+				if err := op.APIKeyResetQuota(c.Request.Context(), apiKeyObj.ID, apiKeyObj.QuotaPeriod, now); err != nil {
+					resp.Error(c, http.StatusInternalServerError, err.Error())
+					c.Abort()
+					return
+				}
+				apiKeyObj.QuotaUsed = 0
+			} else if apiKeyObj.QuotaResetAt == 0 {
+				if err := op.APIKeyResetQuota(c.Request.Context(), apiKeyObj.ID, apiKeyObj.QuotaPeriod, now); err != nil {
+					resp.Error(c, http.StatusInternalServerError, err.Error())
+					c.Abort()
+					return
+				}
+				apiKeyObj.QuotaUsed = 0
+			}
+			if apiKeyObj.QuotaUsed >= apiKeyObj.QuotaLimit {
+				c.JSON(http.StatusTooManyRequests, gin.H{
+					"error": map[string]any{
+						"message": "API key quota exceeded",
+						"type":    "quota_exceeded",
+						"code":    "quota_exceeded",
+					},
+				})
+				c.Abort()
+				return
+			}
+		}
 		c.Set("request_type", requestType)
 		c.Set("supported_models", apiKeyObj.SupportedModels)
 		c.Set("api_key_id", apiKeyObj.ID)

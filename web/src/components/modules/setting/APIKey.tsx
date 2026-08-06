@@ -2,7 +2,7 @@
 
 import { useCallback, useId, useMemo, useState } from 'react';
 import { useTranslations } from 'next-intl';
-import { KeyRound, Plus, Loader, Trash2, Check, X, Info, CalendarDays, Pencil, Maximize2, Share2 } from 'lucide-react';
+import { KeyRound, Plus, Loader, Trash2, Check, X, Info, CalendarDays, Pencil, Maximize2, Share2, Search } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Input } from '@/components/ui/input';
 import { Calendar } from '@/components/ui/calendar';
@@ -27,6 +27,7 @@ import {
 } from '@/api/endpoints/apikey';
 import { useGroupList } from '@/api/endpoints/group';
 import { useStatsAPIKey } from '@/api/endpoints/stats';
+import type { StatsAPIKeyFormatted } from '@/api/endpoints/stats';
 import { useSettingValue, SettingKey } from '@/api/endpoints/setting';
 import { APIKeyExportOverlay } from './APIKeyExport';
 import { OverlayPortal } from './OverlayPortal';
@@ -95,12 +96,19 @@ function APIKeyForm({ apiKey, isPending, submitLabel, onSubmit, onClose }: APIKe
         max_cost: apiKey?.max_cost,
         max_rpm: apiKey?.max_rpm,
         supported_models: apiKey?.supported_models,
+        quota_limit: apiKey?.quota_limit ?? 0,
+        quota_period: apiKey?.quota_period ?? 'monthly',
+        quota_used: apiKey?.quota_used ?? 0,
+        quota_reset_at: apiKey?.quota_reset_at,
     }));
     const [maxCostInput, setMaxCostInput] = useState(() =>
         apiKey?.max_cost != null ? String(apiKey.max_cost) : ''
     );
     const [maxRPMInput, setMaxRPMInput] = useState(() =>
         apiKey?.max_rpm != null ? String(apiKey.max_rpm) : ''
+    );
+    const [quotaLimitInput, setQuotaLimitInput] = useState(() =>
+        apiKey?.quota_limit ? String(apiKey.quota_limit) : ''
     );
     const [expireTime, setExpireTime] = useState(() => {
         if (apiKey?.expire_at) {
@@ -187,6 +195,18 @@ function APIKeyForm({ apiKey, isPending, submitLabel, onSubmit, onClose }: APIKe
         updateForm({ max_rpm: undefined });
     }, [updateForm]);
 
+    const handleQuotaLimitChange = useCallback((val: string) => {
+        const normalized = normalizeMoneyInput(val);
+        setQuotaLimitInput(normalized);
+        const num = parseFloat(normalized);
+        updateForm({ quota_limit: Number.isFinite(num) ? num : 0 });
+    }, [updateForm]);
+
+    const handleClearQuotaLimit = useCallback(() => {
+        setQuotaLimitInput('');
+        updateForm({ quota_limit: 0 });
+    }, [updateForm]);
+
     const handleSubmit = useCallback((e: React.FormEvent) => {
         e.preventDefault();
         if (!form.name.trim()) return;
@@ -268,6 +288,53 @@ function APIKeyForm({ apiKey, isPending, submitLabel, onSubmit, onClose }: APIKe
                         {t('apiKey.form.unlimited')}
                     </button>
                 </div>
+            </div>
+
+            <div className="grid gap-1 text-xs text-muted-foreground">
+                {t('apiKey.form.quotaLimit')}
+                <div className="flex items-center gap-2">
+                    <div className="relative flex-1">
+                        <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">$</span>
+                        <Input
+                            type="text"
+                            inputMode="decimal"
+                            placeholder={t('apiKey.form.quotaLimitPlaceholder')}
+                            value={quotaLimitInput}
+                            onChange={(e) => handleQuotaLimitChange(e.target.value)}
+                            className="h-9 text-sm rounded-xl pl-7"
+                            disabled={isPending}
+                        />
+                    </div>
+                    <button
+                        type="button"
+                        onClick={handleClearQuotaLimit}
+                        disabled={isPending}
+                        aria-pressed={!quotaLimitInput.trim()}
+                        className={cn(
+                            'h-9 px-3 rounded-xl border text-sm transition-colors shrink-0',
+                            !quotaLimitInput.trim()
+                                ? 'bg-primary text-primary-foreground border-primary/30'
+                                : 'border-border bg-muted/20 text-foreground hover:bg-muted/30',
+                            isPending && 'opacity-50 cursor-not-allowed'
+                        )}
+                    >
+                        {t('apiKey.form.unlimited')}
+                    </button>
+                </div>
+                <div className="flex items-center gap-2">
+                    <span className="shrink-0">{t('apiKey.form.quotaPeriod')}</span>
+                    <select
+                        value={form.quota_period}
+                        onChange={(e) => updateForm({ quota_period: e.target.value as APIKey['quota_period'] })}
+                        disabled={isPending}
+                        className="h-9 flex-1 rounded-xl border border-border bg-muted/20 px-3 text-sm text-foreground"
+                    >
+                        <option value="daily">{t('apiKey.form.period.daily')}</option>
+                        <option value="weekly">{t('apiKey.form.period.weekly')}</option>
+                        <option value="monthly">{t('apiKey.form.period.monthly')}</option>
+                    </select>
+                </div>
+                <div className="text-[11px] text-muted-foreground/80">{t('apiKey.form.quotaHint')}</div>
             </div>
 
             <div className="grid gap-1 text-xs text-muted-foreground">
@@ -401,7 +468,7 @@ function APIKeyForm({ apiKey, isPending, submitLabel, onSubmit, onClose }: APIKe
     );
 }
 
-function APIKeyFormOverlay({
+export function APIKeyFormOverlay({
     layoutId,
     apiKey,
     isPending,
@@ -438,7 +505,7 @@ function APIKeyFormOverlay({
     );
 }
 
-function APIKeyStatsCard({
+export function APIKeyStatsCard({
     layoutId,
     apiKey,
     onClose,
@@ -450,6 +517,7 @@ function APIKeyStatsCard({
     const t = useTranslations('setting');
     const { data: statsList = [] } = useStatsAPIKey();
     const stats = useMemo(() => statsList.find((s) => s.api_key_id === apiKey.id), [statsList, apiKey.id]);
+    const quotaPercent = apiKey.quota_limit > 0 ? Math.min(100, (apiKey.quota_used / apiKey.quota_limit) * 100) : 0;
 
     return (
         <OverlayPortal onClose={onClose}>
@@ -477,47 +545,60 @@ function APIKeyStatsCard({
                 {!stats ? (
                     <div className="text-sm text-muted-foreground">{t('apiKey.stats.noData')}</div>
                 ) : (
-                    <div className="grid grid-cols-2 gap-3 text-sm">
-                        <div className="rounded-lg bg-muted/40 p-3">
+                    <div className="space-y-3 text-sm">
+                        <div className="rounded-lg border border-border/60 bg-muted/30 p-3">
+                            <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
+                                <span>{t('apiKey.stats.quota')}</span>
+                                <span>{apiKey.quota_limit > 0 ? `${apiKey.quota_used.toFixed(4)} / ${apiKey.quota_limit.toFixed(4)} $` : t('apiKey.stats.unlimited')}</span>
+                            </div>
+                            {apiKey.quota_limit > 0 ? (
+                                <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-muted">
+                                    <div className="h-full rounded-full bg-primary transition-[width]" style={{ width: `${quotaPercent}%` }} />
+                                </div>
+                            ) : null}
+                        </div>
+                        <div className="grid grid-cols-2 gap-3">
+                            <div className="rounded-lg bg-muted/40 p-3">
                             <div className="text-xs text-muted-foreground">{t('apiKey.stats.inputToken')}</div>
                             <div className="font-medium tabular-nums">
                                 {stats.input_token.formatted.value}
                                 {stats.input_token.formatted.unit}
                             </div>
-                        </div>
-                        <div className="rounded-lg bg-muted/40 p-3">
+                            </div>
+                            <div className="rounded-lg bg-muted/40 p-3">
                             <div className="text-xs text-muted-foreground">{t('apiKey.stats.outputToken')}</div>
                             <div className="font-medium tabular-nums">
                                 {stats.output_token.formatted.value}
                                 {stats.output_token.formatted.unit}
                             </div>
-                        </div>
-                        <div className="rounded-lg bg-muted/40 p-3">
+                            </div>
+                            <div className="rounded-lg bg-muted/40 p-3">
                             <div className="text-xs text-muted-foreground">{t('apiKey.stats.inputCost')}</div>
                             <div className="font-medium tabular-nums">
                                 {stats.input_cost.formatted.value}
                                 {stats.input_cost.formatted.unit}
                             </div>
-                        </div>
-                        <div className="rounded-lg bg-muted/40 p-3">
+                            </div>
+                            <div className="rounded-lg bg-muted/40 p-3">
                             <div className="text-xs text-muted-foreground">{t('apiKey.stats.outputCost')}</div>
                             <div className="font-medium tabular-nums">
                                 {stats.output_cost.formatted.value}
                                 {stats.output_cost.formatted.unit}
                             </div>
-                        </div>
-                        <div className="rounded-lg bg-muted/40 p-3">
+                            </div>
+                            <div className="rounded-lg bg-muted/40 p-3">
                             <div className="text-xs text-muted-foreground">{t('apiKey.stats.requestSuccess')}</div>
                             <div className="font-medium tabular-nums">
                                 {stats.request_success.formatted.value}
                                 {stats.request_success.formatted.unit}
                             </div>
-                        </div>
-                        <div className="rounded-lg bg-muted/40 p-3">
+                            </div>
+                            <div className="rounded-lg bg-muted/40 p-3">
                             <div className="text-xs text-muted-foreground">{t('apiKey.stats.requestFailed')}</div>
                             <div className="font-medium tabular-nums">
                                 {stats.request_failed.formatted.value}
                                 {stats.request_failed.formatted.unit}
+                            </div>
                             </div>
                         </div>
                     </div>
@@ -529,6 +610,7 @@ function APIKeyStatsCard({
 
 function APIKeyKeyItem({
     apiKey,
+    stats,
     statsLayoutId,
     editLayoutId,
     deleteLayoutId,
@@ -540,6 +622,7 @@ function APIKeyKeyItem({
     isDeleting,
 }: {
     apiKey: APIKey;
+    stats?: StatsAPIKeyFormatted;
     statsLayoutId: string;
     editLayoutId: string;
     deleteLayoutId: string;
@@ -552,6 +635,9 @@ function APIKeyKeyItem({
 }) {
     const t = useTranslations('setting');
     const [confirmDelete, setConfirmDelete] = useState(false);
+    const quotaPercent = apiKey.quota_limit > 0
+        ? Math.min(100, (apiKey.quota_used / apiKey.quota_limit) * 100)
+        : 0;
 
     return (
         <motion.div
@@ -560,11 +646,35 @@ function APIKeyKeyItem({
             animate={{ opacity: 1, scale: 1 }}
             exit={{ opacity: 0, scale: 0.95, transition: { duration: 0.2 } }}
             transition={{ type: 'spring', stiffness: 500, damping: 30 }}
-            className="group relative flex items-center justify-between gap-3 p-3 rounded-xl bg-muted/50 overflow-hidden origin-top"
+            className="group relative grid gap-3 rounded-xl bg-muted/50 p-3 overflow-hidden origin-top sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center"
         >
-            <span className="text-sm font-medium truncate">{apiKey.name}</span>
+            <div className="min-w-0 space-y-2">
+                <div className="flex min-w-0 items-center gap-2">
+                    <span className="truncate text-sm font-medium">{apiKey.name}</span>
+                    <Badge variant={apiKey.enabled ? 'default' : 'secondary'} className="shrink-0 text-[10px]">
+                        {apiKey.enabled ? t('apiKey.status.enabled') : t('apiKey.status.disabled')}
+                    </Badge>
+                </div>
+                <code className="block truncate text-xs text-muted-foreground">
+                    {apiKey.api_key.slice(0, 12)}...{apiKey.api_key.slice(-4)}
+                </code>
+                <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
+                    <span>{t('apiKey.stats.totalCost')}: {stats ? `${stats.total_cost.formatted.value}${stats.total_cost.formatted.unit}` : '-'}</span>
+                    <span>{t('apiKey.stats.requestCount')}: {stats ? `${stats.request_count.formatted.value}${stats.request_count.formatted.unit}` : '-'}</span>
+                    <span>
+                        {t('apiKey.stats.quota')}: {apiKey.quota_limit > 0
+                            ? `${apiKey.quota_used.toFixed(4)} / ${apiKey.quota_limit.toFixed(4)} $`
+                            : t('apiKey.stats.unlimited')}
+                    </span>
+                </div>
+                {apiKey.quota_limit > 0 ? (
+                    <div className="h-1 overflow-hidden rounded-full bg-muted">
+                        <div className="h-full rounded-full bg-primary transition-[width]" style={{ width: `${quotaPercent}%` }} />
+                    </div>
+                ) : null}
+            </div>
 
-            <div className="flex items-center gap-1.5">
+            <div className="flex items-center justify-end gap-1.5">
                 <motion.button
                     type="button"
                     layoutId={statsLayoutId}
@@ -648,15 +758,17 @@ function APIKeyKeyItem({
     );
 }
 
-function APIKeyPanelBase({
+export function APIKeyPanelBase({
     idPrefix,
     containerClassName,
     listClassName,
+    showSearch = false,
     renderHeaderExtra,
 }: {
     idPrefix: string;
     containerClassName: string;
     listClassName: string;
+    showSearch?: boolean;
     renderHeaderExtra?: (ctx: {
         disabled: boolean;
         onCloseAllOverlays: () => void;
@@ -664,6 +776,7 @@ function APIKeyPanelBase({
 }) {
     const t = useTranslations('setting');
     const { data: apiKeys, isLoading: apiKeysLoading, error: apiKeysError } = useAPIKeyList();
+    const { data: statsList = [] } = useStatsAPIKey();
     const createAPIKey = useCreateAPIKey();
     const updateAPIKey = useUpdateAPIKey();
     const deleteAPIKey = useDeleteAPIKey();
@@ -682,11 +795,15 @@ function APIKeyPanelBase({
     const [editingKey, setEditingKey] = useState<{ apiKey: APIKey; layoutId: string } | null>(null);
     const [exportingKey, setExportingKey] = useState<{ apiKey: APIKey; layoutId: string } | null>(null);
     const [deletingId, setDeletingId] = useState<number | null>(null);
+    const [search, setSearch] = useState('');
 
     const sortedApiKeys = useMemo(() => {
         if (!apiKeys) return [];
-        return [...apiKeys].sort((a, b) => a.id - b.id);
-    }, [apiKeys]);
+        const query = search.trim().toLowerCase();
+        return [...apiKeys]
+            .filter((key) => !query || key.name.toLowerCase().includes(query) || key.api_key.toLowerCase().includes(query))
+            .sort((a, b) => a.id - b.id);
+    }, [apiKeys, search]);
 
     const handleDelete = useCallback((id: number) => {
         setDeletingId(id);
@@ -758,6 +875,18 @@ function APIKeyPanelBase({
                     {renderHeaderExtra?.({ disabled: disabledHeaderActions, onCloseAllOverlays: closeAllOverlays })}
                 </div>
             </div>
+            {showSearch ? (
+                <div className="relative">
+                    <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+                    <Input
+                        value={search}
+                        onChange={(e) => setSearch(e.target.value)}
+                        placeholder={t('apiKey.searchPlaceholder')}
+                        aria-label={t('apiKey.searchPlaceholder')}
+                        className="h-9 rounded-xl pl-9"
+                    />
+                </div>
+            ) : null}
 
             <AnimatePresence>
                 {isAdding && (
@@ -818,6 +947,10 @@ function APIKeyPanelBase({
                     <div className="h-full flex items-center justify-center text-sm text-muted-foreground">
                         {t('apiKey.empty')}
                     </div>
+                ) : sortedApiKeys.length === 0 ? (
+                    <div className="h-full flex items-center justify-center text-sm text-muted-foreground">
+                        {t('apiKey.noSearchResults')}
+                    </div>
                 ) : (
                     <AnimatePresence>
                         {sortedApiKeys.map((apiKey) => {
@@ -829,6 +962,7 @@ function APIKeyPanelBase({
                                 <APIKeyKeyItem
                                     key={apiKey.id}
                                     apiKey={apiKey}
+                                    stats={statsList.find((stats) => stats.api_key_id === apiKey.id)}
                                     statsLayoutId={statsLayoutId}
                                     editLayoutId={editLayoutId}
                                     deleteLayoutId={deleteLayoutId}

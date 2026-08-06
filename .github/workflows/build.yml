@@ -30,7 +30,7 @@ jobs:
           if VERSION="$(git describe --tags --exact-match 2>/dev/null)"; then
             :
           else
-            VERSION="v0.1.0-dev+$(git rev-parse --short HEAD)"
+            VERSION="v1.1.0-dev+$(git rev-parse --short HEAD)"
           fi
           echo "value=${VERSION}" >> "${GITHUB_OUTPUT}"
 

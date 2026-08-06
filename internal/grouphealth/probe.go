@@ -136,10 +136,27 @@ var probePrompts = []string{
 	"Say hello in exactly one short word.",
 }
 
+// resolveProbePrompt returns a probe prompt, preferring user-configured custom prompts.
+func resolveProbePrompt() string {
+	custom, _ := op.SettingGetString(model.SettingKeyGroupHealthProbePrompt)
+	if custom = strings.TrimSpace(custom); custom != "" {
+		lines := strings.Split(custom, "\n")
+		var prompts []string
+		for _, line := range lines {
+			if trimmed := strings.TrimSpace(line); trimmed != "" {
+				prompts = append(prompts, trimmed)
+			}
+		}
+		if len(prompts) > 0 {
+			return prompts[rand.Intn(len(prompts))]
+		}
+	}
+	return probePrompts[rand.Intn(len(probePrompts))]
+}
+
 func buildProbeInternalRequest(channelType outbound.OutboundType, modelName string) *transformerModel.InternalLLMRequest {
 	stream := false
-	// 自然问题池随机取一条，替代固定的 "ping"
-	ping := probePrompts[rand.Intn(len(probePrompts))]
+	ping := resolveProbePrompt()
 	// 足够小的 token 上限：校验链路可用，但成本几乎为零
 	sixteen := int64(16)
 

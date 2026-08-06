@@ -52,6 +52,10 @@ func init() {
 				Handle(listModelCatalog),
 		).
 		AddRoute(
+			router.NewRoute("/catalog/prices", http.MethodGet).
+				Handle(listCatalogPriceOverview),
+		).
+		AddRoute(
 			router.NewRoute("/catalog/discovered", http.MethodGet).
 				Handle(listDiscoveredModels),
 		).
@@ -170,6 +174,15 @@ func upsertCurrencyRate(c *gin.Context) {
 
 func listModelCatalog(c *gin.Context) {
 	items, err := op.CatalogList(c.Request.Context())
+	if err != nil {
+		resp.Error(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+	resp.Success(c, items)
+}
+
+func listCatalogPriceOverview(c *gin.Context) {
+	items, err := op.CatalogPriceOverviewList(c.Request.Context())
 	if err != nil {
 		resp.Error(c, http.StatusInternalServerError, err.Error())
 		return

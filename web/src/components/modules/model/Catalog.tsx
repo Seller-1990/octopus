@@ -1,12 +1,14 @@
 'use client';
 
 import { useCallback, useMemo, useState } from 'react';
-import { AlertCircle, RefreshCw, SearchX } from 'lucide-react';
+import { AlertCircle, CircleDollarSign, RefreshCw, SearchX } from 'lucide-react';
 import { useTranslations } from 'next-intl';
 import { useChannelList } from '@/api/endpoints/channel';
 import {
     type CanonicalModel,
+    type CatalogPriceOverview,
     useModelCatalog,
+    useCatalogPriceOverview,
     useSyncModelCatalog,
     useUpdateCanonicalModel,
 } from '@/api/endpoints/model-catalog';
@@ -26,6 +28,7 @@ function errorMessage(error: unknown) {
 export function ModelCatalog() {
     const t = useTranslations('model.catalog');
     const catalog = useModelCatalog();
+    const pricing = useCatalogPriceOverview();
     const syncCatalog = useSyncModelCatalog();
     const channels = useChannelList();
     const searchTerm = useSearchStore((state) => state.getSearchTerm('model'));
@@ -49,6 +52,11 @@ export function ModelCatalog() {
         [channels.data],
     );
 
+    const priceByCanonicalId = useMemo(
+        () => new Map((pricing.data ?? []).map((item) => [item.canonical_model_id, item])),
+        [pricing.data],
+    );
+
     const sync = () => {
         syncCatalog.mutate(undefined, {
             onSuccess: (result) =>
@@ -68,10 +76,13 @@ export function ModelCatalog() {
         (model: CanonicalModel) => (
             <CatalogCard
                 model={model}
+                priceOverview={priceByCanonicalId.get(model.id)}
+                pricingLoading={pricing.isLoading}
+                pricingError={pricing.error}
                 onSelect={() => setSelectedModel(model)}
             />
         ),
-        [],
+        [priceByCanonicalId, pricing.error, pricing.isLoading],
     );
 
     const header = (
@@ -136,6 +147,9 @@ export function ModelCatalog() {
             />
             <CatalogModelDialog
                 model={selectedModel}
+                priceOverview={selectedModel ? priceByCanonicalId.get(selectedModel.id) : undefined}
+                pricingLoading={pricing.isLoading}
+                pricingError={pricing.error}
                 channelNameById={channelNameById}
                 onClose={() => setSelectedModel(null)}
             />
@@ -145,9 +159,15 @@ export function ModelCatalog() {
 
 function CatalogCard({
     model,
+    priceOverview,
+    pricingLoading,
+    pricingError,
     onSelect,
 }: {
     model: CanonicalModel;
+    priceOverview?: CatalogPriceOverview;
+    pricingLoading: boolean;
+    pricingError?: unknown;
     onSelect: () => void;
 }) {
     const t = useTranslations('model.catalog');
@@ -199,6 +219,45 @@ function CatalogCard({
                     />
                 </div>
             </div>
+            <div className="flex min-w-0 items-center gap-1.5 border-t pt-2 text-xs">
+                <CircleDollarSign className="size-3.5 shrink-0 text-muted-foreground" />
+                {priceOverview?.best ? (
+                    <>
+                        <span className="min-w-0 truncate text-muted-foreground">
+                            {priceOverview.best.site_name || `#${priceOverview.best.site_id}`}
+                        </span>
+                        <span
+                            className="min-w-0 truncate font-medium tabular-nums"
+                            title={formatCatalogPricePair(priceOverview.best.input, priceOverview.best.output, priceOverview.best.currency)}
+                        >
+                            {formatCatalogPricePair(priceOverview.best.input, priceOverview.best.output, priceOverview.best.currency)}
+                        </span>
+                        <span className="shrink-0 text-muted-foreground">{t('perMillion')}</span>
+                        <BadgeLowest label={t('lowest')} />
+                    </>
+                ) : priceOverview ? (
+                    <span className="truncate text-muted-foreground">{t('noComparablePrice')}</span>
+                ) : pricingError ? (
+                    <span className="truncate text-destructive">{t('pricingUnavailable')}</span>
+                ) : pricingLoading ? (
+                    <span className="truncate text-muted-foreground">{t('pricingLoading')}</span>
+                ) : (
+                    <span className="truncate text-muted-foreground">{t('noPricing')}</span>
+                )}
+            </div>
         </button>
     );
+}
+
+function formatCatalogPrice(value: number, currency: string) {
+    if (!Number.isFinite(value)) return '-';
+    return `${new Intl.NumberFormat(undefined, { maximumSignificantDigits: 6 }).format(value)} ${currency}`;
+}
+
+function formatCatalogPricePair(input: number, output: number, currency: string) {
+    return `${formatCatalogPrice(input, currency)} / ${formatCatalogPrice(output, currency)}`;
+}
+
+function BadgeLowest({ label }: { label: string }) {
+    return <span className="shrink-0 rounded-sm border border-emerald-500/30 px-1 py-0.5 text-[10px] text-emerald-600">{label}</span>;
 }

@@ -22,7 +22,7 @@ resolve_git_version() {
         printf '%s' "${exact_tag}"
         return
     fi
-    printf 'v0.1.0-dev+%s' "$(git rev-parse --short HEAD 2>/dev/null || echo 'unknown')"
+    printf 'v1.1.0-dev+%s' "$(git rev-parse --short HEAD 2>/dev/null || echo 'unknown')"
 }
 
 # Build metadata

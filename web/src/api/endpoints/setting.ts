@@ -30,6 +30,7 @@ export const SettingKey = {
     SSEHeartbeatInterval: 'sse_heartbeat_interval',
     SSEPreStreamHeartbeatDelay: 'sse_pre_stream_heartbeat_delay',
     GroupHealthEnabled: 'group_health_enabled',
+    GroupHealthProbePrompt: 'group_health_probe_prompt',
     ProjectedChannelAutoGroupEnabled: 'projected_channel_auto_group_enabled',
     CatalogGroupProvisioning: 'catalog_group_provisioning',
     OutlierRetireEnabled: 'outlier_retire_enabled',

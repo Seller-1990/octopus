@@ -1,7 +1,7 @@
 'use client';
 
 import { useTranslations } from 'next-intl';
-import { CalendarClock, Hash, HeartPulse, ShieldCheck, Timer, TimerOff, type LucideIcon } from 'lucide-react';
+import { CalendarClock, Hash, HeartPulse, MessageSquareText, ShieldCheck, Timer, TimerOff, type LucideIcon } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
 import { SettingKey } from '@/api/endpoints/setting';
@@ -52,12 +52,23 @@ export function SettingReliability() {
     const t = useTranslations('setting');
     const outlier = useSettingToggle(SettingKey.OutlierRetireEnabled);
     const groupHealth = useSettingToggle(SettingKey.GroupHealthEnabled);
+    const probePrompt = useSettingField(SettingKey.GroupHealthProbePrompt);
 
     return (
         <SettingCard icon={ShieldCheck} title={t('reliability.title')}>
             {/* 分组健康检查 */}
             <SettingRow icon={HeartPulse} label={t('groupHealth.label')} tooltip={t('groupHealth.description')}>
                 <Switch checked={groupHealth.enabled} onCheckedChange={groupHealth.toggle} />
+            </SettingRow>
+            <SettingRow icon={MessageSquareText} label={t('groupHealthProbePrompt.label')} tooltip={t('groupHealthProbePrompt.description')}>
+                <textarea
+                    value={probePrompt.value}
+                    onChange={(event) => probePrompt.setValue(event.target.value)}
+                    onBlur={probePrompt.save}
+                    placeholder={t('groupHealthProbePrompt.placeholder')}
+                    rows={3}
+                    className="min-h-20 w-64 resize-y rounded-xl border border-input bg-background px-3 py-2 text-sm outline-none ring-offset-background placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring"
+                />
             </SettingRow>
 
             {/* 熔断器 */}
