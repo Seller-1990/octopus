@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useMemo, useCallback, useEffect, useRef } from 'react';
-import { Trash2, X, Pencil, Pin, PinOff } from 'lucide-react';
+import { Trash2, X, Pencil, Pin, PinOff, ArrowDownWideNarrow } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { type Group, useDeleteGroup, useUpdateGroup, useToggleGroupPin } from '@/api/endpoints/group';
 import { useModelChannelList } from '@/api/endpoints/model';
@@ -17,6 +17,7 @@ import { GroupHealthBadge } from './health';
 import { modelChannelKey, MODE_LABELS } from './utils';
 import { GroupMode, type GroupUpdateRequest } from '@/api/endpoints/group';
 import { PresetPopover } from './PresetPopover';
+import { sortGroupMembers, type GroupSortStrategy } from './member-sort';
 import {
     MorphingDialog,
     MorphingDialogClose,
@@ -83,6 +84,7 @@ export function GroupCard({ group }: { group: Group }) {
     const [isDragging, setIsDragging] = useState(false);
     const [members, setMembers] = useState<SelectedMember[]>([]);
     const [weightOverrides, setWeightOverrides] = useState<Record<string, number>>({});
+    const [sortStrategy, setSortStrategy] = useState<GroupSortStrategy>('non_relay_balance');
     const weightTimerRef = useRef<NodeJS.Timeout | null>(null);
     const membersRef = useRef<SelectedMember[]>([]);
 
@@ -375,6 +377,53 @@ export function GroupCard({ group }: { group: Group }) {
             </div>
 
             <GroupHealthBadge groupId={group.id} />
+
+            {/* Sort strategy selector + auto-sort button */}
+            <div className="flex items-center gap-1.5 mb-2">
+                <select
+                    value={sortStrategy}
+                    onChange={(e) => setSortStrategy(e.target.value as GroupSortStrategy)}
+                    className="h-6 flex-1 min-w-0 rounded-lg border border-border/60 bg-muted/50 px-1.5 text-xs text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+                >
+                    <option value="non_relay_balance">{t('form.sortStrategy.nonRelayBalance')}</option>
+                    <option value="non_relay_multiplier">{t('form.sortStrategy.nonRelayMultiplier')}</option>
+                    <option value="multiplier_balance">{t('form.sortStrategy.multiplierBalance')}</option>
+                    <option value="balance_only">{t('form.sortStrategy.balanceOnly')}</option>
+                </select>
+                <Tooltip side="top" sideOffset={6} align="center">
+                    <TooltipTrigger asChild>
+                        <button
+                            type="button"
+                            disabled={renderedMembers.length === 0 || !group.id}
+                            onClick={() => {
+                                if (!group.id || renderedMembers.length === 0) return;
+                                const sorted = sortGroupMembers(renderedMembers, sortStrategy);
+                                const itemsToUpdate = sorted
+                                    .map((m, i) => ({ member: m, newPriority: i + 1 }))
+                                    .filter(({ member, newPriority }) => {
+                                        if (!member.item_id) return false;
+                                        const origPriority = priorityByItemId.get(member.item_id);
+                                        return origPriority !== undefined && origPriority !== newPriority;
+                                    })
+                                    .map(({ member, newPriority }) => ({ id: member.item_id!, priority: newPriority, weight: member.weight ?? 1 }));
+                                if (itemsToUpdate.length > 0) {
+                                    updateGroup.mutate({ id: group.id!, items_to_update: itemsToUpdate }, { onSuccess, onError });
+                                }
+                            }}
+                            className={cn(
+                                'shrink-0 flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-medium transition-colors',
+                                renderedMembers.length === 0
+                                    ? 'text-muted-foreground/50 cursor-not-allowed'
+                                    : 'hover:bg-muted text-muted-foreground hover:text-foreground'
+                            )}
+                        >
+                            <ArrowDownWideNarrow className="size-3.5" />
+                            <span>{t('form.autoSort')}</span>
+                        </button>
+                    </TooltipTrigger>
+                    <TooltipContent>{t('form.autoSortHint')}</TooltipContent>
+                </Tooltip>
+            </div>
 
             <section className="rounded-xl border border-border/50 bg-muted/30 overflow-hidden relative h-101">
                 <MemberList

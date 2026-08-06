@@ -486,7 +486,8 @@ func (m *RelayMetrics) saveLog(ctx context.Context, outcome model.RequestOutcome
 		relayLog.PriceCacheRead = m.EffectivePrice.CacheRead
 		relayLog.PriceCacheWrite = m.EffectivePrice.CacheWrite
 		relayLog.PricePerRequest = m.EffectivePrice.PerRequest
-		relayLog.PriceGroupMultiplier = m.EffectivePrice.GroupMultiplier
+		groupMultiplier := m.EffectivePrice.GroupMultiplier
+		relayLog.PriceGroupMultiplier = &groupMultiplier
 		relayLog.PriceExchangeRateUSD = m.EffectivePrice.ExchangeRateToUSD
 		relayLog.PriceObservedAt = m.EffectivePrice.ObservedAt
 		relayLog.PriceStale = m.EffectivePrice.Stale

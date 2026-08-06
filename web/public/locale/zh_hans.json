@@ -657,7 +657,13 @@
       "selectChannel": "渠道",
       "selectModel": "模型",
       "autoSort": "自动排序",
-      "autoSortHint": "按规则排序：非中转(余额大→小) → 中转(倍率小→大)"
+      "autoSortHint": "按规则排序：非中转(余额大→小) → 中转(倍率小→大)",
+      "sortStrategy": {
+        "nonRelayBalance": "非中转+余额",
+        "nonRelayMultiplier": "非中转+倍率",
+        "multiplierBalance": "倍率+余额",
+        "balanceOnly": "仅余额"
+      }
     },
     "mode": {
       "roundRobin": "轮询",

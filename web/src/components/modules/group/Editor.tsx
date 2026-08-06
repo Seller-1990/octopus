@@ -15,7 +15,7 @@ import { getModelIcon } from '@/lib/model-icons';
 import type { GroupMode } from '@/api/endpoints/group';
 import type { SelectedMember } from './ItemList';
 import { MemberList } from './ItemList';
-import { sortGroupMembers } from './member-sort';
+import { sortGroupMembers, type GroupSortStrategy } from './member-sort';
 import { matchesGroupName, memberKey, normalizeKey, MODE_LABELS } from './utils';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/animate-ui/components/animate/tooltip';
 import { HelpCircle } from 'lucide-react';
@@ -198,6 +198,8 @@ function SortSection({
     showWeight,
     onClear,
     onAutoSort,
+    sortStrategy,
+    onSortStrategyChange,
 }: {
     members: SelectedMember[];
     onReorder: (members: SelectedMember[]) => void;
@@ -207,6 +209,8 @@ function SortSection({
     showWeight: boolean;
     onClear: () => void;
     onAutoSort: () => void;
+    sortStrategy: GroupSortStrategy;
+    onSortStrategyChange: (strategy: GroupSortStrategy) => void;
 }) {
     const t = useTranslations('group');
 
@@ -222,6 +226,16 @@ function SortSection({
                     )}
                 </span>
                 <span className="flex items-center gap-1">
+                    <select
+                        value={sortStrategy}
+                        onChange={(e) => onSortStrategyChange(e.target.value as GroupSortStrategy)}
+                        className="h-6 rounded-lg border border-border/60 bg-background/70 px-1.5 text-xs text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+                    >
+                        <option value="non_relay_balance">{t('form.sortStrategy.nonRelayBalance')}</option>
+                        <option value="non_relay_multiplier">{t('form.sortStrategy.nonRelayMultiplier')}</option>
+                        <option value="multiplier_balance">{t('form.sortStrategy.multiplierBalance')}</option>
+                        <option value="balance_only">{t('form.sortStrategy.balanceOnly')}</option>
+                    </select>
                     <TooltipProvider>
                         <Tooltip>
                             <TooltipTrigger asChild>
@@ -306,6 +320,7 @@ export function GroupEditor({
     const [maxRetries, setMaxRetries] = useState<number>(initial?.max_retries ?? 3);
     const [selectedMembers, setSelectedMembers] = useState<SelectedMember[]>(initial?.members ?? []);
     const [removingIds, setRemovingIds] = useState<Set<string>>(new Set());
+    const [sortStrategy, setSortStrategy] = useState<GroupSortStrategy>('non_relay_balance');
 
     const groupKey = normalizeKey(groupName);
     const regexKey = matchRegex.trim();
@@ -379,9 +394,9 @@ export function GroupEditor({
     const handleAutoSort = useCallback(() => {
         setSelectedMembers((prev) => {
             if (prev.length === 0) return prev;
-            return sortGroupMembers(prev);
+            return sortGroupMembers(prev, sortStrategy);
         });
-    }, []);
+    }, [sortStrategy]);
 
     const isValid = groupKey.length > 0 && selectedMembers.length > 0 && !regexError;
 
@@ -581,6 +596,8 @@ export function GroupEditor({
                                 showWeight={mode === 4}
                                 onClear={handleClearMembers}
                                 onAutoSort={handleAutoSort}
+                                sortStrategy={sortStrategy}
+                                onSortStrategyChange={setSortStrategy}
                             />
                         </div>
                     </div>

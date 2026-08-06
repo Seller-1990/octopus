@@ -657,7 +657,13 @@
       "selectChannel": "Channel",
       "selectModel": "Model",
       "autoSort": "Auto sort",
-      "autoSortHint": "Sort: non-relay (balance desc) → relay (rate asc)"
+      "autoSortHint": "Sort: non-relay (balance desc) → relay (rate asc)",
+      "sortStrategy": {
+        "nonRelayBalance": "Non-relay + Balance",
+        "nonRelayMultiplier": "Non-relay + Multiplier",
+        "multiplierBalance": "Multiplier + Balance",
+        "balanceOnly": "Balance Only"
+      }
     },
     "mode": {
       "roundRobin": "Round Robin",

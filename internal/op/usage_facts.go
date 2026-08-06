@@ -137,7 +137,7 @@ func usageFactsFromRelayLog(relayLog model.RelayLog) usagePendingRecord {
 		PriceCacheRead:    relayLog.PriceCacheRead,
 		PriceCacheWrite:   relayLog.PriceCacheWrite,
 		PricePerRequest:   relayLog.PricePerRequest,
-		PriceMultiplier:   relayLog.PriceGroupMultiplier,
+		PriceMultiplier:   float64PointerValue(relayLog.PriceGroupMultiplier),
 		PriceRateToUSD:    relayLog.PriceExchangeRateUSD,
 		PriceObservedAt:   relayLog.PriceObservedAt,
 		PriceStale:        relayLog.PriceStale,
@@ -225,7 +225,7 @@ func usageFactsFromRelayLog(relayLog model.RelayLog) usagePendingRecord {
 			fact.PriceCacheRead = relayLog.PriceCacheRead
 			fact.PriceCacheWrite = relayLog.PriceCacheWrite
 			fact.PricePerRequest = relayLog.PricePerRequest
-			fact.PriceMultiplier = relayLog.PriceGroupMultiplier
+			fact.PriceMultiplier = float64PointerValue(relayLog.PriceGroupMultiplier)
 			fact.PriceRateToUSD = relayLog.PriceExchangeRateUSD
 			fact.PriceObservedAt = relayLog.PriceObservedAt
 			fact.PriceStale = relayLog.PriceStale
@@ -325,6 +325,13 @@ func applyAttemptUsageSnapshot(fact *model.UsageAttemptFact, usage model.Attempt
 	fact.PriceConvertible = usage.PriceConvertible
 	fact.PriceOriginalCost = usage.PriceOriginalCost
 	fact.PriceMatchReason = usage.PriceMatchReason
+}
+
+func float64PointerValue(value *float64) float64 {
+	if value == nil {
+		return 0
+	}
+	return *value
 }
 
 func intPointerValue(value *int) int64 {

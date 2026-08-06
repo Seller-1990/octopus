@@ -173,7 +173,7 @@ type RelayLog struct {
 	PriceCacheRead       float64              `json:"price_cache_read,omitempty"`
 	PriceCacheWrite      float64              `json:"price_cache_write,omitempty"`
 	PricePerRequest      float64              `json:"price_per_request,omitempty"`
-	PriceGroupMultiplier float64              `json:"price_group_multiplier,omitempty"`
+	PriceGroupMultiplier *float64             `json:"price_group_multiplier"`
 	PriceExchangeRateUSD float64              `json:"price_exchange_rate_usd,omitempty"`
 	PriceObservedAt      *time.Time           `json:"price_observed_at,omitempty"`
 	PriceStale           bool                 `json:"price_stale" gorm:"not null;default:false"`

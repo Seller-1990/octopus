@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useId, useRef, useState } from 'react';
-import { Layers, GripVertical, X, Trash2 } from 'lucide-react';
+import { Layers, GripVertical, X, Trash2, Coins, Wallet } from 'lucide-react';
 import {
     DragDropContext,
     Draggable,
@@ -14,6 +14,7 @@ import { cn } from '@/lib/utils';
 import { getModelIcon } from '@/lib/model-icons';
 import type { LLMChannel } from '@/api/endpoints/model';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/animate-ui/components/animate/tooltip';
+import { Badge } from '@/components/ui/badge';
 import { useTranslations } from 'next-intl';
 
 function formatBalance(value: number): string {
@@ -149,14 +150,16 @@ function MemberItem({
                     {(member.balance != null || member.group_multiplier != null) && (
                         <span className="flex items-center gap-1 mt-0.5">
                             {member.balance != null && (
-                                <span className="inline-flex rounded-full border border-emerald-500/30 bg-emerald-500/10 px-1.5 py-px text-[9px] font-medium text-emerald-700 dark:text-emerald-300">
-                                    {t('member.balanceLabel')} {formatBalance(member.balance)}
-                                </span>
+                                <Badge variant="secondary" className="shrink-0 gap-1 px-1.5 py-0 text-[9px] bg-emerald-500/15 text-emerald-700 dark:text-emerald-300">
+                                    <Wallet className="size-2.5 shrink-0" />
+                                    {formatBalance(member.balance)}
+                                </Badge>
                             )}
                             {member.group_multiplier != null && (
-                                <span className="inline-flex rounded-full border border-sky-500/30 bg-sky-500/10 px-1.5 py-px text-[9px] font-medium text-sky-700 dark:text-sky-300">
-                                    {t('member.multiplierLabel')} {formatMultiplier(member.group_multiplier)}
-                                </span>
+                                <Badge variant="secondary" className="shrink-0 gap-1 px-1.5 py-0 text-[9px] bg-amber-500/15 text-amber-700 dark:text-amber-300">
+                                    <Coins className="size-2.5 shrink-0" />
+                                    {formatMultiplier(member.group_multiplier)}
+                                </Badge>
                             )}
                         </span>
                     )}

@@ -657,7 +657,13 @@
       "selectChannel": "供應源",
       "selectModel": "模型",
       "autoSort": "自動排序",
-      "autoSortHint": "按規則排序：非中轉(餘額大→小) → 中轉(倍率小→大)"
+      "autoSortHint": "按規則排序：非中轉(餘額大→小) → 中轉(倍率小→大)",
+      "sortStrategy": {
+        "nonRelayBalance": "非中轉+餘額",
+        "nonRelayMultiplier": "非中轉+倍率",
+        "multiplierBalance": "倍率+餘額",
+        "balanceOnly": "僅餘額"
+      }
     },
     "mode": {
       "roundRobin": "輪詢",

@@ -187,11 +187,10 @@ function hasCacheTokens(log: RelayLog) {
 }
 
 // key 倍率展示：与分组成员倍率一致使用 `1.5x` 格式（见 group/ItemList 的 formatMultiplier）；
-// 无倍率（缺失、非有限值或四舍五入后为 ×1）不标注。
+// null/undefined = 未获取到倍率（不标注）；0 = 免费 Key（标注 0x）；1 = 标准（标注 1x）。
 function formatKeyMultiplier(value: number | undefined | null): string | null {
     if (value == null || !Number.isFinite(value)) return null;
     const rounded = Math.round(value * 100) / 100;
-    if (rounded === 1) return null;
     return `${rounded}x`;
 }
 
@@ -924,7 +923,14 @@ export function LogCard({ log, siteTargets }: { log: RelayLog; siteTargets: LogS
                                                 <TooltipTrigger asChild>
                                                     <Badge
                                                         variant="secondary"
-                                                        className="shrink-0 gap-1 px-1.5 py-0 text-[10px] bg-amber-500/15 text-amber-700 dark:text-amber-300"
+                                                        className={cn(
+                                                            "shrink-0 gap-1 px-1.5 py-0 text-[10px]",
+                                                            keyMultiplierLabel === '0x'
+                                                                ? "bg-violet-500/15 text-violet-700 dark:text-violet-300"
+                                                                : keyMultiplierLabel === '1x'
+                                                                    ? "bg-muted text-muted-foreground"
+                                                                    : "bg-amber-500/15 text-amber-700 dark:text-amber-300"
+                                                        )}
                                                     >
                                                         <Coins className="size-3 shrink-0" />
                                                         {keyMultiplierLabel}
