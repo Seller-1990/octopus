@@ -47,7 +47,9 @@ jobs:
           sudo apt-get install -y nsis
 
       - name: Install nfpm
-        run: go install github.com/goreleaser/nfpm/v2/cmd/nfpm@latest
+        run: |
+          curl -sfL https://github.com/goreleaser/nfpm/releases/download/v2.41.1/nfpm_2.41.1_linux_amd64.tar.gz | tar xz -C /usr/local/bin nfpm
+          nfpm --version
 
       - name: Verify archive naming
         run: bash scripts/build_archive_test.sh
