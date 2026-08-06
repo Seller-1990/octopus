@@ -314,7 +314,10 @@ func syncWithDirectToken(ctx context.Context, siteRecord *model.Site, account *m
 }
 
 func resolveManagedAccessToken(ctx context.Context, siteRecord *model.Site, account *model.SiteAccount) (string, error) {
-	if account.CredentialType == model.SiteCredentialTypeAccessToken {
+	switch account.CredentialType {
+	case model.SiteCredentialTypeCookie:
+		return decryptManagedSessionCookie(account)
+	case model.SiteCredentialTypeAccessToken:
 		if strings.TrimSpace(account.AccessToken) != "" {
 			return strings.TrimSpace(account.AccessToken), nil
 		}

@@ -8,6 +8,8 @@ import (
 	"github.com/bestruirui/octopus/internal/sitesync"
 )
 
+const Sub2APIRefreshTaskInterval = sitesync.Sub2APIRefreshTaskInterval
+
 func SyncAccount(ctx context.Context, accountID int) (*model.SiteSyncResult, error) {
 	return sitesync.SyncAccount(ctx, accountID)
 }

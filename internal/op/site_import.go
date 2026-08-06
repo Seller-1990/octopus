@@ -578,7 +578,7 @@ func parseAllAPIHubAccountRow(row rawImportObject) (importedAccountInput, string
 		if cookieSession == "" {
 			return importedAccountInput{}, fmt.Sprintf("跳过 ALL-API-Hub 账号 %s：cookieAuth.sessionCookie 缺失", rowID), false
 		}
-		input.CredentialType = model.SiteCredentialTypeAccessToken
+		input.CredentialType = model.SiteCredentialTypeCookie
 		input.SessionCookie = cookieSession
 	case "access_token", "session":
 		if accessTokenCandidate == "" {
@@ -601,6 +601,9 @@ func parseAllAPIHubAccountRow(row rawImportObject) (importedAccountInput, string
 		input.AutoCheckin = false
 	default:
 		return importedAccountInput{}, fmt.Sprintf("跳过 ALL-API-Hub 账号 %s：authType=%s 不支持离线导入", rowID, firstNonEmptyString(authType, "unknown")), false
+	}
+	if err := validateSiteCredentialForPlatform(platform, input.CredentialType); err != nil {
+		return importedAccountInput{}, fmt.Sprintf("跳过 ALL-API-Hub 账号 %s：%v", rowID, err), false
 	}
 
 	return input, "", true
@@ -1065,7 +1068,7 @@ func findImportedAccount(tx *gorm.DB, siteID int, input importedAccountInput) (*
 				return record, err
 			}
 		}
-	case model.SiteCredentialTypeAccessToken:
+	case model.SiteCredentialTypeCookie:
 		if input.SessionCookie != "" {
 			var candidates []model.SiteAccount
 			if err := tx.Where("site_id = ? AND credential_type = ? AND session_cookie_encrypted <> ''", siteID, input.CredentialType).Find(&candidates).Error; err != nil {
@@ -1081,6 +1084,7 @@ func findImportedAccount(tx *gorm.DB, siteID int, input importedAccountInput) (*
 				}
 			}
 		}
+	case model.SiteCredentialTypeAccessToken:
 		if input.AccessToken != "" {
 			record, err := findByQuery("site_id = ? AND credential_type = ? AND access_token = ?", siteID, input.CredentialType, strings.TrimSpace(input.AccessToken))
 			if record != nil || err != nil {

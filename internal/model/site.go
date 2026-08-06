@@ -28,6 +28,7 @@ type SiteCredentialType string
 const (
 	SiteCredentialTypeUsernamePassword SiteCredentialType = "username_password"
 	SiteCredentialTypeAccessToken      SiteCredentialType = "access_token"
+	SiteCredentialTypeCookie           SiteCredentialType = "cookie"
 	SiteCredentialTypeAPIKey           SiteCredentialType = "api_key"
 )
 
@@ -286,10 +287,28 @@ func IsSiteCookieCredential(value string) bool {
 	if trimmed == "" || strings.HasPrefix(lowered, "bearer ") {
 		return false
 	}
-	if strings.Contains(trimmed, ";") {
-		return true
+	pairs := strings.Split(trimmed, ";")
+	if len(pairs) > 1 {
+		validPairs := 0
+		for _, pair := range pairs {
+			parts := strings.SplitN(strings.TrimSpace(pair), "=", 2)
+			if len(parts) != 2 || strings.TrimSpace(parts[0]) == "" {
+				return false
+			}
+			validPairs++
+		}
+		return validPairs > 1
 	}
-	return strings.Contains(trimmed, "=") && !strings.Contains(trimmed, " ")
+	parts := strings.SplitN(trimmed, "=", 2)
+	if len(parts) != 2 || strings.Contains(parts[0], " ") {
+		return false
+	}
+	switch strings.ToLower(strings.TrimSpace(parts[0])) {
+	case "session", "sid", "auth_token", "access_token", "token", "jwt", "jwt_token", "cf_clearance":
+		return true
+	default:
+		return false
+	}
 }
 
 func (a *SiteAccount) UnmarshalJSON(data []byte) error {
@@ -896,9 +915,18 @@ func (p SitePlatform) Validate() error {
 	}
 }
 
+func (p SitePlatform) SupportsCookieCredential() bool {
+	switch p {
+	case SitePlatformNewAPI, SitePlatformAnyRouter, SitePlatformOneAPI, SitePlatformOneHub, SitePlatformDoneHub:
+		return true
+	default:
+		return false
+	}
+}
+
 func (t SiteCredentialType) Validate() error {
 	switch t {
-	case SiteCredentialTypeUsernamePassword, SiteCredentialTypeAccessToken, SiteCredentialTypeAPIKey:
+	case SiteCredentialTypeUsernamePassword, SiteCredentialTypeAccessToken, SiteCredentialTypeCookie, SiteCredentialTypeAPIKey:
 		return nil
 	default:
 		return fmt.Errorf("unsupported site credential type: %s", t)
@@ -1100,6 +1128,10 @@ func (a *SiteAccount) Validate() error {
 	case SiteCredentialTypeAccessToken:
 		if a.AccessToken == "" && a.SessionCookieEncrypted == "" {
 			return fmt.Errorf("access token is required")
+		}
+	case SiteCredentialTypeCookie:
+		if a.AccessToken == "" && a.SessionCookieEncrypted == "" {
+			return fmt.Errorf("cookie is required")
 		}
 	case SiteCredentialTypeAPIKey:
 		if a.APIKey == "" {

@@ -16,6 +16,7 @@ type syncSnapshot struct {
 	accessToken        string
 	credentialRevision int64
 	persistCredential  bool
+	credentialIsCookie bool
 	groups             []model.SiteUserGroup
 	tokens             []model.SiteToken
 	models             []model.SiteModel
@@ -44,11 +45,10 @@ func SyncAccount(ctx context.Context, accountID int) (*model.SiteSyncResult, err
 	snapshot, syncErr := syncAccountStateWithRecovery(ctx, siteRecord, account)
 	if snapshot == nil && syncErr != nil {
 		message := sanitizeSiteStatusMessage(syncErr)
-		updateErr := updateAccountSyncState(ctx, account.ID, model.SiteExecutionStatusFailed, message)
+		updateErr := updateAccountSyncState(ctx, account.ID, account.CredentialRevision, model.SiteExecutionStatusFailed, message)
 		if updateErr != nil {
 			log.Warnf("failed to update site account sync state (account=%d): %v", account.ID, updateErr)
-		}
-		if staleErr := MarkAccountProjectionStale(ctx, account.ID, message); staleErr != nil {
+		} else if staleErr := MarkAccountProjectionStale(ctx, account.ID, message); staleErr != nil {
 			log.Warnf("failed to mark site account projection stale (account=%d): %v", account.ID, staleErr)
 		}
 		return nil, sanitizeSiteError(syncErr)
@@ -105,7 +105,7 @@ func SyncAccount(ctx context.Context, accountID int) (*model.SiteSyncResult, err
 			result.Status = model.SiteExecutionStatusPartial
 		}
 		result.Message = message
-		if updateErr := updateAccountSyncState(ctx, account.ID, result.Status, message); updateErr != nil {
+		if updateErr := updateAccountSyncState(ctx, account.ID, snapshot.credentialRevision, result.Status, message); updateErr != nil {
 			log.Warnf("failed to persist partial catalog sync state (account=%d): %v", account.ID, updateErr)
 		}
 		return result, sanitizeSiteError(catalogErr)

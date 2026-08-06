@@ -65,10 +65,11 @@ type SiteAccountFormState = {
 
 const CREDENTIAL_LABEL_KEYS: Record<
     SiteCredentialType,
-    'credentialUsernamePassword' | 'credentialAccessToken' | 'credentialApiKey'
+    'credentialUsernamePassword' | 'credentialAccessToken' | 'credentialCookie' | 'credentialApiKey'
 > = {
     [SiteCredentialType.UsernamePassword]: 'credentialUsernamePassword',
     [SiteCredentialType.AccessToken]: 'credentialAccessToken',
+    [SiteCredentialType.Cookie]: 'credentialCookie',
     [SiteCredentialType.APIKey]: 'credentialApiKey',
 };
 
@@ -118,6 +119,10 @@ function defaultCredentialType(): SiteCredentialType {
     return SiteCredentialType.AccessToken;
 }
 
+function isManagedSecretCredential(value: SiteCredentialType) {
+    return value === SiteCredentialType.AccessToken || value === SiteCredentialType.Cookie;
+}
+
 function credentialOptions(platform: SitePlatform) {
     switch (platform) {
         case SitePlatform.Sub2API:
@@ -127,6 +132,7 @@ function credentialOptions(platform: SitePlatform) {
         default:
             return [
                 SiteCredentialType.AccessToken,
+                SiteCredentialType.Cookie,
                 SiteCredentialType.UsernamePassword,
                 SiteCredentialType.APIKey,
             ];
@@ -260,8 +266,8 @@ export function AccountEditDialog({ open, onOpenChange, site, account }: Account
                 return;
             }
             const canPreserveStoredSessionCookie =
-                account?.credential_type === SiteCredentialType.AccessToken &&
-                accountForm.credential_type === SiteCredentialType.AccessToken &&
+                account?.credential_type === accountForm.credential_type &&
+                isManagedSecretCredential(accountForm.credential_type) &&
                 Boolean(account.has_stored_session_cookie);
 
             if (accountForm.credential_type === SiteCredentialType.UsernamePassword) {
@@ -271,11 +277,17 @@ export function AccountEditDialog({ open, onOpenChange, site, account }: Account
                 }
             }
             if (
-                accountForm.credential_type === SiteCredentialType.AccessToken &&
+                isManagedSecretCredential(accountForm.credential_type) &&
                 !accountForm.access_token.trim() &&
                 !canPreserveStoredSessionCookie
             ) {
-                toast.error(tForm('accessTokenRequired'));
+                toast.error(
+                    tForm(
+                        accountForm.credential_type === SiteCredentialType.Cookie
+                            ? 'cookieRequired'
+                            : 'accessTokenRequired',
+                    ),
+                );
                 return;
             }
             if (
@@ -306,7 +318,7 @@ export function AccountEditDialog({ open, onOpenChange, site, account }: Account
 
             const shouldIncludePlatformUserID =
                 currentPlatform === SitePlatform.NewAPI &&
-                accountForm.credential_type === SiteCredentialType.AccessToken;
+                isManagedSecretCredential(accountForm.credential_type);
             const platformUserIDInput = shouldIncludePlatformUserID
                 ? accountForm.platform_user_id.trim()
                 : '';
@@ -345,7 +357,7 @@ export function AccountEditDialog({ open, onOpenChange, site, account }: Account
             }
 
             const trimmedAccessToken =
-                accountForm.credential_type === SiteCredentialType.AccessToken
+                isManagedSecretCredential(accountForm.credential_type)
                     ? accountForm.access_token.trim()
                     : '';
             const trimmedAPIKey =
@@ -357,7 +369,7 @@ export function AccountEditDialog({ open, onOpenChange, site, account }: Account
             const isAccessToken =
                 accountForm.credential_type === SiteCredentialType.AccessToken;
             const preservesStoredSessionCookie =
-                isAccessToken &&
+                isManagedSecretCredential(accountForm.credential_type) &&
                 !trimmedAccessToken &&
                 canPreserveStoredSessionCookie;
 
@@ -499,7 +511,7 @@ export function AccountEditDialog({ open, onOpenChange, site, account }: Account
                                                 ...current,
                                                 credential_type: nextType,
                                                 access_token:
-                                                    nextType === SiteCredentialType.AccessToken
+                                                    isManagedSecretCredential(nextType)
                                                         ? current.access_token
                                                         : '',
                                                 api_key:
@@ -507,7 +519,7 @@ export function AccountEditDialog({ open, onOpenChange, site, account }: Account
                                                         ? current.api_key
                                                         : '',
                                                 platform_user_id:
-                                                    nextType === SiteCredentialType.AccessToken &&
+                                                    isManagedSecretCredential(nextType) &&
                                                     currentPlatform === SitePlatform.NewAPI
                                                         ? current.platform_user_id
                                                         : '',
@@ -574,9 +586,9 @@ export function AccountEditDialog({ open, onOpenChange, site, account }: Account
                                             </label>
                                         </div>
                                     </motion.div>
-                                ) : accountForm.credential_type === SiteCredentialType.AccessToken ? (
+                                ) : isManagedSecretCredential(accountForm.credential_type) ? (
                                     <motion.div
-                                        key={SiteCredentialType.AccessToken}
+                                        key={accountForm.credential_type}
                                         initial={{ opacity: 0, y: -6 }}
                                         animate={{ opacity: 1, y: 0 }}
                                         exit={{ opacity: 0, y: -6 }}
@@ -584,7 +596,13 @@ export function AccountEditDialog({ open, onOpenChange, site, account }: Account
                                     >
                                         <div className="grid gap-4">
                                             <label className="grid gap-2 text-sm">
-                                                <span className="font-medium">{tForm('accessToken')}</span>
+                                                <span className="font-medium">
+                                                    {tForm(
+                                                        accountForm.credential_type === SiteCredentialType.Cookie
+                                                            ? 'credentialCookie'
+                                                            : 'accessToken',
+                                                    )}
+                                                </span>
                                                 <Input
                                                     value={accountForm.access_token}
                                                     onChange={(event) =>
@@ -594,7 +612,11 @@ export function AccountEditDialog({ open, onOpenChange, site, account }: Account
                                                                 : current,
                                                         )
                                                     }
-                                                    placeholder={tForm('accessTokenPlaceholder')}
+                                                    placeholder={tForm(
+                                                        accountForm.credential_type === SiteCredentialType.Cookie
+                                                            ? 'cookiePlaceholder'
+                                                            : 'accessTokenPlaceholder',
+                                                    )}
                                                     className="rounded-xl"
                                                 />
                                             </label>

@@ -136,6 +136,78 @@ func TestResolveAnyRouterManagedAccessTokenDecryptsStoredSessionCookie(t *testin
 	}
 }
 
+func TestAnyRouterCookieCandidatesRespectExplicitCredentialType(t *testing.T) {
+	for _, token := range []string{"opaque==", "abc=def", "token=explicit-access-token"} {
+		account := &model.SiteAccount{CredentialType: model.SiteCredentialTypeAccessToken}
+		if candidates := anyRouterBuildAccountCookieCandidates(account, token); len(candidates) != 0 {
+			t.Fatalf("access token %q produced cookie candidates: %#v", token, candidates)
+		}
+	}
+
+	account := &model.SiteAccount{CredentialType: model.SiteCredentialTypeCookie}
+	if candidates := anyRouterBuildAccountCookieCandidates(account, "session=cookie-session"); len(candidates) == 0 {
+		t.Fatal("explicit cookie credential produced no cookie candidates")
+	}
+}
+
+func TestResolveAnyRouterManagedAccessTokenReusesStoredSessionForUsernamePassword(t *testing.T) {
+	setupProjectTestDB(t)
+	if err := op.InitCache(); err != nil {
+		t.Fatalf("initialize settings cache: %v", err)
+	}
+	if err := op.SettingSetString(model.SettingKeyJWTSecret, "anyrouter-username-session-test"); err != nil {
+		t.Fatalf("set jwt secret: %v", err)
+	}
+	const cookie = "session=stored-username-cookie; auth_token=opaque"
+	encrypted, err := op.EncryptSecret(cookie)
+	if err != nil {
+		t.Fatalf("encrypt session cookie: %v", err)
+	}
+
+	token, err := resolveAnyRouterManagedAccessToken(context.Background(), nil, &model.SiteAccount{
+		CredentialType:         model.SiteCredentialTypeUsernamePassword,
+		Username:               "user",
+		Password:               "password",
+		SessionCookieEncrypted: encrypted,
+	})
+	if err != nil {
+		t.Fatalf("resolve stored username session cookie: %v", err)
+	}
+	if token != cookie {
+		t.Fatalf("resolved cookie = %q, want %q", token, cookie)
+	}
+}
+
+func TestAnyRouterRequestRetriesTransientGET(t *testing.T) {
+	requestCount := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requestCount++
+		w.Header().Set("Content-Type", "application/json")
+		if requestCount == 1 {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_, _ = w.Write([]byte(`{"message":"temporarily unavailable"}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"success":true}`))
+	}))
+	defer server.Close()
+
+	payload, _, err := anyRouterRequestJSONWithCookies(
+		context.Background(),
+		&model.Site{BaseURL: server.URL},
+		http.MethodGet,
+		server.URL,
+		nil,
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("request after transient response: %v", err)
+	}
+	if !jsonBool(payload["success"]) || requestCount != 2 {
+		t.Fatalf("unexpected retry result: payload=%#v requests=%d", payload, requestCount)
+	}
+}
+
 func TestAnyRouterCookieTokenCanProbeUserIDAndSyncTokens(t *testing.T) {
 	var observedUserIDs []string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

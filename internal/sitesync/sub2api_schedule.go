@@ -105,7 +105,7 @@ func refreshSub2APICandidates(ctx context.Context, candidates []sub2APIRefreshCa
 			defer wg.Done()
 			for candidate := range jobs {
 				_, err := ensureFreshSub2APIAccessToken(ctx, candidate.site, candidate.account, false)
-				recordSub2APIRefreshOutcome(ctx, candidate.account.ID, err)
+				recordSub2APIRefreshOutcome(ctx, candidate.account.ID, candidate.account.CredentialRevision, err)
 				resultMu.Lock()
 				if err != nil {
 					summary.Failed++
@@ -131,7 +131,7 @@ func refreshSub2APICandidates(ctx context.Context, candidates []sub2APIRefreshCa
 	return summary, ctx.Err()
 }
 
-func recordSub2APIRefreshOutcome(ctx context.Context, accountID int, err error) {
+func recordSub2APIRefreshOutcome(ctx context.Context, accountID int, credentialRevision int64, err error) {
 	if accountID <= 0 {
 		return
 	}
@@ -144,7 +144,9 @@ func recordSub2APIRefreshOutcome(ctx context.Context, accountID int, err error) 
 		updates["last_auth_failure_class"] = classifySiteAuthFailure(err)
 		updates["last_auth_failure_at"] = time.Now()
 	}
-	if updateErr := db.GetDB().WithContext(persistCtx).Model(&model.SiteAccount{}).Where("id = ?", accountID).Updates(updates).Error; updateErr != nil {
+	if updateErr := db.GetDB().WithContext(persistCtx).Model(&model.SiteAccount{}).
+		Where("id = ? AND credential_revision = ?", accountID, credentialRevision).
+		Updates(updates).Error; updateErr != nil {
 		log.Warnf("persist sub2api refresh outcome failed (account=%d): %v", accountID, updateErr)
 	}
 }

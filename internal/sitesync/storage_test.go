@@ -320,7 +320,8 @@ func TestPersistSyncSnapshotPreservesGroupProjectionDisabled(t *testing.T) {
 	}
 
 	snapshot := &syncSnapshot{
-		accessToken: account.AccessToken,
+		accessToken:        account.AccessToken,
+		credentialRevision: account.CredentialRevision,
 		groups: []model.SiteUserGroup{
 			{GroupKey: "vip", Name: "VIP Renamed"},
 		},
@@ -361,6 +362,7 @@ func TestPersistSyncSnapshotEncryptsCookieSession(t *testing.T) {
 		accessToken:        cookie,
 		credentialRevision: account.CredentialRevision,
 		persistCredential:  true,
+		credentialIsCookie: true,
 		status:             model.SiteExecutionStatusSuccess,
 		message:            "ok",
 	}
@@ -396,19 +398,36 @@ func TestPersistSyncSnapshotDoesNotOverwriteNewerCredentials(t *testing.T) {
 	if err := dbpkg.GetDB().WithContext(ctx).Model(&model.SiteAccount{}).Where("id = ?", account.ID).Updates(map[string]any{
 		"access_token":        "newer-manual-token",
 		"credential_revision": 1,
+		"last_sync_status":    model.SiteExecutionStatusIdle,
+		"last_sync_message":   "newer credentials pending sync",
 	}).Error; err != nil {
 		t.Fatalf("install newer credentials: %v", err)
+	}
+	keepGroup := model.SiteUserGroup{SiteAccountID: account.ID, GroupKey: "keep", Name: "Keep"}
+	keepToken := model.SiteToken{SiteAccountID: account.ID, Name: "keep", Token: "keep-token", GroupKey: "keep", GroupName: "Keep", Enabled: true}
+	keepModel := model.SiteModel{SiteAccountID: account.ID, GroupKey: "keep", ModelName: "keep-model", Source: "sync"}
+	if err := dbpkg.GetDB().WithContext(ctx).Create(&keepGroup).Error; err != nil {
+		t.Fatalf("create retained group: %v", err)
+	}
+	if err := dbpkg.GetDB().WithContext(ctx).Create(&keepToken).Error; err != nil {
+		t.Fatalf("create retained token: %v", err)
+	}
+	if err := dbpkg.GetDB().WithContext(ctx).Create(&keepModel).Error; err != nil {
+		t.Fatalf("create retained model: %v", err)
 	}
 
 	snapshot := &syncSnapshot{
 		accessToken:        "session=stale-cookie",
 		credentialRevision: 0,
 		persistCredential:  true,
+		groups:             []model.SiteUserGroup{{GroupKey: "stale", Name: "Stale"}},
+		tokens:             []model.SiteToken{{Name: "stale", Token: "stale-token", GroupKey: "stale", GroupName: "Stale", Enabled: true}},
+		models:             []model.SiteModel{{GroupKey: "stale", ModelName: "stale-model", Source: "sync"}},
 		status:             model.SiteExecutionStatusSuccess,
-		message:            "ok",
+		message:            "stale sync",
 	}
-	if err := persistSyncSnapshot(ctx, account.ID, snapshot); err != nil {
-		t.Fatalf("persistSyncSnapshot: %v", err)
+	if err := persistSyncSnapshot(ctx, account.ID, snapshot); err == nil {
+		t.Fatal("expected stale snapshot to be rejected")
 	}
 
 	var reloaded model.SiteAccount
@@ -417,6 +436,121 @@ func TestPersistSyncSnapshotDoesNotOverwriteNewerCredentials(t *testing.T) {
 	}
 	if reloaded.AccessToken != "newer-manual-token" || reloaded.SessionCookieEncrypted != "" || reloaded.CredentialRevision != 1 {
 		t.Fatalf("stale snapshot overwrote newer credentials: %+v", reloaded)
+	}
+	if reloaded.LastSyncStatus != model.SiteExecutionStatusIdle || reloaded.LastSyncMessage != "newer credentials pending sync" {
+		t.Fatalf("stale snapshot overwrote sync status: %+v", reloaded)
+	}
+	var groups []model.SiteUserGroup
+	var tokens []model.SiteToken
+	var models []model.SiteModel
+	if err := dbpkg.GetDB().WithContext(ctx).Where("site_account_id = ?", account.ID).Find(&groups).Error; err != nil {
+		t.Fatalf("load retained groups: %v", err)
+	}
+	if err := dbpkg.GetDB().WithContext(ctx).Where("site_account_id = ?", account.ID).Find(&tokens).Error; err != nil {
+		t.Fatalf("load retained tokens: %v", err)
+	}
+	if err := dbpkg.GetDB().WithContext(ctx).Where("site_account_id = ?", account.ID).Find(&models).Error; err != nil {
+		t.Fatalf("load retained models: %v", err)
+	}
+	containsGroup := func(key string) bool {
+		for _, item := range groups {
+			if item.GroupKey == key {
+				return true
+			}
+		}
+		return false
+	}
+	containsToken := func(value string) bool {
+		for _, item := range tokens {
+			if item.Token == value {
+				return true
+			}
+		}
+		return false
+	}
+	containsModel := func(name string) bool {
+		for _, item := range models {
+			if item.ModelName == name {
+				return true
+			}
+		}
+		return false
+	}
+	if !containsGroup("keep") || containsGroup("stale") ||
+		!containsToken("keep-token") || containsToken("stale-token") ||
+		!containsModel("keep-model") || containsModel("stale-model") {
+		t.Fatalf("stale snapshot replaced projection: groups=%+v tokens=%+v models=%+v", groups, tokens, models)
+	}
+}
+
+func TestUpdateAccountCheckinStateRejectsStaleCredentialRevision(t *testing.T) {
+	ctx := setupProjectTestDB(t)
+	_, account := createProjectionFixture(t, ctx)
+	if err := dbpkg.GetDB().WithContext(ctx).Model(&model.SiteAccount{}).Where("id = ?", account.ID).Updates(map[string]any{
+		"access_token":         "newer-manual-token",
+		"credential_revision":  account.CredentialRevision + 1,
+		"last_checkin_status":  model.SiteExecutionStatusIdle,
+		"last_checkin_message": "newer credentials pending checkin",
+		"checkin_fail_streak":  0,
+		"next_auto_checkin_at": nil,
+	}).Error; err != nil {
+		t.Fatalf("install newer credentials: %v", err)
+	}
+
+	err := updateAccountCheckinState(
+		ctx,
+		account,
+		model.SiteExecutionStatusSuccess,
+		"stale checkin",
+		true,
+		"session=stale-cookie",
+	)
+	if err == nil {
+		t.Fatal("expected stale checkin result to be rejected")
+	}
+
+	var reloaded model.SiteAccount
+	if err := dbpkg.GetDB().WithContext(ctx).First(&reloaded, account.ID).Error; err != nil {
+		t.Fatalf("reload account: %v", err)
+	}
+	if reloaded.AccessToken != "newer-manual-token" ||
+		reloaded.CredentialRevision != account.CredentialRevision+1 ||
+		reloaded.LastCheckinStatus != model.SiteExecutionStatusIdle ||
+		reloaded.LastCheckinMessage != "newer credentials pending checkin" {
+		t.Fatalf("stale checkin overwrote newer account state: %+v", reloaded)
+	}
+}
+
+func TestUpdateAccountSyncStateRejectsStaleCredentialRevision(t *testing.T) {
+	ctx := setupProjectTestDB(t)
+	_, account := createProjectionFixture(t, ctx)
+	if err := dbpkg.GetDB().WithContext(ctx).Model(&model.SiteAccount{}).Where("id = ?", account.ID).Updates(map[string]any{
+		"credential_revision": account.CredentialRevision + 1,
+		"last_sync_status":    model.SiteExecutionStatusIdle,
+		"last_sync_message":   "newer credentials pending sync",
+	}).Error; err != nil {
+		t.Fatalf("install newer credentials: %v", err)
+	}
+
+	err := updateAccountSyncState(
+		ctx,
+		account.ID,
+		account.CredentialRevision,
+		model.SiteExecutionStatusFailed,
+		"stale sync failure",
+	)
+	if err == nil {
+		t.Fatal("expected stale sync state to be rejected")
+	}
+
+	var reloaded model.SiteAccount
+	if err := dbpkg.GetDB().WithContext(ctx).First(&reloaded, account.ID).Error; err != nil {
+		t.Fatalf("reload account: %v", err)
+	}
+	if reloaded.CredentialRevision != account.CredentialRevision+1 ||
+		reloaded.LastSyncStatus != model.SiteExecutionStatusIdle ||
+		reloaded.LastSyncMessage != "newer credentials pending sync" {
+		t.Fatalf("stale sync state overwrote newer account state: %+v", reloaded)
 	}
 }
 
@@ -432,8 +566,9 @@ func TestPersistSyncSnapshotPreservesGroupMultiplier(t *testing.T) {
 	}
 
 	snapshot := &syncSnapshot{
-		accessToken: account.AccessToken,
-		groups:      []model.SiteUserGroup{{GroupKey: "vip", Name: "VIP Renamed"}},
+		accessToken:        account.AccessToken,
+		credentialRevision: account.CredentialRevision,
+		groups:             []model.SiteUserGroup{{GroupKey: "vip", Name: "VIP Renamed"}},
 		tokens: []model.SiteToken{
 			{Name: "vip", Token: "key-vip", GroupKey: "vip", GroupName: "VIP", Enabled: true, Source: "sync"},
 		},
@@ -473,7 +608,8 @@ func TestPersistSyncSnapshotReplacesOnlyAuthoritativeGroups(t *testing.T) {
 	}
 
 	snapshot := &syncSnapshot{
-		accessToken: account.AccessToken,
+		accessToken:        account.AccessToken,
+		credentialRevision: account.CredentialRevision,
 		groups: []model.SiteUserGroup{
 			{GroupKey: model.SiteDefaultGroupKey, Name: model.SiteDefaultGroupName},
 			{GroupKey: "vip", Name: "VIP"},
@@ -558,9 +694,10 @@ func TestPersistSyncSnapshotEmptySuspendsWithoutAdvancingSuccessTime(t *testing.
 	}
 
 	snapshot := &syncSnapshot{
-		accessToken: account.AccessToken,
-		groups:      []model.SiteUserGroup{{GroupKey: model.SiteDefaultGroupKey, Name: model.SiteDefaultGroupName}},
-		tokens:      []model.SiteToken{{Name: "primary", Token: "key-primary", GroupKey: model.SiteDefaultGroupKey, GroupName: model.SiteDefaultGroupName, Enabled: true, Source: "sync"}},
+		accessToken:        account.AccessToken,
+		credentialRevision: account.CredentialRevision,
+		groups:             []model.SiteUserGroup{{GroupKey: model.SiteDefaultGroupKey, Name: model.SiteDefaultGroupName}},
+		tokens:             []model.SiteToken{{Name: "primary", Token: "key-primary", GroupKey: model.SiteDefaultGroupKey, GroupName: model.SiteDefaultGroupName, Enabled: true, Source: "sync"}},
 		groupResults: []siteGroupSyncResult{
 			{GroupKey: model.SiteDefaultGroupKey, GroupName: model.SiteDefaultGroupName, HasKey: true, Status: siteGroupSyncStatusEmpty, Authoritative: true, Message: "上游当前没有可用模型"},
 		},

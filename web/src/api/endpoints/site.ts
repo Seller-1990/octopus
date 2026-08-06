@@ -18,6 +18,7 @@ export enum SitePlatform {
 export enum SiteCredentialType {
   UsernamePassword = "username_password",
   AccessToken = "access_token",
+  Cookie = "cookie",
   APIKey = "api_key",
 }
 

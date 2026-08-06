@@ -116,7 +116,7 @@ func createAnyRouterToken(ctx context.Context, siteRecord *model.Site, account *
 	tryUserIDs = slicesCompactInts(tryUserIDs)
 
 	for _, candidateUserID := range tryUserIDs {
-		for _, cookie := range anyRouterBuildCookieCandidates(accessToken) {
+		for _, cookie := range anyRouterBuildAccountCookieCandidates(account, accessToken) {
 			headers := map[string]string{"Cookie": cookie}
 			anyRouterAddUserIDHeaders(headers, candidateUserID)
 			payload, _, requestErr := anyRouterRequestJSONWithCookies(

@@ -33,14 +33,18 @@ type extendedBackupSeed struct {
 func TestSanitizeSiteAccountsForBackupRemovesLegacyPlaintextCookie(t *testing.T) {
 	accounts := []model.SiteAccount{
 		{AccessToken: "session=legacy-cookie"},
-		{AccessToken: "bearer-token"},
+		{CredentialType: model.SiteCredentialTypeAccessToken, AccessToken: "token=explicit-access-token", CredentialRevision: 1},
+		{CredentialType: model.SiteCredentialTypeAccessToken, AccessToken: "bearer-token", CredentialRevision: 1},
 	}
 	sanitizeSiteAccountsForBackup(accounts)
 	if accounts[0].AccessToken != "" {
 		t.Fatalf("legacy plaintext cookie remained in backup: %q", accounts[0].AccessToken)
 	}
-	if accounts[1].AccessToken != "bearer-token" {
-		t.Fatalf("non-cookie access token was unexpectedly changed: %q", accounts[1].AccessToken)
+	if accounts[1].AccessToken != "token=explicit-access-token" {
+		t.Fatalf("explicit access token was unexpectedly changed: %q", accounts[1].AccessToken)
+	}
+	if accounts[2].AccessToken != "bearer-token" {
+		t.Fatalf("non-cookie access token was unexpectedly changed: %q", accounts[2].AccessToken)
 	}
 }
 

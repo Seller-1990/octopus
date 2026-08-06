@@ -131,6 +131,7 @@ const PLATFORM_LABELS: Record<SitePlatform, string> = {
 const CREDENTIAL_LABELS: Record<SiteCredentialType, string> = {
   [SiteCredentialType.UsernamePassword]: "用户名 / 密码",
   [SiteCredentialType.AccessToken]: "访问令牌（Access Token）",
+  [SiteCredentialType.Cookie]: "Cookie 会话",
   [SiteCredentialType.APIKey]: "API 密钥（API Key）",
 };
 

@@ -269,8 +269,9 @@ func completeBrowserVerificationSession(
 	fields["verification_session_fence_id"] = session.ID
 	result := tx.Model(&model.SiteAccount{}).
 		Where(
-			"id = ? AND verification_session_fence_id < ?",
+			"id = ? AND credential_revision = ? AND verification_session_fence_id < ?",
 			session.SiteAccountID,
+			session.CredentialRevision,
 			session.ID,
 		).
 		Updates(fields)

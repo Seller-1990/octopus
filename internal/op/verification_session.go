@@ -55,13 +55,14 @@ func createVerificationSession(
 		ttl = 15
 	}
 	session := model.VerificationSession{
-		SiteID:        account.SiteID,
-		SiteAccountID: account.ID,
-		ProxyConfigID: cloneOptionalInt(request.ProxyConfigID),
-		ClashNode:     request.ClashNode,
-		UserAgent:     request.UserAgent,
-		Status:        model.VerificationSessionPending,
-		ExpiresAt:     time.Now().Add(time.Duration(ttl) * time.Minute),
+		SiteID:             account.SiteID,
+		SiteAccountID:      account.ID,
+		CredentialRevision: account.CredentialRevision,
+		ProxyConfigID:      cloneOptionalInt(request.ProxyConfigID),
+		ClashNode:          request.ClashNode,
+		UserAgent:          request.UserAgent,
+		Status:             model.VerificationSessionPending,
+		ExpiresAt:          time.Now().Add(time.Duration(ttl) * time.Minute),
 	}
 	siteRecord, err := SiteGet(account.SiteID, ctx)
 	if err != nil {
@@ -84,6 +85,14 @@ func createVerificationSession(
 		RetryStatus:   verificationRetryStatusForOperation(request.Operation),
 	}
 	if err := db.GetDB().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var currentAccount model.SiteAccount
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			Select("id", "site_id", "credential_revision").
+			First(&currentAccount, account.ID).Error; err != nil {
+			return fmt.Errorf("site account not found")
+		}
+		session.SiteID = currentAccount.SiteID
+		session.CredentialRevision = currentAccount.CredentialRevision
 		if err := tx.Create(&session).Error; err != nil {
 			return err
 		}
@@ -138,8 +147,9 @@ func VerificationSessionEnsure(
 	now := time.Now()
 	var session model.VerificationSession
 	query := db.GetDB().WithContext(ctx).
-		Where("site_account_id = ? AND status = ? AND expires_at > ?",
+		Where("site_account_id = ? AND credential_revision = ? AND status = ? AND expires_at > ?",
 			request.SiteAccountID,
+			account.CredentialRevision,
 			model.VerificationSessionPending,
 			now,
 		)

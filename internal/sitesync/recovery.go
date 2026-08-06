@@ -54,6 +54,7 @@ func syncAccountStateWithRecovery(
 			if snapshot != nil {
 				snapshot.credentialRevision = accountCopy.CredentialRevision
 				snapshot.persistCredential = shouldPersistSiteCredential(accountCopy, snapshot.accessToken)
+				snapshot.credentialIsCookie = siteCredentialIsCookie(accountCopy, snapshot.accessToken)
 				snapshot.proxyMode = accountCopy.ProxyMode
 				snapshot.proxyConfigID = cloneInt(accountCopy.ProxyConfigID)
 				snapshot.clashNode = accountCopy.PreferredClashNode

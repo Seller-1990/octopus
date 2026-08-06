@@ -377,7 +377,7 @@ func TestRecordSub2APIRefreshOutcomePersistsCancellation(t *testing.T) {
 	canceled, cancel := context.WithCancel(ctx)
 	cancel()
 
-	recordSub2APIRefreshOutcome(canceled, account.ID, context.Canceled)
+	recordSub2APIRefreshOutcome(canceled, account.ID, account.CredentialRevision, context.Canceled)
 
 	var reloaded model.SiteAccount
 	if err := dbpkg.GetDB().WithContext(ctx).First(&reloaded, account.ID).Error; err != nil {
@@ -385,6 +385,29 @@ func TestRecordSub2APIRefreshOutcomePersistsCancellation(t *testing.T) {
 	}
 	if reloaded.LastAuthFailureClass != "transport_canceled" || reloaded.LastAuthFailureAt == nil {
 		t.Fatalf("canceled refresh outcome was not persisted: %+v", reloaded)
+	}
+}
+
+func TestRecordSub2APIRefreshOutcomeRejectsStaleCredentialRevision(t *testing.T) {
+	ctx := setupProjectTestDB(t)
+	_, account := createProjectionFixture(t, ctx)
+	if err := dbpkg.GetDB().WithContext(ctx).Model(&model.SiteAccount{}).Where("id = ?", account.ID).Updates(map[string]any{
+		"credential_revision":     account.CredentialRevision + 1,
+		"last_auth_failure_class": "",
+		"last_auth_failure_at":    nil,
+	}).Error; err != nil {
+		t.Fatalf("install newer credentials: %v", err)
+	}
+
+	recordSub2APIRefreshOutcome(ctx, account.ID, account.CredentialRevision, context.Canceled)
+
+	var reloaded model.SiteAccount
+	if err := dbpkg.GetDB().WithContext(ctx).First(&reloaded, account.ID).Error; err != nil {
+		t.Fatalf("reload account: %v", err)
+	}
+	if reloaded.CredentialRevision != account.CredentialRevision+1 ||
+		reloaded.LastAuthFailureClass != "" || reloaded.LastAuthFailureAt != nil {
+		t.Fatalf("stale refresh outcome overwrote newer account state: %+v", reloaded)
 	}
 }
 
@@ -438,6 +461,27 @@ func TestSub2APIRefreshDueAtIsDeterministicAndSpread(t *testing.T) {
 	windowEnd := windowStart.Add(sub2APIAccessTokenSpreadWindow)
 	if firstDue.Before(windowStart) || !firstDue.Before(windowEnd) {
 		t.Fatalf("due time %s outside [%s, %s)", firstDue, windowStart, windowEnd)
+	}
+}
+
+func TestSub2APIRefreshCadenceSpreadsAccountsAcrossPasses(t *testing.T) {
+	if Sub2APIRefreshTaskInterval <= 0 || Sub2APIRefreshTaskInterval >= sub2APIAccessTokenSpreadWindow {
+		t.Fatalf(
+			"refresh cadence %s must be shorter than spread window %s",
+			Sub2APIRefreshTaskInterval,
+			sub2APIAccessTokenSpreadWindow,
+		)
+	}
+	expiresAt := time.Date(2026, time.August, 6, 12, 0, 0, 0, time.UTC)
+	windowStart := expiresAt.Add(-sub2APIAccessTokenRefreshLead)
+	buckets := map[int]int{}
+	for id := 1; id <= 100; id++ {
+		dueAt := sub2APIRefreshDueAt(&model.SiteAccount{ID: id, TokenExpiresAt: expiresAt.UnixMilli()})
+		bucket := int(dueAt.Sub(windowStart) / Sub2APIRefreshTaskInterval)
+		buckets[bucket]++
+	}
+	if len(buckets) < 4 {
+		t.Fatalf("100 simultaneous expiries collapsed into %d cadence buckets: %#v", len(buckets), buckets)
 	}
 }
 

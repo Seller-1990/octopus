@@ -683,7 +683,7 @@ func TestSiteAccountCreateEncryptsCookieSession(t *testing.T) {
 	account := &model.SiteAccount{
 		SiteID:         site.ID,
 		Name:           "cookie-create-account",
-		CredentialType: model.SiteCredentialTypeAccessToken,
+		CredentialType: model.SiteCredentialTypeCookie,
 		AccessToken:    "session=create-cookie",
 		Enabled:        true,
 	}
@@ -697,6 +697,74 @@ func TestSiteAccountCreateEncryptsCookieSession(t *testing.T) {
 	plain, err := DecryptSecret(reloaded.SessionCookieEncrypted)
 	if err != nil || plain != "session=create-cookie" || reloaded.AccessToken != "" || reloaded.CredentialRevision != 1 {
 		t.Fatalf("cookie credential was not encrypted: account=%+v plain=%q err=%v", reloaded, plain, err)
+	}
+}
+
+func TestSiteAccountCreateRejectsCookieForUnsupportedPlatform(t *testing.T) {
+	for _, platform := range []model.SitePlatform{model.SitePlatformAPI, model.SitePlatformSub2API} {
+		t.Run(string(platform), func(t *testing.T) {
+			ctx := setupSiteOpTestDB(t)
+			siteRecord := &model.Site{
+				Name:     "unsupported-cookie-" + string(platform),
+				Platform: platform,
+				BaseURL:  "https://example.com",
+				Enabled:  true,
+			}
+			if err := SiteCreate(siteRecord, ctx); err != nil {
+				t.Fatalf("SiteCreate failed: %v", err)
+			}
+			account := &model.SiteAccount{
+				SiteID:         siteRecord.ID,
+				Name:           "cookie-account",
+				CredentialType: model.SiteCredentialTypeCookie,
+				AccessToken:    "session=unsupported",
+				Enabled:        true,
+			}
+			if err := SiteAccountCreate(account, ctx); err == nil || !strings.Contains(err.Error(), "does not support cookie credentials") {
+				t.Fatalf("expected unsupported cookie credential error, got %v", err)
+			}
+		})
+	}
+}
+
+func TestParseAllAPIHubAccountRowRejectsCookieForUnsupportedPlatform(t *testing.T) {
+	row := rawImportObject{
+		"id":        "unsupported-cookie-import",
+		"site_name": "Sub2API",
+		"site_url":  "https://sub2api.example.com",
+		"site_type": "sub2api",
+		"authType":  "cookie",
+		"cookieAuth": map[string]any{
+			"sessionCookie": "session=unsupported",
+		},
+	}
+	if _, warning, ok := parseAllAPIHubAccountRow(row); ok || !strings.Contains(warning, "does not support cookie credentials") {
+		t.Fatalf("expected unsupported cookie import warning, ok=%v warning=%q", ok, warning)
+	}
+}
+
+func TestSiteAccountCreateKeepsPaddedOpaqueAccessTokenAsBearer(t *testing.T) {
+	ctx := setupSiteOpTestDB(t)
+	site := &model.Site{Name: "opaque-token-site", Platform: model.SitePlatformNewAPI, BaseURL: "https://example.com", Enabled: true}
+	if err := SiteCreate(site, ctx); err != nil {
+		t.Fatalf("SiteCreate: %v", err)
+	}
+	account := &model.SiteAccount{
+		SiteID:         site.ID,
+		Name:           "opaque-token-account",
+		CredentialType: model.SiteCredentialTypeAccessToken,
+		AccessToken:    "opaque==",
+		Enabled:        true,
+	}
+	if err := SiteAccountCreate(account, ctx); err != nil {
+		t.Fatalf("SiteAccountCreate: %v", err)
+	}
+	reloaded, err := SiteAccountGet(account.ID, ctx)
+	if err != nil {
+		t.Fatalf("SiteAccountGet: %v", err)
+	}
+	if reloaded.AccessToken != "opaque==" || reloaded.SessionCookieEncrypted != "" {
+		t.Fatalf("opaque access token was converted to cookie storage: %+v", reloaded)
 	}
 }
 
@@ -715,7 +783,7 @@ func TestSiteAccountUpdatePreservesStoredCookieWhenUpdatingRefreshMetadata(t *te
 	account := &model.SiteAccount{
 		SiteID:         site.ID,
 		Name:           "cookie-update-account",
-		CredentialType: model.SiteCredentialTypeAccessToken,
+		CredentialType: model.SiteCredentialTypeCookie,
 		AccessToken:    "session=preserved-cookie",
 		Enabled:        true,
 	}
@@ -737,7 +805,7 @@ func TestSiteAccountUpdatePreservesStoredCookieWhenUpdatingRefreshMetadata(t *te
 	}
 
 	name := "cookie-update-account-renamed"
-	credentialType := model.SiteCredentialTypeAccessToken
+	credentialType := model.SiteCredentialTypeCookie
 	empty := ""
 	unchanged, err := SiteAccountUpdate(&model.SiteAccountUpdateRequest{
 		ID:             account.ID,
@@ -966,8 +1034,8 @@ func TestSiteImportAllAPIHubImportsAndUpdatesAccounts(t *testing.T) {
 	})
 
 	assertImportedAccount(t, "cookie-user", func(account model.SiteAccount) {
-		if account.CredentialType != model.SiteCredentialTypeAccessToken {
-			t.Fatalf("expected cookie account credential type %q, got %q", model.SiteCredentialTypeAccessToken, account.CredentialType)
+		if account.CredentialType != model.SiteCredentialTypeCookie {
+			t.Fatalf("expected cookie account credential type %q, got %q", model.SiteCredentialTypeCookie, account.CredentialType)
 		}
 		if account.AccessToken != "" || account.SessionCookieEncrypted == "" {
 			t.Fatalf("expected encrypted cookie session without plaintext access token: %+v", account)

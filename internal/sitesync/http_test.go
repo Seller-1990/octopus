@@ -171,7 +171,9 @@ func TestParseSiteRetryAfterSupportsHTTPDate(t *testing.T) {
 }
 
 func TestRequestJSONCarriesOrdinaryRetryAfter(t *testing.T) {
+	requestCount := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requestCount++
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("Retry-After", "3")
 		w.WriteHeader(http.StatusTooManyRequests)
@@ -179,9 +181,96 @@ func TestRequestJSONCarriesOrdinaryRetryAfter(t *testing.T) {
 	}))
 	defer server.Close()
 
-	_, err := requestJSON(context.Background(), &model.Site{BaseURL: server.URL}, http.MethodGet, server.URL, nil, nil)
+	_, err := requestJSON(context.Background(), &model.Site{BaseURL: server.URL}, http.MethodPost, server.URL, nil, nil)
 	if err == nil || siteErrorRetryAfter(err) != 3*time.Second {
 		t.Fatalf("ordinary HTTP error lost Retry-After: %v", err)
+	}
+	if requestCount != 1 {
+		t.Fatalf("POST Retry-After request was replayed %d times", requestCount)
+	}
+}
+
+func TestRequestJSONRetriesTransientGET(t *testing.T) {
+	requestCount := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requestCount++
+		w.Header().Set("Content-Type", "application/json")
+		if requestCount == 1 {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_, _ = w.Write([]byte(`{"message":"temporarily unavailable"}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"success":true}`))
+	}))
+	defer server.Close()
+
+	payload, err := requestJSON(
+		context.Background(),
+		&model.Site{BaseURL: server.URL},
+		http.MethodGet,
+		server.URL,
+		nil,
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("request after transient response: %v", err)
+	}
+	if success, _ := payload["success"].(bool); !success || requestCount != 2 {
+		t.Fatalf("unexpected retry result: payload=%#v requests=%d", payload, requestCount)
+	}
+}
+
+func TestRequestJSONRetriesTransientTransportFailure(t *testing.T) {
+	requestCount := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requestCount++
+		if requestCount == 1 {
+			panic(http.ErrAbortHandler)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"success":true}`))
+	}))
+	defer server.Close()
+
+	payload, err := requestJSON(
+		context.Background(),
+		&model.Site{BaseURL: server.URL},
+		http.MethodGet,
+		server.URL,
+		nil,
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("request after transient transport failure: %v", err)
+	}
+	if success, _ := payload["success"].(bool); !success || requestCount != 2 {
+		t.Fatalf("unexpected retry result: payload=%#v requests=%d", payload, requestCount)
+	}
+}
+
+func TestRequestJSONDoesNotRetryPOST(t *testing.T) {
+	requestCount := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requestCount++
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = w.Write([]byte(`{"message":"temporarily unavailable"}`))
+	}))
+	defer server.Close()
+
+	_, err := requestJSON(
+		context.Background(),
+		&model.Site{BaseURL: server.URL},
+		http.MethodPost,
+		server.URL,
+		map[string]any{"side_effect": true},
+		nil,
+	)
+	if err == nil {
+		t.Fatal("expected POST request to fail")
+	}
+	if requestCount != 1 {
+		t.Fatalf("POST was replayed %d times", requestCount)
 	}
 }
 

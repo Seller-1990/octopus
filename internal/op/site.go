@@ -527,7 +527,14 @@ func SiteAccountCreate(account *model.SiteAccount, ctx context.Context) error {
 	if err := account.Validate(); err != nil {
 		return err
 	}
-	if account.CredentialType == model.SiteCredentialTypeAccessToken && model.IsSiteCookieCredential(account.AccessToken) {
+	if account.CredentialType == model.SiteCredentialTypeCookie {
+		siteRecord, err := SiteGet(account.SiteID, ctx)
+		if err != nil {
+			return fmt.Errorf("site not found")
+		}
+		if err := validateSiteCredentialForPlatform(siteRecord.Platform, account.CredentialType); err != nil {
+			return err
+		}
 		encrypted, err := EncryptSecret(account.AccessToken)
 		if err != nil {
 			return fmt.Errorf("encrypt site session cookie: %w", err)
@@ -677,10 +684,10 @@ func SiteAccountUpdate(req *model.SiteAccountUpdateRequest, ctx context.Context)
 		merged.CheckinRandomWindowMinutes = *req.CheckinRandomWindowMinutes
 		selectFields = append(selectFields, "checkin_random_window_minutes")
 	}
-	if credentialFieldsProvided && merged.CredentialType != model.SiteCredentialTypeAccessToken {
+	if credentialFieldsProvided && merged.CredentialType != model.SiteCredentialTypeAccessToken && merged.CredentialType != model.SiteCredentialTypeCookie {
 		merged.SessionCookieEncrypted = ""
 	}
-	if req.AccessToken != nil && !model.IsSiteCookieCredential(merged.AccessToken) {
+	if req.AccessToken != nil && merged.CredentialType != model.SiteCredentialTypeCookie {
 		merged.SessionCookieEncrypted = ""
 	}
 	credentialsChanged := merged.CredentialType != account.CredentialType ||
@@ -690,11 +697,20 @@ func SiteAccountUpdate(req *model.SiteAccountUpdateRequest, ctx context.Context)
 		merged.APIKey != account.APIKey ||
 		merged.RefreshToken != account.RefreshToken ||
 		merged.TokenExpiresAt != account.TokenExpiresAt ||
-		(req.AccessToken != nil && model.IsSiteCookieCredential(merged.AccessToken) && account.SessionCookieEncrypted == "")
+		(req.AccessToken != nil && merged.CredentialType == model.SiteCredentialTypeCookie && account.SessionCookieEncrypted == "")
 
 	if len(selectFields) > 0 {
 		if err := merged.Validate(); err != nil {
 			return nil, err
+		}
+		if credentialFieldsProvided {
+			siteRecord, err := SiteGet(merged.SiteID, ctx)
+			if err != nil {
+				return nil, fmt.Errorf("site not found")
+			}
+			if err := validateSiteCredentialForPlatform(siteRecord.Platform, merged.CredentialType); err != nil {
+				return nil, err
+			}
 		}
 		if merged.ProxyMode == model.ProxyUsageModePool && merged.ProxyConfigID != nil {
 			if _, err := ProxyURLForConfig(*merged.ProxyConfigID, ctx); err != nil {
@@ -703,7 +719,7 @@ func SiteAccountUpdate(req *model.SiteAccountUpdateRequest, ctx context.Context)
 		}
 	}
 	encryptedSessionCookie := merged.SessionCookieEncrypted
-	if credentialsChanged && merged.CredentialType == model.SiteCredentialTypeAccessToken && model.IsSiteCookieCredential(merged.AccessToken) {
+	if credentialsChanged && merged.CredentialType == model.SiteCredentialTypeCookie && strings.TrimSpace(merged.AccessToken) != "" {
 		encrypted, err := EncryptSecret(merged.AccessToken)
 		if err != nil {
 			return nil, fmt.Errorf("encrypt site session cookie: %w", err)
@@ -794,7 +810,7 @@ func SiteAccountUpdate(req *model.SiteAccountUpdateRequest, ctx context.Context)
 		}
 		credentialUpdates := clearedVerificationCredentialFields()
 		credentialUpdates["credential_revision"] = gorm.Expr("credential_revision + 1")
-		if encryptedSessionCookie != "" {
+		if merged.CredentialType == model.SiteCredentialTypeCookie && encryptedSessionCookie != "" {
 			credentialUpdates["access_token"] = ""
 			credentialUpdates["session_cookie_encrypted"] = encryptedSessionCookie
 		} else {
@@ -817,6 +833,13 @@ func SiteAccountUpdate(req *model.SiteAccountUpdateRequest, ctx context.Context)
 		fmt.Errorf("verification account credentials were updated"),
 	)
 	return SiteAccountGet(req.ID, ctx)
+}
+
+func validateSiteCredentialForPlatform(platform model.SitePlatform, credentialType model.SiteCredentialType) error {
+	if credentialType == model.SiteCredentialTypeCookie && !platform.SupportsCookieCredential() {
+		return fmt.Errorf("site platform %s does not support cookie credentials", platform)
+	}
+	return nil
 }
 
 func SiteAccountEnabled(id int, enabled bool, ctx context.Context) error {

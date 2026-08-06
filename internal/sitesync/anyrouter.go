@@ -163,7 +163,10 @@ func checkinAnyRouter(ctx context.Context, siteRecord *model.Site, account *mode
 }
 
 func resolveAnyRouterManagedAccessToken(ctx context.Context, siteRecord *model.Site, account *model.SiteAccount) (string, error) {
-	if account.CredentialType == model.SiteCredentialTypeAccessToken {
+	switch account.CredentialType {
+	case model.SiteCredentialTypeCookie:
+		return decryptManagedSessionCookie(account)
+	case model.SiteCredentialTypeAccessToken:
 		token := strings.TrimSpace(account.AccessToken)
 		if token != "" {
 			return token, nil
@@ -172,6 +175,9 @@ func resolveAnyRouterManagedAccessToken(ctx context.Context, siteRecord *model.S
 	}
 	if account.CredentialType != model.SiteCredentialTypeUsernamePassword {
 		return "", fmt.Errorf("managed access token is not available for credential type %s", account.CredentialType)
+	}
+	if account.SessionCookieEncrypted != "" {
+		return decryptManagedSessionCookie(account)
 	}
 
 	payload, cookieHeader, err := anyRouterRequestJSONWithCookieScope(
@@ -289,7 +295,7 @@ func fetchAnyRouterSessionModels(ctx context.Context, siteRecord *model.Site, ac
 		}
 	}
 
-	for _, cookie := range anyRouterBuildCookieCandidates(accessToken) {
+	for _, cookie := range anyRouterBuildAccountCookieCandidates(account, accessToken) {
 		headers := map[string]string{"Cookie": cookie}
 		anyRouterAddUserIDHeaders(headers, userID)
 		payload, _, requestErr := anyRouterRequestJSONWithCookies(ctx, siteRecord, http.MethodGet, requestURL, nil, headers, account)
@@ -327,7 +333,7 @@ func anyRouterTryCheckinWithBearer(ctx context.Context, siteRecord *model.Site, 
 
 func anyRouterTryCheckinWithCookies(ctx context.Context, siteRecord *model.Site, account *model.SiteAccount, accessToken string, userID int) (*model.SiteCheckinResult, string) {
 	firstFailure := ""
-	for _, cookie := range anyRouterBuildCookieCandidates(accessToken) {
+	for _, cookie := range anyRouterBuildAccountCookieCandidates(account, accessToken) {
 		signInPayload, _, signInErr := anyRouterRequestJSONWithCookies(
 			ctx,
 			siteRecord,
@@ -476,7 +482,7 @@ func anyRouterTestBearerUserID(ctx context.Context, siteRecord *model.Site, acco
 
 func anyRouterFetchUserSelfByCookie(ctx context.Context, siteRecord *model.Site, account *model.SiteAccount, accessToken string, userID int) (map[string]any, string, error) {
 	requestURL := buildSiteURL(siteRecord.BaseURL, "/api/user/self")
-	for _, cookie := range anyRouterBuildCookieCandidates(accessToken) {
+	for _, cookie := range anyRouterBuildAccountCookieCandidates(account, accessToken) {
 		headers := map[string]string{"Cookie": cookie}
 		anyRouterAddUserIDHeaders(headers, userID)
 		payload, cookieHeader, err := anyRouterRequestJSONWithCookies(ctx, siteRecord, http.MethodGet, requestURL, nil, headers, account)
@@ -492,7 +498,7 @@ func anyRouterFetchUserSelfByCookie(ctx context.Context, siteRecord *model.Site,
 
 func anyRouterProbeUserIDByCookie(ctx context.Context, siteRecord *model.Site, account *model.SiteAccount, accessToken string) (int, error) {
 	requestURL := buildSiteURL(siteRecord.BaseURL, "/api/user/self")
-	for _, cookie := range anyRouterBuildCookieCandidates(accessToken) {
+	for _, cookie := range anyRouterBuildAccountCookieCandidates(account, accessToken) {
 		for _, userID := range anyRouterBuildUserIDProbeCandidates(accessToken) {
 			headers := map[string]string{"Cookie": cookie}
 			anyRouterAddUserIDHeaders(headers, userID)
@@ -522,7 +528,7 @@ func anyRouterProbeAlternateUserIDByCookie(ctx context.Context, siteRecord *mode
 func fetchAnyRouterTokensByCookie(ctx context.Context, siteRecord *model.Site, account *model.SiteAccount, accessToken string, userID int) ([]model.SiteToken, error) {
 	requestURL := buildSiteURL(siteRecord.BaseURL, "/api/token/?p=0&size=100")
 	fetchForUserID := func(candidateUserID int) []model.SiteToken {
-		for _, cookie := range anyRouterBuildCookieCandidates(accessToken) {
+		for _, cookie := range anyRouterBuildAccountCookieCandidates(account, accessToken) {
 			headers := map[string]string{"Cookie": cookie}
 			anyRouterAddUserIDHeaders(headers, candidateUserID)
 			payload, _, err := anyRouterRequestJSONWithCookies(ctx, siteRecord, http.MethodGet, requestURL, nil, headers, account)
@@ -554,7 +560,7 @@ func fetchAnyRouterGroupsByCookie(ctx context.Context, siteRecord *model.Site, a
 		var terminalErr error
 		for _, endpoint := range endpoints {
 			requestURL := buildSiteURL(siteRecord.BaseURL, endpoint)
-			for _, cookie := range anyRouterBuildCookieCandidates(accessToken) {
+			for _, cookie := range anyRouterBuildAccountCookieCandidates(account, accessToken) {
 				headers := map[string]string{"Cookie": cookie}
 				anyRouterAddUserIDHeaders(headers, candidateUserID)
 				payload, _, err := anyRouterRequestJSONWithCookies(ctx, siteRecord, http.MethodGet, requestURL, nil, headers, account)
@@ -721,6 +727,14 @@ func anyRouterBuildCookieCandidates(token string) []string {
 	return candidates
 }
 
+func anyRouterBuildAccountCookieCandidates(account *model.SiteAccount, token string) []string {
+	if account != nil && account.CredentialType != model.SiteCredentialTypeCookie &&
+		account.CredentialType != model.SiteCredentialTypeUsernamePassword {
+		return nil
+	}
+	return anyRouterBuildCookieCandidates(token)
+}
+
 func anyRouterTryDecodeJWTUserID(token string) int {
 	parts := strings.Split(strings.TrimSpace(token), ".")
 	if len(parts) != 3 {
@@ -865,29 +879,45 @@ func anyRouterRequestJSONWithCookieScope(ctx context.Context, siteRecord *model.
 
 		resp, err := httpClient.Do(req)
 		if err != nil {
-			return nil, cookieHeader, err
+			if !shouldRetrySiteReadTransport(ctx, method, attempt, err) {
+				return nil, cookieHeader, err
+			}
+			if err := waitForSiteReadRetry(ctx, attempt, nil); err != nil {
+				return nil, cookieHeader, err
+			}
+			continue
 		}
 
 		bodyBytes, readErr := io.ReadAll(resp.Body)
 		resp.Body.Close()
 		if readErr != nil {
-			return nil, cookieHeader, readErr
+			if !shouldRetrySiteReadTransport(ctx, method, attempt, readErr) {
+				return nil, cookieHeader, readErr
+			}
+			if err := waitForSiteReadRetry(ctx, attempt, nil); err != nil {
+				return nil, cookieHeader, err
+			}
+			continue
 		}
 
 		cookieHeader = anyRouterCookieHeaderForURL(jar, scopeURI, excludedCookieNames)
 
-		if payload, ok := anyRouterParseJSONObject(bodyBytes); ok {
-			if IsCloudflareProtectionResponse(resp.StatusCode, resp.Header, bodyBytes) {
-				return nil, cookieHeader, wrapCloudflareProtectionError(
-					newCloudflareProtectionError(resp.StatusCode, resp.Header),
-				)
-			}
-			return payload, cookieHeader, nil
-		}
 		if IsCloudflareProtectionResponse(resp.StatusCode, resp.Header, bodyBytes) {
 			return nil, cookieHeader, wrapCloudflareProtectionError(
 				newCloudflareProtectionError(resp.StatusCode, resp.Header),
 			)
+		}
+		if shouldRetrySiteReadResponse(method, attempt, resp.StatusCode, resp.Header, bodyBytes) {
+			if err := waitForSiteReadRetry(ctx, attempt, resp.Header); err != nil {
+				return nil, cookieHeader, err
+			}
+			continue
+		}
+		if payload, ok := anyRouterParseJSONObject(bodyBytes); ok {
+			if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+				return nil, cookieHeader, anyRouterFormatHTTPError(resp.StatusCode, resp.Header, string(bodyBytes))
+			}
+			return payload, cookieHeader, nil
 		}
 
 		text := strings.TrimSpace(string(bodyBytes))

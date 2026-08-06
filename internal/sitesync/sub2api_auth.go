@@ -16,6 +16,7 @@ import (
 const (
 	sub2APIAccessTokenRefreshLead  = 5 * time.Minute
 	sub2APIAccessTokenSpreadWindow = 2 * time.Minute
+	Sub2APIRefreshTaskInterval     = 30 * time.Second
 )
 
 type sub2APIRefreshedCredentials struct {

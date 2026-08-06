@@ -259,7 +259,7 @@ func detectAnyRouterPricingRoutes(
 		detections = mergeSiteModelRouteDetections(detections, collectPricingRouteDetections(payload, "/api/pricing", modelFilter))
 	}
 
-	for _, cookie := range anyRouterBuildCookieCandidates(token) {
+	for _, cookie := range anyRouterBuildAccountCookieCandidates(account, token) {
 		headers := map[string]string{"Cookie": cookie}
 		anyRouterAddUserIDHeaders(headers, userID)
 		payload, _, err := anyRouterRequestJSONWithCookies(ctx, siteRecord, "GET", requestURL, nil, headers, account)
