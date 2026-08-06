@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"sync"
 	"time"
 
@@ -32,7 +33,14 @@ func GetHTTPClientSystemProxy(useProxy bool) (*http.Client, error) {
 			return nil, err
 		}
 		if currentProxyURL == "" {
-			return nil, fmt.Errorf("proxy url is empty")
+			// Fallback to environment variable if app setting is not configured
+			if envProxy := os.Getenv("HTTPS_PROXY"); envProxy != "" {
+				currentProxyURL = envProxy
+			} else if envProxy = os.Getenv("HTTP_PROXY"); envProxy != "" {
+				currentProxyURL = envProxy
+			} else {
+				return nil, fmt.Errorf("proxy url is empty")
+			}
 		}
 
 		clientLock.RLock()
