@@ -20,13 +20,17 @@
 - 🔀 **Multi-Channel Aggregation** - Connect multiple LLM provider channels with unified management
 - 🔑 **Multi-Key Support** - Support multiple API keys for a single channel
 - ⚡ **Smart Selection** - Multiple endpoints per channel, smart selection of the endpoint with the shortest delay
-- ⚖️ **Load Balancing** - Automatic request distribution for stable and efficient service
-- 🔄 **Protocol Conversion** - Seamless conversion between OpenAI Chat / OpenAI Responses / Anthropic API formats
-- 💰 **Price Sync** - Automatic model pricing updates
+- ⚖️ **Load Balancing** - Automatic request distribution with 4 strategies (Round Robin, Random, Failover, Weighted)
+- 🔄 **Protocol Conversion** - Seamless conversion between OpenAI Chat / OpenAI Responses / Anthropic / Gemini formats
+- 💰 **Price Sync** - Automatic model pricing updates from upstream sites and models.dev
 - 🔃 **Model Sync** - Automatic synchronization of available model lists with channels
-- 📊 **Analytics** - Comprehensive request statistics, token consumption, and cost tracking
-- 🎨 **Elegant UI** - Clean and beautiful web management panel
+- 📊 **Analytics** - Real-time SSE log stream, token consumption, cost tracking, and multiplier display
+- 🎨 **Elegant UI** - Clean card-based management panel with vendor icons and smart filtering
 - 🗄️ **Multi-Database Support** - Support for SQLite, MySQL, PostgreSQL
+- 🔄 **Auto Update** - In-app one-click update with SHA-256 verification and automatic rollback backup
+- 🐳 **Docker Live Update** - Update without container restart, binary stored in data volume
+- 🏷️ **Vendor Filtering** - Auto-detected vendor filter chips for quick group navigation
+- 📦 **Native Packages** - `.deb` and `.rpm` packages with systemd service for Linux
 
 > 📖 **First time using Octopus?** Check out the **[Getting Started Guide](USAGE.md)** for a complete walkthrough from deployment to client integration — get up and running in 5 minutes.
 
@@ -38,19 +42,19 @@
 Run directly:
 
 ```bash
-docker run -d --name octopus -v /path/to/data:/app/data -p 8080:8080 ghcr.io/seller-1990/octopus:v0.1.0
+docker run -d --name octopus -v octopus-data:/app/data -p 8080:8080 ghcr.io/seller-1990/octopus:latest
 ```
 
 Or use docker compose:
 
 ```bash
-wget https://raw.githubusercontent.com/Seller-1990/octopus/refs/tags/v0.1.0/docker-compose.yml
-echo 'OCTOPUS_IMAGE_TAG=v0.1.0' > .env
+wget https://raw.githubusercontent.com/Seller-1990/octopus/dev/docker-compose.yml
 docker compose up -d
 ```
 
+> 💡 **Auto-Update in Docker**: Octopus supports one-click updates inside containers without restart. The updated binary is stored in the data volume and used on next process cycle. Alternatively, use [Watchtower](https://github.com/containrrr/watchtower) for automatic image-level updates.
 
-Use only **ghcr.io/seller-1990/octopus** and the compose file from this repository. Replace `v0.1.0` with the release you intend to deploy; use `latest` only when you explicitly want a moving version. Parent-fork images and deployment files do not contain the complete feature set.
+Use only **ghcr.io/seller-1990/octopus** and the compose file from this repository.
 
 ### 📦 Download from Release
 
@@ -60,7 +64,20 @@ Download the binary for your platform from [Releases](https://github.com/Seller-
 ./octopus start
 ```
 
-Windows users can download **octopus-setup-version-x86_64.exe** for an installer with desktop and Start Menu shortcuts, or **octopus-desktop-x86_64.exe** for the portable desktop executable.
+**Linux (recommended):** Install the `.deb` or `.rpm` package for systemd integration:
+
+```bash
+# Debian/Ubuntu/NAS
+sudo dpkg -i octopus_*.deb
+# Fedora/CentOS
+sudo rpm -i octopus_*.rpm
+```
+
+The package installs a systemd service that starts automatically. Manage with `systemctl start/stop/restart octopus`.
+
+**Windows:** Download **octopus-setup-version-x86_64.exe** for an installer with desktop and Start Menu shortcuts, or **octopus-desktop-x86_64.exe** for the portable desktop executable.
+
+**macOS:** Download the `.zip` for your architecture (arm64 for Apple Silicon, amd64 for Intel), extract, and run `./octopus start`.
 
 ### 🛠️ Build from Source
 
@@ -251,22 +268,17 @@ Groups aggregate multiple channels into a unified external model name.
 
 ### 💰 Price Management
 
-Manage model pricing information in the system.
+Model pricing is managed automatically through a three-layer system:
 
-**Data Sources:**
-
-- The system periodically syncs model pricing data from [models.dev](https://github.com/sst/models.dev)
-- When creating a channel, if the channel contains models not in models.dev, the system automatically creates pricing information for those models on this page, so this page displays models that haven't had their prices fetched from upstream, allowing users to set prices manually
-- Manual creation of models that exist in models.dev is also supported for custom pricing
-
-**Price Priority:**
+**Data Sources (highest priority first):**
 
 | Priority | Source | Description |
 |:--------:|--------|-------------|
-| 🥇 High | This Page | Prices set by user in price management page |
-| 🥈 Low | models.dev | Auto-synced default prices |
+| 🥇 High | Site Price Quotes | Auto-synced from upstream site `/api/pricing` with group multipliers |
+| 🥈 Medium | Local Database | Previously imported or manually set prices (via API) |
+| 🥉 Low | models.dev | Auto-fetched global prices from [models.dev](https://github.com/sst/models.dev) |
 
-> 💡 **Tip**: To override a model's default price, simply set a custom price for it in the price management page.
+Pricing is fully automatic — the system syncs site-specific prices during account sync and fetches global prices on a schedule. No manual price page is needed for normal operation.
 
 ---
 
