@@ -1,7 +1,12 @@
 package update
 
 import (
+	"bufio"
+	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -36,10 +41,30 @@ func UpdateCore() error {
 		return err
 	}
 
+	// SHA-256 checksum verification
+	checksumURL := releaseDownloadURL("sha256sums.txt")
+	expectedHash, err := fetchExpectedChecksum(checksumURL, filename)
+	if err != nil {
+		log.Warnf("sha256sums.txt not available, skipping checksum verification: %v", err)
+	} else {
+		if err := verifySHA256(data, expectedHash); err != nil {
+			log.Warnf("checksum verification failed: %v", err)
+			return fmt.Errorf("checksum verification failed: %w", err)
+		}
+		log.Infof("SHA-256 checksum verified successfully")
+	}
+
 	execPath, err := os.Executable()
 	if err != nil {
 		log.Warnf("get executable path failed: %v", err)
 		return err
+	}
+
+	// Backup current binary before replacement
+	backupPath := execPath + ".backup"
+	os.Remove(backupPath)
+	if err := copyFile(execPath, backupPath); err != nil {
+		log.Warnf("failed to backup current binary: %v", err)
 	}
 
 	if err := unzip(data, filepath.Dir(execPath)); err != nil {
@@ -50,6 +75,54 @@ func UpdateCore() error {
 	log.Infof("update core success")
 	go restartExecutable(execPath)
 	return nil
+}
+
+// verifySHA256 checks that the SHA-256 hash of data matches expectedHash.
+func verifySHA256(data []byte, expectedHash string) error {
+	actual := sha256.Sum256(data)
+	actualHex := hex.EncodeToString(actual[:])
+	if !strings.EqualFold(actualHex, strings.TrimSpace(expectedHash)) {
+		return fmt.Errorf("checksum mismatch: expected %s, got %s", expectedHash, actualHex)
+	}
+	return nil
+}
+
+// fetchExpectedChecksum downloads sha256sums.txt and returns the hash for filename.
+func fetchExpectedChecksum(checksumURL string, filename string) (string, error) {
+	data, err := doRequestWithFallback(checksumURL)
+	if err != nil {
+		return "", fmt.Errorf("download sha256sums.txt: %w", err)
+	}
+
+	scanner := bufio.NewScanner(bytes.NewReader(data))
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			continue
+		}
+		// Format: "<hash>  <filename>" or "<hash> <filename>"
+		parts := strings.Fields(line)
+		if len(parts) >= 2 && parts[1] == filename {
+			return parts[0], nil
+		}
+	}
+	return "", fmt.Errorf("checksum for %s not found in sha256sums.txt", filename)
+}
+
+// copyFile copies src to dst for backup purposes.
+func copyFile(src, dst string) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	out, err := os.Create(dst)
+	if err != nil {
+		return err
+	}
+	defer out.Close()
+	_, err = io.Copy(out, in)
+	return err
 }
 
 func AutoUpdateSupported() bool {

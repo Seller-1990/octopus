@@ -52,6 +52,13 @@ jobs:
       - name: Build
         run: bash scripts/build.sh release
 
+      - name: Generate SHA-256 checksums
+        run: |
+          cd build/bin
+          sha256sum *.zip *.exe 2>/dev/null | tee sha256sums.txt
+          cd ../archives
+          sha256sum * >> ../bin/sha256sums.txt 2>/dev/null || true
+
       - name: Get latest tag
         id: tag
         run: |
@@ -66,6 +73,7 @@ jobs:
             build/installer/*
             build/bin/octopus-desktop-*.exe
             build/bin/md5.txt
+            build/bin/sha256sums.txt
           prerelease: false
           generate_release_notes: true
           tag_name: ${{ steps.tag.outputs.TAG_NAME }}

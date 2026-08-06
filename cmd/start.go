@@ -13,6 +13,7 @@ import (
 	"github.com/bestruirui/octopus/internal/relay"
 	"github.com/bestruirui/octopus/internal/server"
 	"github.com/bestruirui/octopus/internal/task"
+	"github.com/bestruirui/octopus/internal/update"
 	"github.com/bestruirui/octopus/internal/utils/log"
 	"github.com/bestruirui/octopus/internal/utils/safe"
 	"github.com/bestruirui/octopus/internal/utils/shutdown"
@@ -99,6 +100,7 @@ func runService(cmd *cobra.Command, onReady func(addr string)) {
 
 	task.Init()
 	safe.Go("task-runner", task.RUN)
+	update.StartBackgroundCheck()
 	safe.Go("stats-site-model-backfill", func() {
 		op.StatsSiteModelBackfill(cmd.Context())
 	})
