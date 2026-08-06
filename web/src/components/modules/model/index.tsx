@@ -1,21 +1,17 @@
 'use client';
 
 import { useState } from 'react';
-import { Boxes, DollarSign, PackageSearch, ShieldCheck } from 'lucide-react';
+import { Boxes, PackageSearch } from 'lucide-react';
 import { useTranslations } from 'next-intl';
 import { cn } from '@/lib/utils';
 import { ModelCatalog } from './Catalog';
 import { ModelDiscovery } from './Discovery';
-import { HeaderPolicies } from './HeaderPolicies';
-import { LegacyPrices } from './LegacyPrices';
 
-type ModelView = 'catalog' | 'discovery' | 'headers' | 'global-prices';
+type ModelView = 'catalog' | 'discovery';
 
 const VIEWS = [
     { id: 'catalog', icon: Boxes },
     { id: 'discovery', icon: PackageSearch },
-    { id: 'headers', icon: ShieldCheck },
-    { id: 'global-prices', icon: DollarSign },
 ] as const;
 
 export function Model() {
@@ -83,8 +79,6 @@ export function Model() {
             >
                 {view === 'catalog' ? <ModelCatalog /> : null}
                 {view === 'discovery' ? <ModelDiscovery /> : null}
-                {view === 'headers' ? <HeaderPolicies /> : null}
-                {view === 'global-prices' ? <LegacyPrices /> : null}
             </div>
         </div>
     );

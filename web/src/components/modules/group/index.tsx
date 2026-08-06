@@ -1,10 +1,45 @@
 'use client';
 
-import { useCallback, useMemo } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { GroupCard } from './Card';
-import { useGroupList } from '@/api/endpoints/group';
+import { useGroupList, type Group } from '@/api/endpoints/group';
 import { useSearchStore, useToolbarViewOptionsStore } from '@/components/modules/toolbar';
 import { VirtualizedGrid } from '@/components/common/VirtualizedGrid';
+import { VendorIcon } from '@/components/shared/VendorIcon';
+import { cn } from '@/lib/utils';
+
+function detectVendorFromModel(modelName: string): string | null {
+    const lower = modelName.toLowerCase();
+    if (lower.startsWith('gpt-') || lower.startsWith('o1') || lower.startsWith('o3') || lower.startsWith('o4')) return 'openai';
+    if (lower.startsWith('claude-')) return 'anthropic';
+    if (lower.startsWith('gemini-')) return 'google';
+    if (lower.startsWith('deepseek')) return 'deepseek';
+    if (lower.startsWith('grok')) return 'xai';
+    if (lower.startsWith('qwen')) return 'alibaba';
+    if (lower.startsWith('llama')) return 'meta';
+    if (lower.startsWith('mistral') || lower.startsWith('codestral') || lower.startsWith('pixtral')) return 'mistral';
+    if (lower.startsWith('moonshot') || lower.startsWith('kimi')) return 'moonshotai';
+    if (lower.startsWith('glm') || lower.startsWith('chatglm')) return 'zhipuai';
+    if (lower.startsWith('doubao') || lower.startsWith('skylark')) return 'bytedance';
+    if (lower.startsWith('ernie')) return 'baidu';
+    if (lower.startsWith('hunyuan')) return 'tencent';
+    return null;
+}
+
+const VENDOR_LABELS: Record<string, string> = {
+    openai: 'OpenAI', anthropic: 'Anthropic', google: 'Google', deepseek: 'DeepSeek',
+    xai: 'xAI', alibaba: 'Qwen', meta: 'Meta', mistral: 'Mistral',
+    moonshotai: 'Moonshot', zhipuai: 'Zhipu', bytedance: 'Bytedance', baidu: 'Baidu', tencent: 'Tencent',
+};
+
+function getGroupVendors(group: Group): Set<string> {
+    const vendors = new Set<string>();
+    for (const item of group.items ?? []) {
+        const vendor = detectVendorFromModel(item.model_name ?? '');
+        if (vendor) vendors.add(vendor);
+    }
+    return vendors;
+}
 
 export function Group() {
     const { data: groups } = useGroupList();
@@ -12,11 +47,19 @@ export function Group() {
     const searchTerm = useSearchStore((s) => s.getSearchTerm(pageKey));
     const sortField = useToolbarViewOptionsStore((s) => s.getSortField(pageKey));
     const sortOrder = useToolbarViewOptionsStore((s) => s.getSortOrder(pageKey));
+    const [vendorFilter, setVendorFilter] = useState<Set<string>>(new Set());
+
+    const allVendors = useMemo(() => {
+        const vendors = new Set<string>();
+        for (const group of groups ?? []) {
+            for (const v of getGroupVendors(group)) vendors.add(v);
+        }
+        return [...vendors].sort();
+    }, [groups]);
 
     const sortedGroups = useMemo(() => {
         if (!groups) return [];
         return [...groups].sort((a, b) => {
-            // 置顶优先：pinned 组排在前面，组内按 pinned_at desc
             if (!!a.pinned !== !!b.pinned) return a.pinned ? -1 : 1;
             if (a.pinned && b.pinned) {
                 const ta = a.pinned_at ? new Date(a.pinned_at).getTime() : 0;
@@ -31,9 +74,29 @@ export function Group() {
     }, [groups, sortField, sortOrder]);
 
     const visibleGroups = useMemo(() => {
+        let result = sortedGroups;
         const term = searchTerm.toLowerCase().trim();
-        return !term ? sortedGroups : sortedGroups.filter((g) => g.name.toLowerCase().includes(term));
-    }, [sortedGroups, searchTerm]);
+        if (term) result = result.filter((g) => g.name.toLowerCase().includes(term));
+        if (vendorFilter.size > 0) {
+            result = result.filter((g) => {
+                const gv = getGroupVendors(g);
+                for (const v of vendorFilter) {
+                    if (gv.has(v)) return true;
+                }
+                return false;
+            });
+        }
+        return result;
+    }, [sortedGroups, searchTerm, vendorFilter]);
+
+    const toggleVendor = (vendor: string) => {
+        setVendorFilter((prev) => {
+            const next = new Set(prev);
+            if (next.has(vendor)) next.delete(vendor);
+            else next.add(vendor);
+            return next;
+        });
+    };
 
     const groupColumnCompute = useCallback((width: number) => {
         if (width >= 1240) return 4;
@@ -42,6 +105,39 @@ export function Group() {
         return 1;
     }, []);
 
+    const vendorChips = allVendors.length > 1 ? (
+        <div className="flex flex-wrap items-center gap-1.5 px-1 pb-2">
+            <button
+                type="button"
+                onClick={() => setVendorFilter(new Set())}
+                className={cn(
+                    'rounded-lg px-2.5 py-1 text-xs font-medium transition-colors',
+                    vendorFilter.size === 0
+                        ? 'bg-primary text-primary-foreground'
+                        : 'bg-muted text-muted-foreground hover:bg-muted/80',
+                )}
+            >
+                All
+            </button>
+            {allVendors.map((vendor) => (
+                <button
+                    key={vendor}
+                    type="button"
+                    onClick={() => toggleVendor(vendor)}
+                    className={cn(
+                        'flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-medium transition-colors',
+                        vendorFilter.has(vendor)
+                            ? 'bg-primary text-primary-foreground'
+                            : 'bg-muted text-muted-foreground hover:bg-muted/80',
+                    )}
+                >
+                    <VendorIcon vendor={vendor} className="size-3.5" />
+                    {VENDOR_LABELS[vendor] ?? vendor}
+                </button>
+            ))}
+        </div>
+    ) : null;
+
     return (
         <VirtualizedGrid
             items={visibleGroups}
@@ -49,6 +145,7 @@ export function Group() {
             estimateItemHeight={520}
             getItemKey={(group, index) => group.id ?? `group-${index}`}
             renderItem={(group) => <GroupCard group={group} />}
+            header={vendorChips}
         />
     );
 }

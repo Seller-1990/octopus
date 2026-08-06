@@ -51,6 +51,7 @@ export const SettingKey = {
     WebDAVBackupInterval: 'webdav_backup_interval',
     WebDAVRetentionCount: 'webdav_retention_count',
     WebDAVIncludeStats: 'webdav_include_stats',
+    DefaultGroupLoadBalance: 'default_group_load_balance',
 } as const;
 
 /**

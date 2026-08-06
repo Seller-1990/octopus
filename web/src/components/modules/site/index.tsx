@@ -1772,7 +1772,7 @@ export function Site() {
                                   "ring-2 ring-primary/35 ring-offset-2 ring-offset-background",
                               )}
                             >
-                              <div className="space-y-3">
+                              <div className="space-y-1.5">
                                 <div className="flex flex-wrap items-start gap-3">
                                   <div className="min-w-0 flex-1">
                                     <div className="flex flex-wrap items-center gap-2">
