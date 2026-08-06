@@ -34,13 +34,6 @@ type SiteProxyPreference struct {
 	UpdatedAt           time.Time                 `json:"updated_at"`
 }
 
-type ClashSwitchLease struct {
-	LeaseKey   string    `json:"-" gorm:"size:191;primaryKey"`
-	OwnerToken string    `json:"-" gorm:"size:64;not null"`
-	ExpiresAt  time.Time `json:"-" gorm:"index"`
-	UpdatedAt  time.Time `json:"-"`
-}
-
 type ClashController struct {
 	ID              int       `json:"id" gorm:"primaryKey"`
 	Name            string    `json:"name" gorm:"size:128;unique;not null"`

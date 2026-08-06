@@ -188,19 +188,6 @@ func SiteProxyPreferenceUsable(item model.SiteProxyPreference, now time.Time) bo
 	return true
 }
 
-func SiteProxyPreferenceClear(ctx context.Context, siteID, accountID int) error {
-	if siteID <= 0 {
-		return fmt.Errorf("site id is required")
-	}
-	query := db.GetDB().WithContext(ctx).Where("site_id = ?", siteID)
-	if accountID > 0 {
-		query = query.Where("site_account_id = ?", accountID)
-	} else {
-		query = query.Where("site_account_id = 0")
-	}
-	return query.Delete(&model.SiteProxyPreference{}).Error
-}
-
 func SiteProxyPreferenceClearAccount(ctx context.Context, accountID int) error {
 	account, err := SiteAccountGet(accountID, ctx)
 	if err != nil {

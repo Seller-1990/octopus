@@ -37,23 +37,6 @@ func TestBuildWSResponseCreateMessageNormalizesWSFields(t *testing.T) {
 	}
 }
 
-func TestInjectWSPreviousResponseIDDoesNotInjectImplicitContinuation(t *testing.T) {
-	reqBody := map[string]json.RawMessage{
-		"model": json.RawMessage(`"gpt-4o"`),
-	}
-
-	injectWSPreviousResponseID(reqBody, &wsConversationState{LastResponseID: "resp_cached"})
-	if _, ok := reqBody["previous_response_id"]; ok {
-		t.Fatalf("expected implicit previous_response_id injection to stay disabled, got %#v", reqBody)
-	}
-
-	reqBody["previous_response_id"] = json.RawMessage(`"resp_explicit"`)
-	injectWSPreviousResponseID(reqBody, &wsConversationState{LastResponseID: "resp_cached_2"})
-	if got := string(reqBody["previous_response_id"]); got != `"resp_explicit"` {
-		t.Fatalf("expected explicit previous_response_id to be preserved, got %s", got)
-	}
-}
-
 func TestWSRequestExplicitlyRequestsContinuation(t *testing.T) {
 	if wsRequestExplicitlyRequestsContinuation(nil) {
 		t.Fatalf("expected nil request body to be fresh")
@@ -288,20 +271,6 @@ func TestWSConversationStateShouldUseNativeContinuation(t *testing.T) {
 	state.MarkReplayRecovered(&transformerModel.InternalLLMRequest{Messages: []transformerModel.Message{{Role: "user"}}})
 	if state.ReplayPending {
 		t.Fatalf("expected replay recovery without tool outputs to clear replay-pending flag")
-	}
-}
-
-func TestInjectWSPreviousResponseIDLeavesReplayPendingToolOutputsUntouched(t *testing.T) {
-	reqBody := map[string]json.RawMessage{
-		"model": json.RawMessage(`"gpt-4o"`),
-		"input": json.RawMessage(`[
-			{"type":"function_call_output","call_id":"call_123","output":"ok"}
-		]`),
-	}
-
-	injectWSPreviousResponseID(reqBody, &wsConversationState{LastResponseID: "resp_cached", ReplayPending: true})
-	if _, ok := reqBody["previous_response_id"]; ok {
-		t.Fatalf("expected replay-pending tool output request to remain without injected previous_response_id")
 	}
 }
 

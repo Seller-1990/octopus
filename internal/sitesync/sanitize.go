@@ -208,7 +208,7 @@ func summarizeHTMLForStatus(text string) string {
 	if strings.Contains(lowered, "cloudflare") || strings.Contains(lowered, "just a moment") || strings.Contains(lowered, "cf-error-code") || strings.Contains(lowered, "cloudflare ray id") {
 		return "站点触发 Cloudflare 保护，请稍后重试，或手动访问站点完成验证/联系站点管理员放行"
 	}
-	if summary := anyRouterExtractHTMLErrorSummary(text); summary != "" {
+	if summary := extractHTMLErrorSummary(text); summary != "" {
 		return "上游返回 HTML 页面：" + sanitizeHTMLTitle(summary)
 	}
 	if match := htmlTitlePattern.FindStringSubmatch(text); len(match) >= 2 {

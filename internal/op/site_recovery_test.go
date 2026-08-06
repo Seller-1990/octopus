@@ -1163,50 +1163,6 @@ func TestVerificationRetryPendingSessionIDsIncludesPendingAndStaleRunning(t *tes
 	}
 }
 
-func TestClashSwitchLeaseRejectsStaleOwnerRelease(t *testing.T) {
-	ctx := setupBackupTestDB(t)
-	controller := model.ClashController{
-		Name:      "lease-controller",
-		APIURL:    "http://127.0.0.1:19090",
-		ProxyURL:  "http://127.0.0.1:19091",
-		GroupName: "Octopus",
-		Enabled:   true,
-	}
-	if err := dbpkg.GetDB().WithContext(ctx).Create(&controller).Error; err != nil {
-		t.Fatalf("create controller: %v", err)
-	}
-	first, err := acquireClashSwitchLease(ctx, &controller)
-	if err != nil {
-		t.Fatalf("acquire first lease: %v", err)
-	}
-	past := time.Now().Add(-time.Second)
-	if err := dbpkg.GetDB().WithContext(ctx).Model(&model.ClashSwitchLease{}).
-		Where("lease_key = ?", first.key).
-		Update("expires_at", past).Error; err != nil {
-		t.Fatalf("expire first lease: %v", err)
-	}
-	second, err := acquireClashSwitchLease(ctx, &controller)
-	if err != nil {
-		t.Fatalf("replace expired lease: %v", err)
-	}
-
-	if err := releaseClashSwitchLease(ctx, first); err != nil {
-		t.Fatalf("release stale lease owner: %v", err)
-	}
-	var count int64
-	if err := dbpkg.GetDB().WithContext(ctx).Model(&model.ClashSwitchLease{}).
-		Where("lease_key = ? AND owner_token = ?", second.key, second.owner).
-		Count(&count).Error; err != nil {
-		t.Fatalf("count current lease: %v", err)
-	}
-	if count != 1 {
-		t.Fatal("stale lease owner released the current lease")
-	}
-	if err := releaseClashSwitchLease(ctx, second); err != nil {
-		t.Fatalf("release current lease owner: %v", err)
-	}
-}
-
 func TestClashSwitchNodeWaitsForControllerConfirmation(t *testing.T) {
 	ctx := setupBackupTestDB(t)
 	var mu sync.Mutex

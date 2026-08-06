@@ -969,7 +969,7 @@ func anyRouterFormatHTTPError(statusCode int, header http.Header, body string) e
 	if IsCloudflareProtectionResponse(statusCode, header, bodyBytes) {
 		return wrapCloudflareProtectionError(newCloudflareProtectionError(statusCode, header))
 	}
-	if summary := anyRouterExtractHTMLErrorSummary(body); summary != "" {
+	if summary := extractHTMLErrorSummary(body); summary != "" {
 		return newSiteHTTPErrorWithHeader(statusCode, summary, header)
 	}
 	return newSiteHTTPErrorWithHeader(statusCode, "上游返回非 JSON 响应，无法解析为接口响应", header)
@@ -1100,7 +1100,8 @@ func anyRouterIsShieldChallenge(contentType string, text string) bool {
 	return strings.Contains(text, "var arg1=")
 }
 
-func anyRouterExtractHTMLErrorSummary(text string) string {
+// extractHTMLErrorSummary 从 HTML 错误页中提取标题与错误码（供各平台共享的错误摘要）。
+func extractHTMLErrorSummary(text string) string {
 	trimmed := strings.TrimSpace(text)
 	if trimmed == "" {
 		return ""

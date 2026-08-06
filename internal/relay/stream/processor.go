@@ -63,6 +63,10 @@ type StreamConfig struct {
 	// Passthrough-specific
 	BufferRawStream bool                // Enable raw stream buffering for metrics
 	TerminalEvents  map[string]struct{} // Protocol terminal events for early completion
+
+	// MaxEventSize 是终态事件扫描时 SSE 单事件大小上限；0 表示默认 32MB。
+	// 与 SSESource 的读取上限保持一致（两者由 relay 层传入同一配置值）。
+	MaxEventSize int
 }
 
 // Termination describes how the transport loop ended. It is deliberately
@@ -264,7 +268,7 @@ func (p *StreamProcessor) processEvent(data []byte) error {
 	// the evidence would incorrectly turn a completed response into a generic
 	// transport failure.
 	if p.terminalEvent == "" {
-		p.terminalEvent = terminalEventFromSSE(output, p.config.TerminalEvents)
+		p.terminalEvent = terminalEventFromSSE(output, p.config.TerminalEvents, p.config.MaxEventSize)
 	}
 	if _, err := p.config.Writer.Write(output); err != nil {
 		p.termination = TerminationWriteError
@@ -377,14 +381,17 @@ func (p *StreamProcessor) streamTerminalEvent() string {
 	if p.rawBuffer.Len() == 0 {
 		return ""
 	}
-	return terminalEventFromSSE(p.rawBuffer.Bytes(), p.config.TerminalEvents)
+	return terminalEventFromSSE(p.rawBuffer.Bytes(), p.config.TerminalEvents, p.config.MaxEventSize)
 }
 
-func terminalEventFromSSE(payload []byte, terminalEvents map[string]struct{}) string {
+func terminalEventFromSSE(payload []byte, terminalEvents map[string]struct{}, maxEventSize int) string {
 	if len(payload) == 0 || len(terminalEvents) == 0 {
 		return ""
 	}
-	readCfg := &sse.ReadConfig{MaxEventSize: 32 * 1024 * 1024}
+	if maxEventSize <= 0 {
+		maxEventSize = 32 * 1024 * 1024 // 32MB default
+	}
+	readCfg := &sse.ReadConfig{MaxEventSize: maxEventSize}
 	for ev, err := range sse.Read(bytes.NewReader(payload), readCfg) {
 		if err != nil {
 			break

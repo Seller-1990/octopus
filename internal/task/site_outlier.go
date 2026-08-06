@@ -31,6 +31,8 @@ type channelProber interface {
 // 阶段0 恢复探活 → 阶段1 门1窗口评估 → 阶段2 同站佐证 → 阶段3 探活确认 → 软退役。
 func SiteOutlierRetireTask() {
 	enabled, err := op.SettingGetBool(model.SettingKeyOutlierRetireEnabled)
+	// 每轮同步数据面记录开关：POR 关闭时停止每请求的 Report 写入（热路径开销归零）。
+	outlierwindow.SetReportEnabled(err == nil && enabled)
 	if err != nil || !enabled {
 		return // 总开关关闭：任务已注册，运行时打开即可生效，无需重启
 	}

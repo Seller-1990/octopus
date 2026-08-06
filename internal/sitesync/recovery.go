@@ -598,7 +598,9 @@ func recordSiteOperationAttempt(
 		if entry.Message == "" {
 			entry.Message = failureMessage
 		} else {
-			entry.Message = sanitizeSiteStatusText(entry.Message + "; operation failed: " + failureMessage)
+			// path.diagnostic 与 failureMessage 均已单独清洗（脱敏/控制字符/HTML 摘要），
+			// 拼接后只需截断，避免同一错误被重复清洗。
+			entry.Message = truncateSiteStatusMessage(entry.Message + "; operation failed: " + failureMessage)
 		}
 	}
 	return db.GetDB().WithContext(ctx).Create(&entry).Error

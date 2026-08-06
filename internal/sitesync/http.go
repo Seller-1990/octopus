@@ -446,7 +446,7 @@ func extractSiteHTMLResponseSummary(contentType string, bodyBytes []byte) string
 	if body == "" {
 		return ""
 	}
-	if summary := anyRouterExtractHTMLErrorSummary(body); summary != "" {
+	if summary := extractHTMLErrorSummary(body); summary != "" {
 		return summary
 	}
 	lowered := strings.ToLower(contentType + "\n" + body)

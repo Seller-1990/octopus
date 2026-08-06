@@ -1040,6 +1040,7 @@ func (ra *relayAttempt) handleWSStreamResponseV2(ctx context.Context, reader *ws
 		FirstTokenTimeout: firstTokenTimeout,
 		HeartbeatInterval: streamHeartbeatInterval(),
 		TerminalEvents:    clientSuccessTerminalEvents(ra.internalRequest.RawAPIFormat),
+		MaxEventSize:      maxSSEEventSize,
 		OnFirstToken: func() {
 			ra.metrics.SetFirstTokenTime(time.Now())
 			ra.stopFirstTokenTimer()
@@ -1325,26 +1326,6 @@ func (ra *relayAttempt) recordHeaderPolicyTrace(policy dbmodel.ResolvedHeaderPol
 	}
 }
 
-// mergeBetaHeader 合并两个逗号分隔的 anthropic-beta 字段值，去重并保留先后顺序。
-func mergeBetaHeader(existing, incoming string) string {
-	seen := make(map[string]struct{}, 8)
-	merged := make([]string, 0, 8)
-	for _, source := range []string{existing, incoming} {
-		for _, entry := range strings.Split(source, ",") {
-			normalized := strings.TrimSpace(entry)
-			if normalized == "" {
-				continue
-			}
-			if _, ok := seen[normalized]; ok {
-				continue
-			}
-			seen[normalized] = struct{}{}
-			merged = append(merged, normalized)
-		}
-	}
-	return strings.Join(merged, ",")
-}
-
 // sendRequest 发送 HTTP 请求
 func (ra *relayAttempt) sendRequest(req *http.Request) (*http.Response, error) {
 	httpClient, err := helper.ChannelHTTPClientWithContext(req.Context(), ra.channel)
@@ -1413,6 +1394,7 @@ func (ra *relayAttempt) handleStreamResponseV2(ctx context.Context, response *ht
 		FirstTokenTimeout: firstTokenTimeout,
 		HeartbeatInterval: streamHeartbeatInterval(),
 		TerminalEvents:    clientSuccessTerminalEvents(ra.internalRequest.RawAPIFormat),
+		MaxEventSize:      maxSSEEventSize,
 		OnFirstToken: func() {
 			ra.metrics.SetFirstTokenTime(time.Now())
 			ra.stopFirstTokenTimer()
@@ -1477,6 +1459,7 @@ func (ra *relayAttempt) handleStreamResponsePassthroughV2(ctx context.Context, r
 		HeartbeatInterval: streamHeartbeatInterval(),
 		BufferRawStream:   true,
 		TerminalEvents:    cfg.TerminalEvents,
+		MaxEventSize:      maxSSEEventSize,
 		OnFirstToken: func() {
 			ra.metrics.SetFirstTokenTime(time.Now())
 			ra.stopFirstTokenTimer()
@@ -1717,52 +1700,6 @@ func (ra *relayAttempt) collectResponse() {
 	ra.metrics.SetInternalResponse(internalResponse, actualModel)
 }
 
-func (ra *relayAttempt) collectOpenAIResponsesPassthroughMetrics(ctx context.Context, rawStream []byte) {
-	if len(rawStream) == 0 {
-		return
-	}
-	outEventAdapter, outOk := ra.outAdapter.(model.OutboundStreamEventTransformer)
-	inEventAdapter, inOk := ra.inAdapter.(model.InboundStreamEventTransformer)
-	if outOk && inOk {
-		readCfg := &sse.ReadConfig{MaxEventSize: maxSSEEventSize}
-		for ev, err := range sse.Read(bytes.NewReader(rawStream), readCfg) {
-			if err != nil {
-				log.Debugf("openai responses passthrough metrics parse skipped: %v", err)
-				return
-			}
-			if events, terr := outEventAdapter.TransformStreamEvent(ctx, []byte(ev.Data)); terr == nil && len(events) > 0 {
-				_, _ = inEventAdapter.TransformStreamEvents(ctx, events)
-			}
-		}
-		return
-	}
-	readCfg := &sse.ReadConfig{MaxEventSize: maxSSEEventSize}
-	for ev, err := range sse.Read(bytes.NewReader(rawStream), readCfg) {
-		if err != nil {
-			log.Debugf("openai responses passthrough metrics parse skipped: %v", err)
-			return
-		}
-		if internalStream, terr := ra.outAdapter.TransformStream(ctx, []byte(ev.Data)); terr == nil && internalStream != nil {
-			_, _ = ra.inAdapter.TransformStream(ctx, internalStream)
-		}
-	}
-}
-
-// responsesPassthroughTerminalEvents / anthropicPassthroughTerminalEvents 定义各协议
-// SSE 流的终态事件类型；缓存流中出现终态事件即视为上游响应已完整送达。
-var (
-	responsesPassthroughTerminalEvents = map[string]struct{}{
-		"response.completed":  {},
-		"response.failed":     {},
-		"response.incomplete": {},
-		"error":               {},
-	}
-	anthropicPassthroughTerminalEvents = map[string]struct{}{
-		"message_stop": {},
-		"error":        {},
-	}
-)
-
 func clientSuccessTerminalEvents(format model.APIFormat) map[string]struct{} {
 	switch format {
 	case model.APIFormatOpenAIResponse:
@@ -1860,67 +1797,5 @@ func setProtocolWarningHeader(c *gin.Context, warnings []string) {
 	c.Writer.Header().Del("X-Octopus-Warning")
 	if len(warnings) > 0 {
 		c.Header("X-Octopus-Warning", strings.Join(warnings, "; "))
-	}
-}
-
-// streamReachedTerminalEvent 报告缓存的原始 SSE 流是否已包含协议终态事件。
-// 客户端 SDK 收到终态事件后会立即断连而不等上游 EOF，断连取消会沿出站请求
-// 传播打断上游读取；此时读取被取消不代表流未完成。
-func streamReachedTerminalEvent(rawStream []byte, terminalTypes map[string]struct{}) bool {
-	if len(rawStream) == 0 {
-		return false
-	}
-	readCfg := &sse.ReadConfig{MaxEventSize: maxSSEEventSize}
-	for ev, err := range sse.Read(bytes.NewReader(rawStream), readCfg) {
-		if err != nil {
-			break
-		}
-		typ := strings.TrimSpace(ev.Type)
-		if typ == "" {
-			var head struct {
-				Type string `json:"type"`
-			}
-			if json.Unmarshal([]byte(ev.Data), &head) == nil {
-				typ = head.Type
-			}
-		}
-		if _, ok := terminalTypes[typ]; ok {
-			return true
-		}
-	}
-	return false
-}
-
-// forwardViaHTTPStandard 是 forwardViaHTTP 的原路径（直通判定失败时的兜底）。
-// 留作显式出口，避免 passthrough 失败时的递归。
-
-func (ra *relayAttempt) collectAnthropicPassthroughMetrics(ctx context.Context, rawStream []byte) {
-	if len(rawStream) == 0 {
-		return
-	}
-	outEventAdapter, outOk := ra.outAdapter.(model.OutboundStreamEventTransformer)
-	inEventAdapter, inOk := ra.inAdapter.(model.InboundStreamEventTransformer)
-	if outOk && inOk {
-		readCfg := &sse.ReadConfig{MaxEventSize: maxSSEEventSize}
-		for ev, err := range sse.Read(bytes.NewReader(rawStream), readCfg) {
-			if err != nil {
-				log.Debugf("anthropic passthrough metrics parse skipped: %v", err)
-				return
-			}
-			if events, terr := outEventAdapter.TransformStreamEvent(ctx, []byte(ev.Data)); terr == nil && len(events) > 0 {
-				_, _ = inEventAdapter.TransformStreamEvents(ctx, events)
-			}
-		}
-		return
-	}
-	readCfg := &sse.ReadConfig{MaxEventSize: maxSSEEventSize}
-	for ev, err := range sse.Read(bytes.NewReader(rawStream), readCfg) {
-		if err != nil {
-			log.Debugf("anthropic passthrough metrics parse skipped: %v", err)
-			return
-		}
-		if internalStream, terr := ra.outAdapter.TransformStream(ctx, []byte(ev.Data)); terr == nil && internalStream != nil {
-			_, _ = ra.inAdapter.TransformStream(ctx, internalStream)
-		}
 	}
 }

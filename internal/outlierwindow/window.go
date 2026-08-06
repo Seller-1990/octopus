@@ -55,11 +55,21 @@ var defaultConfig = Config{
 var (
 	store     sync.Map // key: int(channelID) -> *ringWindow
 	configPtr atomic.Pointer[Config]
+	// reportEnabled 数据面记录总开关：POR 未启用时跳过每请求的 Report 写入，
+	// 避免关闭特性仍消耗热路径资源。默认开启保持原有行为，
+	// 由控制面 task（SiteOutlierRetireTask）每轮按设置同步。
+	reportEnabled atomic.Bool
 )
+
+// SetReportEnabled 设置数据面记录开关（POR 设置关闭时停止每请求写入）。
+func SetReportEnabled(enabled bool) {
+	reportEnabled.Store(enabled)
+}
 
 func init() {
 	c := defaultConfig
 	configPtr.Store(&c)
+	reportEnabled.Store(true)
 }
 
 func currentConfig() Config {
@@ -104,6 +114,9 @@ func getOrCreate(channelID int) *ringWindow {
 // Report 数据面每次真实请求最终结果调用。非阻塞、best-effort，内部 recover 兜底绝不冒泡。
 // statusCode 当前不参与门1判定（门1只看成败序列），保留入参供未来扩展。
 func Report(channelID int, success bool, statusCode int, now time.Time) {
+	if !reportEnabled.Load() {
+		return
+	}
 	defer func() {
 		if r := recover(); r != nil {
 			log.Warnf("outlierwindow report panic: %v", r)
