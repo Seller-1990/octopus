@@ -20,13 +20,13 @@ func TestReleaseURLsUseSellerFork(t *testing.T) {
 }
 
 func TestAutoUpdateSupported(t *testing.T) {
-	if autoUpdateSupported("windows", false) {
+	if autoUpdateSupported("windows") {
 		t.Fatal("Windows in-place self-update must remain disabled until executable replacement is supported")
 	}
-	if autoUpdateSupported("linux", true) {
-		t.Fatal("container self-update must be disabled")
+	if !autoUpdateSupported("linux") {
+		t.Fatal("Linux builds (including containers) should support self-update")
 	}
-	if !autoUpdateSupported("linux", false) {
-		t.Fatal("standalone Linux builds should support self-update")
+	if !autoUpdateSupported("darwin") {
+		t.Fatal("Darwin builds should support self-update")
 	}
 }

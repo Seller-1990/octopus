@@ -1,0 +1,16 @@
+[Unit]
+Description=Octopus LLM API Gateway
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/octopus start
+WorkingDirectory=/var/lib/octopus
+Restart=on-failure
+RestartSec=5
+Environment=OCTOPUS_DATA_DIR=/var/lib/octopus
+LimitNOFILE=65535
+
+[Install]
+WantedBy=multi-user.target

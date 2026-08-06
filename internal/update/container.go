@@ -6,8 +6,8 @@ import (
 )
 
 // InContainer 检测当前进程是否运行在容器中。
-// Docker/K8s 容器内自动更新会覆盖镜像内二进制并在重启容器时丢失，
-// 且可能破坏自构建版本，因此容器环境必须禁用自动更新。
+// 容器环境下自动更新仍然可用：新二进制写入数据卷，
+// 由 entrypoint.sh 在下次启动或 syscall.Exec 热切换时生效。
 func InContainer() bool {
 	if _, err := os.Stat("/.dockerenv"); err == nil {
 		return true
@@ -25,4 +25,13 @@ func InContainer() bool {
 		}
 	}
 	return false
+}
+
+// ContainerDataDir returns the data directory used for in-container updates.
+// It respects OCTOPUS_DATA_DIR env var, defaulting to "data" (relative to CWD).
+func ContainerDataDir() string {
+	if dir := os.Getenv("OCTOPUS_DATA_DIR"); dir != "" {
+		return dir
+	}
+	return "data"
 }

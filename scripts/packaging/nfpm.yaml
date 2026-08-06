@@ -1,0 +1,28 @@
+name: octopus
+arch: "${ARCH}"
+platform: linux
+version: "${VERSION}"
+section: default
+priority: optional
+maintainer: Seller-1990
+description: LLM API aggregation and load balancing service
+vendor: Seller-1990
+homepage: https://github.com/Seller-1990/octopus
+license: MIT
+
+contents:
+  - src: ./octopus
+    dst: /usr/bin/octopus
+    file_info:
+      mode: 0755
+  - src: ./octopus.service
+    dst: /etc/systemd/system/octopus.service
+    type: config
+  - dst: /var/lib/octopus
+    type: dir
+    file_info:
+      mode: 0755
+
+scripts:
+  postinstall: ./scripts/packaging/postinstall.sh
+  preremove: ./scripts/packaging/preremove.sh

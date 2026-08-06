@@ -3,7 +3,12 @@ services:
     image: ghcr.io/seller-1990/octopus:${OCTOPUS_IMAGE_TAG:-latest}
     ports:
        - '8080:8080'
-    volumes:      
-       - '/path/to/data:/app/data'
+    volumes:
+       - octopus-data:/app/data
+    environment:
+       - OCTOPUS_DATA_DIR=/app/data
     container_name: octopus
     restart: unless-stopped
+
+volumes:
+  octopus-data:

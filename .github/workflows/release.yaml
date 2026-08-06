@@ -46,6 +46,9 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y nsis
 
+      - name: Install nfpm
+        run: go install github.com/goreleaser/nfpm/v2/cmd/nfpm@latest
+
       - name: Verify archive naming
         run: bash scripts/build_archive_test.sh
 
@@ -71,6 +74,8 @@ jobs:
           files: |
             build/archives/*
             build/installer/*
+            build/packages/*.deb
+            build/packages/*.rpm
             build/bin/octopus-desktop-*.exe
             build/bin/md5.txt
             build/bin/sha256sums.txt

@@ -422,6 +422,64 @@ package_installer() {
 }
 
 # =============================================================================
+# Packaging Functions
+# =============================================================================
+
+package_nfpm() {
+    log_step "Packaging deb/rpm with nfpm"
+
+    if ! command_exists nfpm; then
+        log_warning "nfpm not found, skipping deb/rpm packaging"
+        log_info "Install: go install github.com/goreleaser/nfpm/v2/cmd/nfpm@latest"
+        return 0
+    fi
+
+    local pkg_dir="${OUTPUT_DIR}/packages"
+    mkdir -p "${pkg_dir}"
+
+    local version="${GIT_VERSION#v}"  # strip leading 'v' for package version
+
+    local archs=("x86_64:amd64" "arm64:arm64" "armv7:armhf" "x86:i386")
+
+    for entry in "${archs[@]}"; do
+        local build_arch="${entry%%:*}"
+        local pkg_arch="${entry#*:}"
+        local binary="${OUTPUT_DIR}/bin/${APP_NAME}-linux-${build_arch}"
+
+        if [ ! -f "${binary}" ]; then
+            log_warning "Binary not found for ${build_arch}, skipping package"
+            continue
+        fi
+
+        # Prepare staging area
+        local staging
+        staging="$(mktemp -d "${TMPDIR:-/tmp}/octopus-nfpm-XXXXXX")"
+        cp "${binary}" "${staging}/octopus"
+        chmod 755 "${staging}/octopus"
+        cp "${ROOT_DIR}/scripts/packaging/octopus.service" "${staging}/octopus.service"
+
+        # Generate packages
+        for fmt in deb rpm; do
+            log_info "Creating ${fmt} for ${pkg_arch}..."
+            if VERSION="${version}" ARCH="${pkg_arch}" nfpm package \
+                --config "${ROOT_DIR}/scripts/packaging/nfpm.yaml" \
+                --packager "${fmt}" \
+                --target "${pkg_dir}/" 2>&1; then
+                log_success "Created ${fmt} package for ${pkg_arch}"
+            else
+                log_warning "Failed to create ${fmt} for ${pkg_arch}"
+            fi
+        done
+
+        rm -rf "${staging}"
+    done
+
+    local pkg_count
+    pkg_count=$(find "${pkg_dir}" -type f \( -name "*.deb" -o -name "*.rpm" \) | wc -l | tr -d ' ')
+    log_success "Created ${pkg_count} packages in ${pkg_dir}/"
+}
+
+# =============================================================================
 # Post-build Functions
 # =============================================================================
 
@@ -787,6 +845,9 @@ main() {
             exit 1
         fi
 
+        # Package deb/rpm (non-fatal if nfpm not installed)
+        package_nfpm
+
         # Desktop build + installer (Windows GUI, no console)
         if ! build_desktop x86_64; then
             log_error "Failed to build desktop x86_64"
@@ -812,6 +873,7 @@ main() {
         log_info "  • Binaries: ${OUTPUT_DIR}/bin/"
         log_info "  • Docker binaries: ${OUTPUT_DIR}/docker/"
         log_info "  • Archives: ${OUTPUT_DIR}/archives/"
+        log_info "  • Packages: ${OUTPUT_DIR}/packages/"
         log_info "  • Desktop installer: ${OUTPUT_DIR}/installer/"
         ;;
     "help" | "-h" | "--help")

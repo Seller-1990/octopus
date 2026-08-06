@@ -54,26 +54,60 @@ func UpdateCore() error {
 		log.Infof("SHA-256 checksum verified successfully")
 	}
 
-	execPath, err := os.Executable()
-	if err != nil {
-		log.Warnf("get executable path failed: %v", err)
-		return err
+	// Determine target path based on environment
+	var targetDir string
+	var updatedBinPath string
+
+	if InContainer() {
+		// In container: write updated binary to data volume so it persists across restarts
+		targetDir = ContainerDataDir()
+		if err := os.MkdirAll(targetDir, 0755); err != nil {
+			log.Warnf("failed to create data dir: %v", err)
+			return fmt.Errorf("create data dir: %w", err)
+		}
+		updatedBinPath = filepath.Join(targetDir, "octopus-updated")
+		log.Infof("container mode: updating binary to %s", updatedBinPath)
+	} else {
+		// Bare metal: overwrite in place
+		execPath, err := os.Executable()
+		if err != nil {
+			log.Warnf("get executable path failed: %v", err)
+			return err
+		}
+		targetDir = filepath.Dir(execPath)
+		updatedBinPath = execPath
+
+		// Backup current binary before replacement
+		backupPath := execPath + ".backup"
+		os.Remove(backupPath)
+		if err := copyFile(execPath, backupPath); err != nil {
+			log.Warnf("failed to backup current binary: %v", err)
+		}
 	}
 
-	// Backup current binary before replacement
-	backupPath := execPath + ".backup"
-	os.Remove(backupPath)
-	if err := copyFile(execPath, backupPath); err != nil {
-		log.Warnf("failed to backup current binary: %v", err)
-	}
-
-	if err := unzip(data, filepath.Dir(execPath)); err != nil {
+	if err := unzip(data, targetDir); err != nil {
 		log.Warnf("unzip failed: %v", err)
 		return err
 	}
 
+	// In container mode, the unzipped binary is named "octopus"; rename it.
+	if InContainer() {
+		unzippedPath := filepath.Join(targetDir, "octopus")
+		if _, err := os.Stat(unzippedPath); err == nil {
+			if err := os.Chmod(unzippedPath, 0755); err != nil {
+				log.Warnf("chmod failed: %v", err)
+			}
+			if unzippedPath != updatedBinPath {
+				if err := os.Rename(unzippedPath, updatedBinPath); err != nil {
+					log.Warnf("rename to updated path failed: %v", err)
+					return fmt.Errorf("rename updated binary: %w", err)
+				}
+			}
+		}
+	}
+
 	log.Infof("update core success")
-	go restartExecutable(execPath)
+	go restartExecutable(updatedBinPath)
 	return nil
 }
 
@@ -126,11 +160,13 @@ func copyFile(src, dst string) error {
 }
 
 func AutoUpdateSupported() bool {
-	return autoUpdateSupported(runtime.GOOS, InContainer())
+	return autoUpdateSupported(runtime.GOOS)
 }
 
-func autoUpdateSupported(goos string, inContainer bool) bool {
-	return !inContainer && goos != "windows"
+func autoUpdateSupported(goos string) bool {
+	// Containers are now supported: binary is written to the data volume.
+	// Only Windows is unsupported.
+	return goos != "windows"
 }
 
 func getDownloadFilename() (string, error) {
