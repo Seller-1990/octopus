@@ -557,6 +557,36 @@
       "modifiedAt": "Modified",
       "refresh": "Refresh",
       "notConfigured": "WebDAV not configured"
+    },
+    "routing": {
+      "title": "Routing",
+      "defaultLoadBalance": {
+        "label": "Default Load Balance",
+        "description": "Default load balancing strategy for new groups",
+        "placeholder": "Select strategy",
+        "options": {
+          "round_robin": "Round Robin",
+          "random": "Random",
+          "failover": "Failover",
+          "weighted": "Weighted"
+        }
+      },
+      "defaultSortStrategy": {
+        "label": "Default Sort Strategy",
+        "description": "Default channel sorting strategy within groups",
+        "placeholder": "Select strategy",
+        "options": {
+          "non_relay_balance": "Non-relay first + Balance desc",
+          "non_relay_multiplier": "Non-relay first + Multiplier asc",
+          "multiplier_balance": "Multiplier asc + Balance desc",
+          "balance_only": "Pure balance desc"
+        }
+      },
+      "defaultMultiplierCap": {
+        "label": "Default Multiplier Cap",
+        "description": "Default multiplier cap for groups (0 = no limit)",
+        "placeholder": "0 = no limit"
+      }
     }
   },
   "group": {
@@ -1833,7 +1863,8 @@
         "failureOther": "Other errors",
         "partial": "Partial"
       },
-      "overview": "Overview",
+      "overview": "Check-in Overview",
+      "totalStats": "{siteCount} sites · {accountCount} check-in accounts",
       "currentResult": "Current result",
       "visibleCounts": "{siteCount} sites / {accountCount} accounts",
       "currentBalance": "Current balance",

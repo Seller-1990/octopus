@@ -233,6 +233,12 @@ export function CheckinPanel({
           <div className="flex flex-wrap items-center gap-2 text-base font-semibold">
             <CalendarCheck2 className="size-5 text-primary" />
             <span>{t("overview")}</span>
+            <span className="text-xs font-normal text-muted-foreground">
+              {t("totalStats", {
+                siteCount: sites?.length ?? 0,
+                accountCount: summary.total,
+              })}
+            </span>
           </div>
 
           <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
@@ -291,19 +297,23 @@ export function CheckinPanel({
                     activeFailureFilters.length === 0
                   : activeFilterStatuses.includes(filter.key);
               return (
-                <button
-                  key={filter.key}
-                  type="button"
-                  onClick={() => onFilterChange(filter.key)}
-                  aria-pressed={active}
-                  className={cn(
-                    "inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-medium transition-colors",
-                    filterTone(filter.key, active),
+                <span key={filter.key} className="contents">
+                  {filter.key === "reserve" && (
+                    <span className="mx-0.5 self-center h-4 w-px bg-border" />
                   )}
-                >
-                  <span>{count}</span>
-                  <span>{t(filter.labelKey)}</span>
-                </button>
+                  <button
+                    type="button"
+                    onClick={() => onFilterChange(filter.key)}
+                    aria-pressed={active}
+                    className={cn(
+                      "inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-medium transition-colors",
+                      filterTone(filter.key, active),
+                    )}
+                  >
+                    <span>{count}</span>
+                    <span>{t(filter.labelKey)}</span>
+                  </button>
+                </span>
               );
             })}
             {FAILURE_FILTERS.map((filter) => {

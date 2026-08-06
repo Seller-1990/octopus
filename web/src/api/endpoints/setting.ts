@@ -52,6 +52,8 @@ export const SettingKey = {
     WebDAVRetentionCount: 'webdav_retention_count',
     WebDAVIncludeStats: 'webdav_include_stats',
     DefaultGroupLoadBalance: 'default_group_load_balance',
+    DefaultGroupSortStrategy: 'default_group_sort_strategy',
+    DefaultMultiplierCap: 'default_multiplier_cap',
 } as const;
 
 /**

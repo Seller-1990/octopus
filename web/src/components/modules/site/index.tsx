@@ -1796,6 +1796,25 @@ export function Site() {
                                       >
                                         {account.enabled ? "启用中" : "已停用"}
                                       </Badge>
+                                      <Badge variant="outline" className="text-[9px]">
+                                        {account.auto_sync ? "自动同步" : "手动同步"}
+                                      </Badge>
+                                      <Badge variant="outline" className="text-[9px]">
+                                        {account.auto_checkin
+                                          ? account.random_checkin
+                                            ? "随机签到"
+                                            : "自动签到"
+                                          : "手动签到"}
+                                      </Badge>
+                                      <Badge variant="outline" className="text-[9px]">
+                                        {account.proxy_mode === "inherit"
+                                          ? tProxy('site.inherit')
+                                          : account.proxy_mode === "pool"
+                                            ? tProxy('mode.pool')
+                                            : account.proxy_mode === "system"
+                                              ? tProxy('mode.system')
+                                              : tProxy('mode.direct')}
+                                      </Badge>
                                     </div>
                                   </div>
 
@@ -1817,28 +1836,6 @@ export function Site() {
                                         label="今日收入"
                                         value={formatBalance(account.today_income)}
                                       />
-                                    </div>
-
-                                    <div className="flex flex-wrap items-center justify-end gap-x-4 gap-y-1 text-xs text-muted-foreground">
-                                      <span>
-                                        {account.auto_sync ? "自动同步" : "手动同步"}
-                                      </span>
-                                      <span>
-                                        {account.auto_checkin
-                                          ? account.random_checkin
-                                            ? "随机签到"
-                                            : "自动签到"
-                                          : "手动签到"}
-                                      </span>
-                                      <span>
-                                        {account.proxy_mode === "inherit"
-                                          ? tProxy('site.inherit')
-                                          : account.proxy_mode === "pool"
-                                            ? tProxy('mode.pool')
-                                            : account.proxy_mode === "system"
-                                              ? tProxy('mode.system')
-                                              : tProxy('mode.direct')}
-                                      </span>
                                     </div>
 
                                     <div className="flex shrink-0 items-center gap-2">

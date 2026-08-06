@@ -557,6 +557,36 @@
       "modifiedAt": "修改時間",
       "refresh": "重新整理",
       "notConfigured": "WebDAV 未設定"
+    },
+    "routing": {
+      "title": "路由",
+      "defaultLoadBalance": {
+        "label": "預設負載均衡",
+        "description": "新分組的預設負載均衡策略",
+        "placeholder": "選擇策略",
+        "options": {
+          "round_robin": "輪詢",
+          "random": "隨機",
+          "failover": "故障轉移",
+          "weighted": "加權"
+        }
+      },
+      "defaultSortStrategy": {
+        "label": "預設排序策略",
+        "description": "分組內頻道的預設排序策略",
+        "placeholder": "選擇策略",
+        "options": {
+          "non_relay_balance": "非中繼優先 + 餘額降序",
+          "non_relay_multiplier": "非中繼優先 + 倍率升序",
+          "multiplier_balance": "倍率升序 + 餘額降序",
+          "balance_only": "純餘額降序"
+        }
+      },
+      "defaultMultiplierCap": {
+        "label": "預設倍率上限",
+        "description": "分組的預設倍率上限（0 = 不限制）",
+        "placeholder": "0 = 不限制"
+      }
     }
   },
   "group": {
@@ -1833,7 +1863,8 @@
         "failureOther": "其他錯誤",
         "partial": "部分成功"
       },
-      "overview": "總覽",
+      "overview": "簽到總覽",
+      "totalStats": "{siteCount} 站點 · {accountCount} 簽到帳號",
       "currentResult": "目前結果",
       "visibleCounts": "{siteCount} 站點 / {accountCount} 帳號",
       "currentBalance": "目前餘額",
