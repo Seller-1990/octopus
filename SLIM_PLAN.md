@@ -1,8 +1,8 @@
 # Octopus 项目瘦身计划（Slimming Plan）
 
 > 生成日期：2026-08-06
-> 依据：当前 `dev` 源码静态调研（前端 7 个主页面 + API Key 模式；后端 179 条 `NewRoute` 路由、13 个后台任务注册项；运行时路由总数以 `GetRouterCount()` 注册结果为准）
-> 状态：**待用户确认后按序执行**
+> 依据：当前 `dev` 源码静态调研（前端 7 个主页面 + API Key 模式；静态统计 179 条 `NewRoute` 路由、13 个后台任务注册项；PR-0 已删除无调用的 `GetRouterCount()`，运行时以实际注册结果和启动验证为准）
+> 状态：**PR-0 已在 PR #2 执行；后续 PR 待确认**
 
 ---
 
@@ -11,7 +11,7 @@
 项目功能全部为**完整实现**（未发现仅 UI 无逻辑的占位组件），但存在四类可瘦身空间：
 
 1. **功能层合并/删除**（需产品决策）：使用分析并入 Home、删除旧版全局价格体系、Header 策略简化为全局开关、模型目录 UI 精简
-2. **静态清理候选**：前后端约 28 处低使用或无生产调用的定义；其中包含测试支撑 API，不能整体当作“零风险死代码”
+2. **静态清理候选**：前后端仍有多处低使用或无生产调用的定义；其中包含测试支撑 API，不能整体当作“零风险死代码”
 3. **重复实现重构**（不删功能减代码）：多处公共函数副本、巨型组件拆分等
 4. **疑似缺口/兼容项复核**：5 处，其中 API Key 登录与 Verification Bridge 已确认不是“空实现/无认证”
 
@@ -253,6 +253,8 @@
 
 ### A 级：静态清理候选（需逐项证明无生产与测试合同影响）
 
+> PR-0（PR #2）已完成并从本计划中移除以下候选：relay passthrough 旧指标/终态 helper、`injectWSPreviousResponseID` no-op、Anthropic 入站两个无调用 helper、`defaultReasoningEffortMapping`、`utils/xslice`、`sitesync.Stub`、task 6 个未用常量、`GetRouterCount`、`SiteProxyPreferenceClear`。剩余条目仍需按真实调用方和测试合同逐项处理。
+
 **前端（12 处）**
 
 | 位置 | 内容 |
@@ -270,21 +272,16 @@
 | `nav-store.ts` | `prevItem` 字段（写而未读） |
 | `log.ts` 类型 | RelayLog 7 个未消费字段（transport_input_tokens、bill_input_tokens、price_original_cost、price_match_reason、header_policy_trace、canonical_model_name、request_api_key_id） |
 
-**后端候选（需区分真死代码与测试支撑 API）**
+**后端候选（需区分真死代码与测试支撑 API；PR-0 已完成项不再重复列入）**
 
 | 位置 | 内容 |
 |------|------|
-| `op/site_proxy_preference.go:191` | `SiteProxyPreferenceClear` |
 | `op/stats.go:357` | `StatsModelUpdate` |
 | `op/usage_analytics_breakdown.go` | `UsageAnalyticsBreakdownGet`/`UsageAnalyticsBreakdownExportGet`（测试支撑 API；删除前需改写测试） |
 | `op/protocol.go:183` | `AssessProtocolRoute`（测试支撑 API；删除前需改写测试） |
 | `op/log.go:548` | `RelayLogList`（旧查询包装，多个跨包测试使用；不是零成本纯删除） |
 | `op/group.go` | `GroupItemAdd/Update/Del/List` 主要被测试使用；`GroupItemBatchAdd` **有生产调用**（`projected_channel_auto_group.go:108`），不属于删除候选 |
 | `op/relay_log_index.go:106` | `RelayLogEnsureIndexesSync`（测试支撑 API；删除前需改写测试） |
-| `relay/relay.go` | `collectOpenAIResponsesPassthroughMetrics`/`collectAnthropicPassthroughMetrics`/`streamReachedTerminalEvent`/两个 passthrough 终态 map/`mergeBetaHeader`（6 处） |
-| `sitesync/stub.go` | `const Stub = true` |
-| `task/init.go` | `TaskPriceUpdate` 等 6 个未用常量；`TaskCleanLLM` 声明的任务从未注册 |
-| `router/router.go:81` | `GetRouterCount` |
 | `handlers/log_analytics_export.go:134` | `writeUsageAnalyticsCSV`（非分页版测试支撑函数；删除前需调整测试入口） |
 
 > 注：“只有测试调用”不等于“无任何价值”。这类 exported helper 可以收口或改为更贴近生产入口的测试，但应将测试改写与删除放在同一 PR 中完成。
@@ -317,7 +314,7 @@
 |---|------|------|------|
 | 1 | `SiteEditDialog.tsx:60` | global_weight 无 UI 控件，但已进入持久化与 API 合同 | 先盘点兼容，再决定补 UI 或分阶段废弃 |
 | 2 | `handlers/apikey.go:141` | `/api/v1/apikey/login` handler 本身只返回成功，但路由前的 `APIKeyAuth()` 负责实际校验 | **保留**：前端登录与持久会话恢复均调用该入口 |
-| 3 | `task/init.go` | `TaskPriceUpdate`、`TaskSyncLLM`、`TaskCleanLLM`、`TaskSiteSync`、`TaskSiteCheckin`、`TaskWebDAVBackup` 仅声明未使用；其中 `TaskCleanLLM` 也未注册 | 删除这 6 个无调用常量，先确认没有外部配置按名称引用 |
+| 3 | `task/init.go` | `TaskPriceUpdate`、`TaskSyncLLM`、`TaskCleanLLM`、`TaskSiteSync`、`TaskSiteCheckin`、`TaskWebDAVBackup` 仅声明未使用；其中 `TaskCleanLLM` 也未注册 | ✅ 已在 PR-0 删除；后续若新增按名称的外部配置，再单独补兼容说明 |
 | 4 | `catalog-options.ts` | INBOUND_PROTOCOLS 缺少 `gemini`、`volcengine`；`unknown` 的 UI 语义未定 | 按真实入站协议补全；对 `unknown` 先明确语义并补测试 |
 | 5 | `handlers/site_recovery.go:53-61` | `/verification/bridge/*` 7 条路由不走后台 `Auth()`，但使用 `pairing_token`、账号作用域及一次性 `task_token`/`request_token` 内建认证 | 保留协议和现有认证；仅在实际存在公网暴露或请求体风险时增加边界限制，不默认叠加重复的速率限制/防护层 |
 
@@ -327,7 +324,7 @@
 
 | 顺序 | 内容 | 风险 | 预计影响 |
 |------|------|------|---------|
-| PR-0 | 内网防御分支审计：为每个 fallback、重试、重复校验登记真实调用方、故障模式和测试证据；删除无证据且不承担基础合同的分支 | 低至中 | 先降低后续 PR 的复杂度，避免把公网兼容路径继续带入内网主链路 |
+| PR-0 | ✅ 已在 PR #2 执行：完成内网防御分支审计、13 处死代码清理、P0 热路径开关和 4 项缺口修复；条件裁剪项按用户确认保留 | 低至中 | 已完成，后续候选以本计划当前内容为准 |
 | PR-1 | A 级静态候选分批清理 | 低至中 | 先删真无调用定义；测试支撑 API 必须同 PR 改写测试，排除 `GroupItemBatchAdd` |
 | PR-2 | 删除旧版全局价格 Tab（2.2） | 中 | UI 删除可先行；后端 4 路由需先确认外部消费者/废弃策略 |
 | PR-3 | Header 策略 → 全局透传开关（2.4） | 中高 | 先完成数据审计与迁移，再分别改造 relay 和 Site sync 入口 |
