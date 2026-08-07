@@ -13,6 +13,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 
 	"github.com/bestruirui/octopus/internal/conf"
@@ -21,12 +22,12 @@ import (
 )
 
 var (
-	updateMu    sync.Mutex
-	restarting  bool
+	updateMu   sync.Mutex
+	restarting atomic.Bool
 )
 
 func UpdateCore() error {
-	if restarting {
+	if restarting.Load() {
 		return fmt.Errorf("update completed, server is restarting")
 	}
 	if !updateMu.TryLock() {
@@ -138,7 +139,7 @@ func UpdateCore() error {
 		}
 		writeSuccess = true
 		log.Infof("update core success")
-		restarting = true
+		restarting.Store(true)
 		go restartExecutable(updatedBinPath)
 		return nil
 	}
@@ -167,7 +168,7 @@ func UpdateCore() error {
 	}
 
 	log.Infof("update core success")
-	restarting = true
+	restarting.Store(true)
 	go restartExecutable(updatedBinPath)
 	return nil
 }
