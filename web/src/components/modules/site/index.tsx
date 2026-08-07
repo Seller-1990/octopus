@@ -1454,6 +1454,23 @@ export function Site() {
                   >
                     {summary.healthLabel}
                   </Badge>
+                  <Badge variant="outline" className="text-[9px] text-muted-foreground">
+                    {site.proxy_mode === "pool"
+                      ? tProxy('mode.pool')
+                      : site.proxy_mode === "system"
+                        ? tProxy('mode.system')
+                        : tProxy('mode.direct')}
+                  </Badge>
+                  {site.custom_header.length > 0 ? (
+                    <Badge variant="outline" className="text-[9px] text-muted-foreground">
+                      {site.custom_header.length} 个 Header
+                    </Badge>
+                  ) : null}
+                  {site.external_checkin_url ? (
+                    <Badge variant="outline" className="text-[9px] text-muted-foreground">
+                      手动签到
+                    </Badge>
+                  ) : null}
                   <button
                     type="button"
                     className="rounded-md p-0.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:cursor-default disabled:opacity-50"
@@ -1522,7 +1539,7 @@ export function Site() {
                 ) : null}
               </div>
 
-              <div className="flex max-w-full shrink-0 flex-col items-end gap-2">
+              <div className="flex max-w-full shrink-0 items-center gap-4">
                 <div className="flex flex-wrap items-center justify-end gap-x-4 gap-y-1">
                   <CompactMetric label="账号" value={summary.accountCount} />
                   <CompactMetric label="密钥" value={summary.keyCount} />
@@ -1532,25 +1549,6 @@ export function Site() {
                     label="今日收入"
                     value={formatBalance(summary.todayIncome)}
                   />
-                </div>
-
-                <div className="flex flex-wrap items-center justify-end gap-x-4 gap-y-1 text-xs text-muted-foreground">
-                  <button
-                    type="button"
-                    className="inline-flex items-center gap-1 rounded-md hover:text-foreground"
-                    title={tProxy('mode.label')}
-                    onClick={() => openEditSiteDialog(site)}
-                  >
-                    {site.proxy_mode === "pool"
-                      ? tProxy('mode.pool')
-                      : site.proxy_mode === "system"
-                        ? tProxy('mode.system')
-                        : tProxy('mode.direct')}
-                  </button>
-                  {site.custom_header.length > 0 ? (
-                    <span>{site.custom_header.length} 个 Header</span>
-                  ) : null}
-                  {site.external_checkin_url ? <span>手动签到</span> : null}
                 </div>
 
                 <div className="flex items-center gap-1">
@@ -1772,7 +1770,7 @@ export function Site() {
                                   "ring-2 ring-primary/35 ring-offset-2 ring-offset-background",
                               )}
                             >
-                              <div className="space-y-1.5">
+                              <div className="space-y-0.5">
                                 <div className="flex flex-wrap items-start gap-3">
                                   <div className="min-w-0 flex-1">
                                     <div className="flex flex-wrap items-center gap-2">
@@ -1818,7 +1816,7 @@ export function Site() {
                                     </div>
                                   </div>
 
-                                  <div className="flex max-w-full shrink-0 flex-col items-end gap-2">
+                                  <div className="flex max-w-full shrink-0 items-center gap-4">
                                     <div className="flex flex-wrap items-center justify-end gap-x-4 gap-y-1">
                                       <CompactMetric
                                         label="分组"

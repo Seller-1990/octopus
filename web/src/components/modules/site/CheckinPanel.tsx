@@ -1,10 +1,12 @@
 "use client";
 
-import { useCallback, useMemo, type ReactNode } from "react";
+import { useCallback, useMemo, useState, type ReactNode } from "react";
 import { useTranslations } from "next-intl";
 import {
   AlertTriangle,
   CalendarCheck2,
+  ChevronDown,
+  ChevronUp,
   ExternalLink,
   FilterX,
   Layers3,
@@ -22,26 +24,6 @@ import {
   type CheckinFilterStatus,
 } from "./checkin-status";
 import type { BatchFailureCategory } from "./batch-failure";
-
-const FILTERS: Array<{
-  key: CheckinFilterStatus;
-  labelKey:
-    | "filters.all"
-    | "filters.success"
-    | "filters.partial"
-    | "filters.failed"
-    | "filters.idle"
-    | "filters.disabled"
-    | "filters.reserve";
-}> = [
-  { key: "all", labelKey: "filters.all" },
-  { key: "success", labelKey: "filters.success" },
-  { key: "partial", labelKey: "filters.partial" },
-  { key: "failed", labelKey: "filters.failed" },
-  { key: "idle", labelKey: "filters.idle" },
-  { key: "disabled", labelKey: "filters.disabled" },
-  { key: "reserve", labelKey: "filters.reserve" },
-];
 
 const FAILURE_FILTERS: Array<{
   key: BatchFailureCategory;
@@ -121,6 +103,46 @@ function failureFilterTone(category: BatchFailureCategory, active: boolean) {
     case "other":
       return "border-slate-500/20 bg-slate-500/10 text-slate-700 dark:text-slate-300";
   }
+}
+
+function FilterChip({
+  label,
+  active,
+  onClick,
+  hasExpand,
+  expanded,
+  tone,
+}: {
+  label: string;
+  active: boolean;
+  onClick?: () => void;
+  hasExpand?: boolean;
+  expanded?: boolean;
+  tone?: string;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={active}
+      className={cn(
+        "inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-medium transition-colors",
+        tone
+          ? tone
+          : active
+            ? "bg-primary text-primary-foreground"
+            : "bg-muted text-muted-foreground hover:bg-muted/80",
+      )}
+    >
+      {label}
+      {hasExpand &&
+        (expanded ? (
+          <ChevronUp className="size-3" />
+        ) : (
+          <ChevronDown className="size-3" />
+        ))}
+    </button>
+  );
 }
 
 function formatCurrency(value: number) {
@@ -210,6 +232,22 @@ export function CheckinPanel({
     () => buildCheckinSummary(sites, summaryNow),
     [sites, summaryNow],
   );
+
+  const enabledCount = useMemo(
+    () => (sites ?? []).filter((s) => s.enabled).length,
+    [sites],
+  );
+  const disabledCount = useMemo(
+    () => (sites ?? []).filter((s) => !s.enabled).length,
+    [sites],
+  );
+  const reserveCount = useMemo(
+    () => (sites ?? []).filter((s) => s.is_reserve).length,
+    [sites],
+  );
+
+  const [failedExpanded, setFailedExpanded] = useState(false);
+
   const hasContextBadges = Boolean(searchTerm);
 
   const manualCheckinUrls = useMemo(
@@ -285,83 +323,117 @@ export function CheckinPanel({
         ) : null}
       </div>
 
-      <div className="px-5 py-4">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <div className="flex flex-wrap gap-2">
-            {FILTERS.map((filter) => {
-              const count =
-                filter.key === "all" ? summary.total : summary[filter.key];
-              const active =
-                filter.key === "all"
-                  ? activeFilterStatuses.length === 0 &&
-                    activeFailureFilters.length === 0
-                  : activeFilterStatuses.includes(filter.key);
-              return (
-                <span key={filter.key} className="contents">
-                  {filter.key === "reserve" && (
-                    <span className="mx-0.5 self-center h-4 w-px bg-border" />
-                  )}
-                  <button
-                    type="button"
-                    onClick={() => onFilterChange(filter.key)}
-                    aria-pressed={active}
-                    className={cn(
-                      "inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-medium transition-colors",
-                      filterTone(filter.key, active),
-                    )}
-                  >
-                    <span>{count}</span>
-                    <span>{t(filter.labelKey)}</span>
-                  </button>
-                </span>
-              );
-            })}
+      <div className="px-5 py-3">
+        <div className="flex flex-wrap items-center gap-1.5">
+          {/* Site dimension */}
+          <FilterChip
+            label={`站点 ${sites?.length ?? 0}`}
+            active={
+              activeFilterStatuses.length === 0 &&
+              activeFailureFilters.length === 0
+            }
+            onClick={() => onFilterChange("all")}
+          />
+          <FilterChip
+            label={`启用 ${enabledCount}`}
+            active={false}
+          />
+          <FilterChip
+            label={`禁用 ${disabledCount}`}
+            active={activeFilterStatuses.includes("disabled")}
+            onClick={() => onFilterChange("disabled")}
+            tone={filterTone("disabled", activeFilterStatuses.includes("disabled"))}
+          />
+          <FilterChip
+            label={`中转 ${reserveCount}`}
+            active={activeFilterStatuses.includes("reserve")}
+            onClick={() => onFilterChange("reserve")}
+            tone={filterTone("reserve", activeFilterStatuses.includes("reserve"))}
+          />
+
+          <span className="mx-1 h-4 w-px bg-border" />
+
+          {/* Checkin dimension */}
+          <FilterChip
+            label={`签到 ${summary.total}`}
+            active={
+              activeFilterStatuses.length === 0 &&
+              activeFailureFilters.length === 0
+            }
+            onClick={() => onFilterChange("all")}
+          />
+          <FilterChip
+            label={`成功 ${summary.success}`}
+            active={activeFilterStatuses.includes("success")}
+            onClick={() => onFilterChange("success")}
+            tone={filterTone("success", activeFilterStatuses.includes("success"))}
+          />
+          <FilterChip
+            label={`部分 ${summary.partial}`}
+            active={activeFilterStatuses.includes("partial")}
+            onClick={() => onFilterChange("partial")}
+            tone={filterTone("partial", activeFilterStatuses.includes("partial"))}
+          />
+          <FilterChip
+            label={`失败 ${summary.failed}`}
+            active={activeFilterStatuses.includes("failed") || activeFailureFilters.length > 0}
+            onClick={() => setFailedExpanded((v) => !v)}
+            tone={filterTone("failed", activeFilterStatuses.includes("failed") || activeFailureFilters.length > 0)}
+            hasExpand={summary.failed > 0}
+            expanded={failedExpanded}
+          />
+
+          {/* Actions */}
+          <span className="ml-auto" />
+          {hasActiveFilters ? (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="rounded-xl text-xs"
+              onClick={onClearFilters}
+            >
+              <FilterX className="size-4" />
+              {t("clearFilters")}
+            </Button>
+          ) : null}
+          {manualCheckinUrls.length > 0 ? (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="rounded-xl text-xs"
+              onClick={openAllManualCheckin}
+            >
+              <ExternalLink className="size-4" />
+              {t("openManualCheckin", { count: manualCheckinUrls.length })}
+            </Button>
+          ) : null}
+        </div>
+
+        {/* Expandable failure details */}
+        {failedExpanded && summary.failed > 0 && (
+          <div className="mt-2 flex flex-wrap gap-1.5">
+            <FilterChip
+              label={`全部失败 ${summary.failed}`}
+              active={activeFilterStatuses.includes("failed") && activeFailureFilters.length === 0}
+              onClick={() => onFilterChange("failed")}
+              tone={filterTone("failed", activeFilterStatuses.includes("failed") && activeFailureFilters.length === 0)}
+            />
             {FAILURE_FILTERS.map((filter) => {
               const active = activeFailureFilters.includes(filter.key);
               return (
-                <button
+                <FilterChip
                   key={filter.key}
-                  type="button"
+                  label={`${t(filter.labelKey)} ${failureFilterCounts[filter.key]}`}
+                  active={active}
                   onClick={() => onFailureFilterChange(filter.key)}
-                  aria-pressed={active}
-                  className={cn(
-                    "inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-medium transition-colors",
-                    failureFilterTone(filter.key, active),
-                  )}
-                >
-                  <span>{failureFilterCounts[filter.key]}</span>
-                  <span>{t(filter.labelKey)}</span>
-                </button>
+                  tone={failureFilterTone(filter.key, active)}
+                />
               );
             })}
           </div>
-          <div className="flex flex-wrap items-center gap-2">
-            {hasActiveFilters ? (
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                className="rounded-xl text-xs"
-                onClick={onClearFilters}
-              >
-                <FilterX className="size-4" />
-                {t("clearFilters")}
-              </Button>
-            ) : null}
-            {manualCheckinUrls.length > 0 ? (
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                className="rounded-xl text-xs"
-                onClick={openAllManualCheckin}
-              >
-                <ExternalLink className="size-4" />
-                {t("openManualCheckin", { count: manualCheckinUrls.length })}
-              </Button>
-            ) : null}
-          </div>
-        </div>
+        )}
 
         {allTags.length > 0 ? (
           <div className="mt-3 flex flex-wrap gap-2">
