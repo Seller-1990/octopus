@@ -6,296 +6,70 @@
 
 **A Simple, Beautiful, and Elegant LLM API Aggregation & Load Balancing Service for Individuals**
 
- English | [简体中文](README_zh.md) | [Getting Started](USAGE.md)
+English | [简体中文](README_zh.md) | [Getting Started](USAGE.md)
 
 </div>
 
-> This is an independently maintained fork of [Hureru/octopus](https://github.com/Hureru/octopus), whose Go module remains compatible with [bestruirui/octopus](https://github.com/bestruirui/octopus). Releases, images, update checks, and deployment files come only from [Seller-1990/octopus](https://github.com/Seller-1990/octopus).
->
-> The intended workflow imports site data from `all-api-hub`, which remains responsible for check-in. Octopus retains compatible check-in controls, but this fork does not use them as its primary workflow; avoid enabling check-in in both systems.
-
-
 ## ✨ Features
 
-- 🔀 **Multi-Channel Aggregation** - Connect multiple LLM provider channels with unified management
-- 🔑 **Multi-Key Support** - Support multiple API keys for a single channel
-- ⚡ **Smart Selection** - Multiple endpoints per channel, smart selection of the endpoint with the shortest delay
-- ⚖️ **Load Balancing** - Automatic request distribution with 4 strategies (Round Robin, Random, Failover, Weighted)
-- 🔄 **Protocol Conversion** - Seamless conversion between OpenAI Chat / OpenAI Responses / Anthropic / Gemini formats
-- 💰 **Price Sync** - Automatic model pricing updates from upstream sites and models.dev
-- 🔃 **Model Sync** - Automatic synchronization of available model lists with channels
-- 📊 **Analytics** - Real-time SSE log stream, token consumption, cost tracking, and multiplier display
-- 🎨 **Elegant UI** - Clean card-based management panel with vendor icons and smart filtering
-- 🗄️ **Multi-Database Support** - Support for SQLite, MySQL, PostgreSQL
-- 🔄 **Auto Update** - In-app one-click update with SHA-256 verification and automatic rollback backup
-- 🐳 **Docker Live Update** - Update without container restart, binary stored in data volume
-- 🏷️ **Vendor Filtering** - Auto-detected vendor filter chips for quick group navigation
-- 📦 **Native Packages** - `.deb` and `.rpm` packages with systemd service for Linux
+- 🔀 **Multi-Channel Aggregation** — Connect multiple LLM providers under unified management
+- ⚖️ **Load Balancing** — Round Robin / Random / Failover / Weighted strategies
+- 🔄 **Protocol Conversion** — Seamless conversion between OpenAI Chat / Responses / Anthropic / Gemini
+- 💰 **Price Sync** — Automatic pricing from upstream sites and models.dev
+- 🔃 **Model Sync** — Auto-sync available model lists from channels
+- 📊 **Analytics** — Real-time SSE logs, token consumption, cost tracking
+- 🏷️ **Vendor Filtering** — Auto-detected vendor filter chips for quick navigation
+- 🔄 **Auto Update** — In-app one-click update with SHA-256 verification and rollback
+- 🐳 **Docker Live Update** — Update inside containers without restart
+- 📦 **Native Packages** — `.deb` / `.rpm` with systemd, Windows NSIS installer, macOS zip
+- 🖥️ **Windows Desktop** — System tray, autostart, NSIS installer
+- 🗄️ **Multi-Database** — SQLite (default), MySQL, PostgreSQL
 
-> 📖 **First time using Octopus?** Check out the **[Getting Started Guide](USAGE.md)** for a complete walkthrough from deployment to client integration — get up and running in 5 minutes.
-
+> 📖 For detailed documentation see **[Usage Guide](USAGE.md)**
 
 ## 🚀 Quick Start
 
 ### 🐳 Docker
 
-Run directly:
-
 ```bash
 docker run -d --name octopus -v octopus-data:/app/data -p 8080:8080 ghcr.io/seller-1990/octopus:latest
 ```
 
-Or use docker compose:
+Or with docker compose:
 
 ```bash
 wget https://raw.githubusercontent.com/Seller-1990/octopus/dev/docker-compose.yml
 docker compose up -d
 ```
 
-> 💡 **Auto-Update in Docker**: Octopus supports one-click updates inside containers without restart. The updated binary is stored in the data volume and used on next process cycle. Alternatively, use [Watchtower](https://github.com/containrrr/watchtower) for automatic image-level updates.
+### 📦 Linux
 
-Use only **ghcr.io/seller-1990/octopus** and the compose file from this repository.
+```bash
+# Debian/Ubuntu
+sudo dpkg -i octopus_*.deb
+# Fedora/CentOS
+sudo rpm -i octopus_*.rpm
+# Manage service
+systemctl start octopus
+```
 
-### 📦 Download from Release
+### 🖥️ Windows
 
-Download the binary for your platform from [Releases](https://github.com/Seller-1990/octopus/releases), then run:
+Download **octopus-setup-*.exe** from [Releases](https://github.com/Seller-1990/octopus/releases) and install.
+
+### 🍎 macOS
+
+Download the `.zip` for your architecture from [Releases](https://github.com/Seller-1990/octopus/releases), extract, and run:
 
 ```bash
 ./octopus start
 ```
 
-**Linux (recommended):** Install the `.deb` or `.rpm` package for systemd integration:
-
-```bash
-# Debian/Ubuntu/NAS
-sudo dpkg -i octopus_*.deb
-# Fedora/CentOS
-sudo rpm -i octopus_*.rpm
-```
-
-The package installs a systemd service that starts automatically. Manage with `systemctl start/stop/restart octopus`.
-
-**Windows:** Download **octopus-setup-version-x86_64.exe** for an installer with desktop and Start Menu shortcuts, or **octopus-desktop-x86_64.exe** for the portable desktop executable.
-
-**macOS:** Download the `.zip` for your architecture (arm64 for Apple Silicon, amd64 for Intel), extract, and run `./octopus start`.
-
-### 🛠️ Build from Source
-
-**Requirements:**
-- Go 1.25.0
-- Node.js 22
-- pnpm 10
-
-```bash
-# Clone the repository
-git clone https://github.com/Seller-1990/octopus.git
-cd octopus
-# Build frontend
-cd web && pnpm install && pnpm run build && cd ..
-# Move frontend assets to static directory
-mv web/out static/
-# Start the backend service
-go run main.go start 
-```
-
-> 💡 **Tip**: The frontend build artifacts are embedded into the Go binary, so you must build the frontend before starting the backend.
-
-**Development Mode**
-
-```bash
-cd web && pnpm install && NEXT_PUBLIC_API_BASE_URL="http://127.0.0.1:8080" pnpm run dev
-## Open a new terminal, start the backend service
-go run main.go start
-## Access the frontend at
-http://localhost:3000
-```
-
 ### 🔐 Default Credentials
 
-After first launch, visit http://localhost:8080 and log in to the management panel with:
+Visit `http://localhost:8080` — Username: `admin` / Password: `admin`
 
-- **Username**: `admin`
-- **Password**: `admin`
-
-> ⚠️ **Security Notice**: Please change the default password immediately after first login.
-
-### 📝 Configuration File
-
-The configuration file is located at `data/config.json` by default and is automatically generated on first startup.
-
-**Complete Configuration Example:**
-
-```json
-{
-  "server": {
-    "host": "0.0.0.0",
-    "port": 8080
-  },
-  "database": {
-    "type": "sqlite",
-    "path": "data/data.db"
-  },
-  "log": {
-    "level": "info"
-  }
-}
-```
-
-**Configuration Options:**
-
-| Option | Description | Default |
-|--------|-------------|---------|
-| `server.host` | Listen address | `0.0.0.0` |
-| `server.port` | Server port | `8080` |
-| `database.type` | Database type | `sqlite` |
-| `database.path` | Database connection string | `data/data.db` |
-| `log.level` | Log level | `info` |
-
-**Database Configuration:**
-
-Three database types are supported:
-
-| Type | `database.type` | `database.path` Format |
-|------|-----------------|-----------------------|
-| SQLite | `sqlite` | `data/data.db` |
-| MySQL | `mysql` | `user:password@tcp(host:port)/dbname` |
-| PostgreSQL | `postgres` | `postgresql://user:password@host:port/dbname?sslmode=disable` |
-
-**MySQL Configuration Example:**
-
-```json
-{
-  "database": {
-    "type": "mysql",
-    "path": "root:password@tcp(127.0.0.1:3306)/octopus"
-  }
-}
-```
-
-**PostgreSQL Configuration Example:**
-
-```json
-{
-  "database": {
-    "type": "postgres",
-    "path": "postgresql://user:password@localhost:5432/octopus?sslmode=disable"
-  }
-}
-```
-
-> 💡 **Tip**: MySQL and PostgreSQL require manual database creation. The application will automatically create the table structure.
-
-### 🌐 Environment Variables
-
-All configuration options can be overridden via environment variables using the format `OCTOPUS_` + configuration path (joined with `_`):
-
-| Environment Variable | Configuration Option |
-|---------------------|---------------------|
-| `OCTOPUS_SERVER_PORT` | `server.port` |
-| `OCTOPUS_SERVER_HOST` | `server.host` |
-| `OCTOPUS_DATABASE_TYPE` | `database.type` |
-| `OCTOPUS_DATABASE_PATH` | `database.path` |
-| `OCTOPUS_LOG_LEVEL` | `log.level` |
-| `OCTOPUS_GITHUB_PAT` | For rate limiting when getting the latest version (optional) |
-| `OCTOPUS_RELAY_MAX_SSE_EVENT_SIZE` | Maximum SSE event size (optional) |
-| `OCTOPUS_IMAGES_BODY_MEMORY_THRESHOLD_MB` | Images request body in-memory threshold. If exceeded, it will be spooled to a temporary file (optional, default 16) |
-| `OCTOPUS_IMAGES_BODY_MAX_MB` | Images request body maximum size. Requests above this limit are rejected (optional, default 256) |
-| `OCTOPUS_IMAGES_BODY_TMP_DIR` | Images request body temporary directory (optional, default `./cache`) |
-| `OCTOPUS_IMAGES_BODY_TMP_CLEANUP_HOURS` | Startup cleanup threshold for temporary files (optional, default 24) |
-
-## 📸 Screenshots
-
-### 🖥️ Desktop
-
-<div align="center">
-<table>
-<tr>
-<td align="center"><b>Site Management</b></td>
-<td align="center"><b>Key-aware Groups</b></td>
-<td align="center"><b>Managed Channels</b></td>
-</tr>
-<tr>
-<td><img src="web/public/screenshot/desktop-site.png" alt="Site management and failure filters" width="400"></td>
-<td><img src="web/public/screenshot/desktop-group.png" alt="Groups with relay badges and Key multipliers" width="400"></td>
-<td><img src="web/public/screenshot/desktop-channel.png" alt="Site-managed channels" width="400"></td>
-</tr>
-</table>
-</div>
-
-## 📖 Documentation
-
-### 📡 Channel Management
-
-Channels are the basic configuration units for connecting to LLM providers.
-
-**Base URL Guide:**
-
-The program automatically appends API paths based on channel type. You only need to provide the base URL:
-
-| Channel Type | Auto-appended Path | Base URL | Full Request URL Example |
-|--------------|-------------------|----------|--------------------------|
-| OpenAI Chat | `/chat/completions` | `https://api.openai.com/v1` | `https://api.openai.com/v1/chat/completions` |
-| OpenAI Responses | `/responses` | `https://api.openai.com/v1` | `https://api.openai.com/v1/responses` |
-| OpenAI Images | `/images/generations`, `/images/edits`, `/images/variations` | `https://api.openai.com/v1` | `https://api.openai.com/v1/images/generations` |
-| Anthropic | `/messages` | `https://api.anthropic.com/v1` | `https://api.anthropic.com/v1/messages` |
-| Gemini | `/models/:model:generateContent` | `https://generativelanguage.googleapis.com/v1beta` | `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent` |
-
-> 💡 **Tip**: No need to include specific API endpoint paths in the Base URL - the program handles this automatically.
-
----
-
-### 📁 Group Management
-
-Groups aggregate multiple channels into a unified external model name.
-
-**Core Concepts:**
-
-- **Group name** is the model name exposed by the program
-- When calling the API, set the `model` parameter to the group name
-
-**Load Balancing Modes:**
-
-| Mode | Description |
-|------|-------------|
-| 🔄 **Round Robin** | Cycles through channels sequentially for each request |
-| 🎲 **Random** | Randomly selects an available channel for each request |
-| 🛡️ **Failover** | Prioritizes high-priority channels, switches to lower priority only on failure |
-| ⚖️ **Weighted** | Distributes requests based on configured channel weights |
-
-> 💡 **Example**: Create a group named `gpt-4o`, add multiple providers' GPT-4o channels to it, then access all channels via a unified `model: gpt-4o`.
-
----
-
-### 💰 Price Management
-
-Model pricing is managed automatically through a three-layer system:
-
-**Data Sources (highest priority first):**
-
-| Priority | Source | Description |
-|:--------:|--------|-------------|
-| 🥇 High | Site Price Quotes | Auto-synced from upstream site `/api/pricing` with group multipliers |
-| 🥈 Medium | Local Database | Previously imported or manually set prices (via API) |
-| 🥉 Low | models.dev | Auto-fetched global prices from [models.dev](https://github.com/sst/models.dev) |
-
-Pricing is fully automatic — the system syncs site-specific prices during account sync and fetches global prices on a schedule. No manual price page is needed for normal operation.
-
----
-
-### ⚙️ Settings
-
-Global system configuration.
-
-**Statistics Save Interval (minutes):**
-
-Since the program handles numerous statistics, writing to the database on every request would impact read/write performance. The program uses this strategy:
-
-- Statistics are first stored in **memory**
-- Periodically **batch-written** to the database at the configured interval
-
-> ⚠️ **Important**: When exiting the program, use proper shutdown methods (like `Ctrl+C` or sending `SIGTERM` signal) to ensure in-memory statistics are correctly written to the database. **Do NOT use `kill -9` or other forced termination methods**, as this may result in statistics data loss.
-
----
+> ⚠️ Change the default password immediately after first login.
 
 ## 🔌 Client Integration
 
@@ -303,24 +77,21 @@ Since the program handles numerous statistics, writing to the database on every 
 
 ```python
 from openai import OpenAI
-import os
 
-client = OpenAI(   
-    base_url="http://127.0.0.1:8080/v1",   
+client = OpenAI(
+    base_url="http://127.0.0.1:8080/v1",
     api_key="sk-octopus-your-api-key",
 )
 completion = client.chat.completions.create(
-    model="octopus-openai",  # Use the correct group name
-    messages = [
-        {"role": "user", "content": "Hello"},
-    ],
+    model="octopus-openai",  # Use your group name
+    messages=[{"role": "user", "content": "Hello"}],
 )
 print(completion.choices[0].message.content)
 ```
 
 ### Claude Code
 
-Edit `~/.claude/settings.json`
+Edit `~/.claude/settings.json`:
 
 ```json
 {
@@ -340,11 +111,10 @@ Edit `~/.claude/settings.json`
 
 ### Codex
 
-Edit `~/.codex/config.toml`
+Edit `~/.codex/config.toml`:
 
 ```toml
-model = "octopus-codex" # Use the correct group name
-
+model = "octopus-codex"
 model_provider = "octopus"
 
 [model_providers.octopus]
@@ -352,7 +122,7 @@ name = "octopus"
 base_url = "http://127.0.0.1:8080/v1"
 ```
 
-Edit `~/.codex/auth.json`
+Edit `~/.codex/auth.json`:
 
 ```json
 {
@@ -362,43 +132,11 @@ Edit `~/.codex/auth.json`
 
 ---
 
-## 🔀 Differences from Upstream
-
-This repository is forked directly from [Hureru/octopus](https://github.com/Hureru/octopus) and is now released independently as **Seller-1990/octopus**. It keeps the original Go module path for source compatibility, but never checks the parent repository for application updates.
-
-### 🏗️ New subsystems
-
-- **🌐 Site Management & Site Sync** — imports all-api-hub / Metapi data, syncs accounts, groups, Keys, models, balances and site pricing, classifies account-level failures, and projects usable groups into managed channels. Relay policy and proxy routing are managed in this repository's Sites workspace.
-- **🔑 Group-aware Key projection** — persists the multiplier bound to each upstream API Key group, shows it on group members, supports quick Key creation/completion, and suspends only projections that truly lack a usable group Key.
-- **🖥️ Windows desktop distribution** — no-console desktop executable, browser launch, system tray, autostart option, graceful shutdown, and NSIS installer.
-- **📦 Independent releases** — version metadata, update checks, GHCR images, documentation, and Windows packages all use Seller-1990/octopus; Windows and container deployments link to Releases instead of replacing themselves in place.
-- **🔌 WebSocket relay** — upstream WS connection pool with health backoff, client-facing WS, DB-backed response affinity, and opt-in OpenAI Responses passthrough for Codex tools.
-- **🖼️ OpenAI Images API forwarding** with body cache.
-- **🩹 Transformer overhaul** — native StreamEvent pipeline across all adapters, Anthropic patching layer, role-alternation normalization, plus a long tail of cross-format fidelity fixes.
-
-### 🛠️ Reworked
-
-- **Channel module** — tabbed Site/Manual layout; group editor preserves channel metadata.
-- **Relay core** — route learning, retry, cancel propagation, Responses compact proxy, log filtering by channel ID.
-- **Auth** — JWT secret persisted in DB (rotation-safe), no longer derived from credentials.
-- **Backup**, **logs** (`Item.tsx` rewrite), and **home charts** redesigned.
-
-### 🧬 Misc
-
-- Claude Opus 4.7 adaptive thinking; DB migrations 003–012; site automation controls retained for compatibility.
-
-### Check-in responsibility
-
-The maintained deployment model uses **all-api-hub** for site check-in. Octopus focuses on importing site inventory, syncing and projecting models, routing requests, and exposing the downstream API gateway. Its check-in implementation is retained for compatibility but is not part of this actively used workflow.
-
-> For a complete source diff, compare this repository with its GitHub parent **Hureru/octopus**.
-
----
-
 ## 🤝 Acknowledgments
 
-- 🙏 [looplj/axonhub](https://github.com/looplj/axonhub) - The LLM API adaptation module in this project is directly derived from this repository
-- 📊 [sst/models.dev](https://github.com/sst/models.dev) - AI model database providing model pricing data
+- 🐙 [Hureru/octopus](https://github.com/Hureru/octopus) - This project is based on this upstream fork
+- 🙏 [looplj/axonhub](https://github.com/looplj/axonhub) - LLM API adaptation module derived from this project
+- 📊 [sst/models.dev](https://github.com/sst/models.dev) - AI model database providing pricing data
 
 ## 🔗 Friend Links
 
