@@ -44,7 +44,11 @@ function useDebouncedValue<T>(value: T, delay = 200) {
 }
 
 function filtersActive(filters: LogFilters) {
+    const startOfToday = new Date();
+    startOfToday.setHours(0, 0, 0, 0);
+    const isHistorical = filters.endTime != null && filters.endTime < Math.floor(startOfToday.getTime() / 1000);
     return (
+        isHistorical ||
         !!filters.keyword.trim() ||
         filters.channelIds.length > 0 ||
         filters.siteIds.length > 0 ||

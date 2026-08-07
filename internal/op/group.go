@@ -64,8 +64,10 @@ func GroupCreate(group *model.Group, ctx context.Context) error {
 	if err := db.GetDB().WithContext(ctx).Create(group).Error; err != nil {
 		return err
 	}
-	groupCache.Set(group.ID, *group)
-	groupMap.Set(group.Name, *group)
+	if err := groupRefreshCacheByID(group.ID, ctx); err != nil {
+		groupCache.Set(group.ID, *group)
+		groupMap.Set(group.Name, *group)
+	}
 	return nil
 }
 

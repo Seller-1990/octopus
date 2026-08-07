@@ -145,13 +145,25 @@ export function accountMatchesCheckinFilters(
     (f) => f !== "reserve" && f !== "sync_failed",
   ) as DerivedCheckinStatus[];
 
-  // sync_failed is an independent dimension: if active, account must have sync failure
+  // OR logic: if multiple filter dimensions are active, account matches if it satisfies ANY
+  if (wantsSyncFailed && statusFilters.length > 0) {
+    const hasSyncFailure =
+      normalizeExecutionStatus(account.last_sync_status) === "failed";
+    const status = deriveCheckinStatus(site, account, now);
+    const matchesStatus = status != null && statusFilters.includes(status);
+    if (!hasSyncFailure && !matchesStatus) return false;
+    if (wantsReserve && !site.is_reserve) return false;
+    return true;
+  }
+
+  // Single dimension: sync_failed only
   if (wantsSyncFailed) {
     const hasSyncFailure =
       normalizeExecutionStatus(account.last_sync_status) === "failed";
     if (!hasSyncFailure) return false;
   }
 
+  // Single dimension: checkin status only
   if (statusFilters.length > 0) {
     const status = deriveCheckinStatus(site, account, now);
     if (!status || !statusFilters.includes(status)) {
