@@ -28,6 +28,8 @@ interface SiteUIState {
     setCheckinFilterStatuses: (value: CheckinFilterStatusesUpdate) => void;
     batchFailureFilters: BatchFailureCategory[];
     setBatchFailureFilters: (value: BatchFailureFiltersUpdate) => void;
+    syncFailureFilters: BatchFailureCategory[];
+    setSyncFailureFilters: (value: BatchFailureFiltersUpdate) => void;
     tagFilters: string[];
     setTagFilters: (value: TagFiltersUpdate) => void;
     setHandlers: (handlers: Partial<SiteUIHandlers>) => void;
@@ -62,6 +64,12 @@ export const useSiteUIStore = create<SiteUIState>((set, get) => ({
         set((state) => ({
             batchFailureFilters:
                 typeof value === 'function' ? value(state.batchFailureFilters) : value,
+        })),
+    syncFailureFilters: [],
+    setSyncFailureFilters: (value) =>
+        set((state) => ({
+            syncFailureFilters:
+                typeof value === 'function' ? value(state.syncFailureFilters) : value,
         })),
     tagFilters: [],
     setTagFilters: (value) =>

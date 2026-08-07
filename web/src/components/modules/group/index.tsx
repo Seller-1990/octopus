@@ -1,11 +1,13 @@
 'use client';
 
 import { useCallback, useMemo, useState } from 'react';
+import { useTranslations } from 'next-intl';
 import { GroupCard } from './Card';
 import { useGroupList, useApplyGroupDefaults, type Group } from '@/api/endpoints/group';
 import { useSearchStore, useToolbarViewOptionsStore } from '@/components/modules/toolbar';
 import { VirtualizedGrid } from '@/components/common/VirtualizedGrid';
 import { VendorIcon } from '@/components/shared/VendorIcon';
+import { toast } from '@/components/common/Toast';
 import { cn } from '@/lib/utils';
 import { Settings2 } from 'lucide-react';
 
@@ -45,6 +47,7 @@ function getGroupVendors(group: Group): Set<string> {
 export function Group() {
     const { data: groups } = useGroupList();
     const applyDefaults = useApplyGroupDefaults();
+    const t = useTranslations('group');
     const pageKey = 'group' as const;
     const searchTerm = useSearchStore((s) => s.getSearchTerm(pageKey));
     const sortField = useToolbarViewOptionsStore((s) => s.getSortField(pageKey));
@@ -139,12 +142,22 @@ export function Group() {
             ))}
             <button
                 type="button"
-                onClick={() => applyDefaults.mutate()}
+                onClick={() => applyDefaults.mutate(undefined, {
+                    onSuccess: (data) => {
+                        const msg = t('toast.applyDefaultsSuccess', {
+                            updated: data?.groups_updated ?? 0,
+                            removed: data?.items_removed ?? 0,
+                            sorted: data?.items_sorted ?? 0,
+                        });
+                        toast.success(msg);
+                    },
+                    onError: (error) => toast.error(t('toast.applyDefaultsFailed'), { description: error.message }),
+                })}
                 disabled={applyDefaults.isPending}
                 className="ml-auto flex items-center gap-1.5 rounded-lg bg-muted px-2.5 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted/80 disabled:opacity-50"
             >
                 <Settings2 className="size-3.5" />
-                应用默认策略
+                {t('applyDefaults')}
             </button>
         </div>
     ) : null;

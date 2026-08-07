@@ -54,6 +54,8 @@ function filterTone(status: CheckinFilterStatus, active: boolean) {
         return "border-slate-500/30 bg-slate-700 text-white dark:bg-slate-200 dark:text-slate-900";
       case "reserve":
         return "border-amber-500/30 bg-amber-500 text-white";
+      case "sync_failed":
+        return "border-destructive/30 bg-destructive text-white";
       case "all":
       default:
         return "border-primary/30 bg-primary text-primary-foreground";
@@ -73,6 +75,8 @@ function filterTone(status: CheckinFilterStatus, active: boolean) {
       return "border-slate-500/20 bg-slate-500/10 text-slate-700 dark:text-slate-300";
     case "reserve":
       return "border-amber-500/20 bg-amber-500/10 text-amber-700 dark:text-amber-300";
+    case "sync_failed":
+      return "border-destructive/20 bg-destructive/10 text-destructive";
     case "all":
     default:
       return "border-border bg-background text-foreground";
@@ -195,6 +199,9 @@ export function CheckinPanel({
   failureFilterCounts,
   activeFailureFilters,
   onFailureFilterChange,
+  syncFailureFilterCounts,
+  activeSyncFailureFilters,
+  onSyncFailureFilterChange,
   allTags,
   activeTags,
   onTagFilterChange,
@@ -217,6 +224,9 @@ export function CheckinPanel({
   failureFilterCounts: Record<BatchFailureCategory, number>;
   activeFailureFilters: BatchFailureCategory[];
   onFailureFilterChange: (category: BatchFailureCategory) => void;
+  syncFailureFilterCounts: Record<BatchFailureCategory, number>;
+  activeSyncFailureFilters: BatchFailureCategory[];
+  onSyncFailureFilterChange: (category: BatchFailureCategory) => void;
   allTags: Array<{ tag: string; count: number }>;
   activeTags: string[];
   onTagFilterChange: (tag: string) => void;
@@ -252,7 +262,8 @@ export function CheckinPanel({
     [sites],
   );
 
-  const [failedExpanded, setFailedExpanded] = useState(false);
+  const [checkinFailedExpanded, setCheckinFailedExpanded] = useState(false);
+  const [syncFailedExpanded, setSyncFailedExpanded] = useState(false);
 
   const hasContextBadges = Boolean(searchTerm);
 
@@ -269,6 +280,39 @@ export function CheckinPanel({
       window.open(url, "_blank", "noopener,noreferrer");
     }
   }, [manualCheckinUrls]);
+
+  const isSyncFailedActive = activeFilterStatuses.includes("sync_failed") || activeSyncFailureFilters.length > 0;
+  const isCheckinFailedActive = activeFilterStatuses.includes("failed") || activeFailureFilters.length > 0;
+
+  function handleSyncFailedToggle() {
+    if (isSyncFailedActive) {
+      if (activeFilterStatuses.includes("sync_failed")) {
+        onFilterChange("sync_failed");
+      }
+      for (const f of activeSyncFailureFilters) {
+        onSyncFailureFilterChange(f);
+      }
+      setSyncFailedExpanded(false);
+    } else {
+      onFilterChange("sync_failed");
+      setSyncFailedExpanded(true);
+    }
+  }
+
+  function handleCheckinFailedToggle() {
+    if (isCheckinFailedActive) {
+      if (activeFilterStatuses.includes("failed")) {
+        onFilterChange("failed");
+      }
+      for (const f of activeFailureFilters) {
+        onFailureFilterChange(f);
+      }
+      setCheckinFailedExpanded(false);
+    } else {
+      onFilterChange("failed");
+      setCheckinFailedExpanded(true);
+    }
+  }
 
   return (
     <section className="overflow-hidden rounded-[28px] border border-border/70 bg-card shadow-[0_18px_60px_-40px_rgba(15,23,42,0.45)]">
@@ -336,7 +380,8 @@ export function CheckinPanel({
             label={`站点 ${sites?.length ?? 0}`}
             active={
               activeFilterStatuses.length === 0 &&
-              activeFailureFilters.length === 0
+              activeFailureFilters.length === 0 &&
+              activeSyncFailureFilters.length === 0
             }
             onClick={() => onFilterChange("all")}
           />
@@ -359,9 +404,11 @@ export function CheckinPanel({
           {syncFailedCount > 0 && (
             <FilterChip
               label={`同步失败 ${syncFailedCount}`}
-              active={activeFilterStatuses.includes("failed")}
-              onClick={() => onFilterChange("failed")}
-              tone={filterTone("failed", activeFilterStatuses.includes("failed"))}
+              active={isSyncFailedActive}
+              onClick={handleSyncFailedToggle}
+              tone={filterTone("sync_failed", isSyncFailedActive)}
+              hasExpand
+              expanded={syncFailedExpanded}
             />
           )}
 
@@ -372,7 +419,8 @@ export function CheckinPanel({
             label={`签到 ${summary.total}`}
             active={
               activeFilterStatuses.length === 0 &&
-              activeFailureFilters.length === 0
+              activeFailureFilters.length === 0 &&
+              activeSyncFailureFilters.length === 0
             }
             onClick={() => onFilterChange("all")}
           />
@@ -390,11 +438,11 @@ export function CheckinPanel({
           />
           <FilterChip
             label={`失败 ${summary.failed}`}
-            active={activeFilterStatuses.includes("failed") || activeFailureFilters.length > 0}
-            onClick={() => setFailedExpanded((v) => !v)}
-            tone={filterTone("failed", activeFilterStatuses.includes("failed") || activeFailureFilters.length > 0)}
+            active={isCheckinFailedActive}
+            onClick={handleCheckinFailedToggle}
+            tone={filterTone("failed", isCheckinFailedActive)}
             hasExpand={summary.failed > 0}
-            expanded={failedExpanded}
+            expanded={checkinFailedExpanded}
           />
 
           {/* Actions */}
@@ -425,21 +473,67 @@ export function CheckinPanel({
           ) : null}
         </div>
 
-        {/* Expandable failure details */}
-        {failedExpanded && summary.failed > 0 && (
+        {/* Expandable sync failure details */}
+        {syncFailedExpanded && syncFailedCount > 0 && (
           <div className="mt-2 flex flex-wrap gap-1.5">
             <FilterChip
-              label={`全部失败 ${summary.failed}`}
+              label={`全部同步失败 ${syncFailedCount}`}
+              active={activeFilterStatuses.includes("sync_failed") && activeSyncFailureFilters.length === 0}
+              onClick={() => {
+                if (!activeFilterStatuses.includes("sync_failed")) {
+                  onFilterChange("sync_failed");
+                }
+                if (activeSyncFailureFilters.length > 0) {
+                  for (const f of activeSyncFailureFilters) {
+                    onSyncFailureFilterChange(f);
+                  }
+                }
+              }}
+              tone={filterTone("failed", activeFilterStatuses.includes("sync_failed") && activeSyncFailureFilters.length === 0)}
+            />
+            {FAILURE_FILTERS.map((filter) => {
+              const count = syncFailureFilterCounts[filter.key];
+              if (count === 0) return null;
+              const active = activeSyncFailureFilters.includes(filter.key);
+              return (
+                <FilterChip
+                  key={filter.key}
+                  label={`${t(filter.labelKey)} ${count}`}
+                  active={active}
+                  onClick={() => onSyncFailureFilterChange(filter.key)}
+                  tone={failureFilterTone(filter.key, active)}
+                />
+              );
+            })}
+          </div>
+        )}
+
+        {/* Expandable checkin failure details */}
+        {checkinFailedExpanded && summary.failed > 0 && (
+          <div className="mt-2 flex flex-wrap gap-1.5">
+            <FilterChip
+              label={`全部签到失败 ${summary.failed}`}
               active={activeFilterStatuses.includes("failed") && activeFailureFilters.length === 0}
-              onClick={() => onFilterChange("failed")}
+              onClick={() => {
+                if (!activeFilterStatuses.includes("failed")) {
+                  onFilterChange("failed");
+                }
+                if (activeFailureFilters.length > 0) {
+                  for (const f of activeFailureFilters) {
+                    onFailureFilterChange(f);
+                  }
+                }
+              }}
               tone={filterTone("failed", activeFilterStatuses.includes("failed") && activeFailureFilters.length === 0)}
             />
             {FAILURE_FILTERS.map((filter) => {
+              const count = failureFilterCounts[filter.key];
+              if (count === 0) return null;
               const active = activeFailureFilters.includes(filter.key);
               return (
                 <FilterChip
                   key={filter.key}
-                  label={`${t(filter.labelKey)} ${failureFilterCounts[filter.key]}`}
+                  label={`${t(filter.labelKey)} ${count}`}
                   active={active}
                   onClick={() => onFailureFilterChange(filter.key)}
                   tone={failureFilterTone(filter.key, active)}

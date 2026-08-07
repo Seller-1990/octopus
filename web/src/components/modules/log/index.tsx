@@ -52,9 +52,7 @@ function filtersActive(filters: LogFilters) {
         filters.apiKeyIds.length > 0 ||
         filters.requestModels.length > 0 ||
         filters.actualModels.length > 0 ||
-        filters.canonicalModels.length > 0 ||
-        !!filters.startTime ||
-        !!filters.endTime
+        filters.canonicalModels.length > 0
     );
 }
 

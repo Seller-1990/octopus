@@ -625,7 +625,9 @@
       "autoAddFailed": "Auto add failed",
       "pinned": "Pinned",
       "unpinned": "Unpinned",
-      "pinFailed": "Pin toggle failed"
+      "pinFailed": "Pin toggle failed",
+      "applyDefaultsSuccess": "Defaults applied: {updated} groups updated, {removed} items removed, {sorted} items re-sorted",
+      "applyDefaultsFailed": "Failed to apply defaults"
     },
     "pin": {
       "pin": "Pin to top",
@@ -814,7 +816,8 @@
         "runSuccess": "Auto grouping has run",
         "runFailed": "Failed to run auto grouping"
       }
-    }
+    },
+    "applyDefaults": "Apply Defaults"
   },
   "model": {
     "create": {

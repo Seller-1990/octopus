@@ -670,6 +670,12 @@ export function Site() {
   const setBatchFailureFilters = useSiteUIStore(
     (state) => state.setBatchFailureFilters,
   );
+  const syncFailureFilters = useSiteUIStore(
+    (state) => state.syncFailureFilters,
+  );
+  const setSyncFailureFilters = useSiteUIStore(
+    (state) => state.setSyncFailureFilters,
+  );
   const tagFilters = useSiteUIStore((state) => state.tagFilters);
   const setTagFilters = useSiteUIStore((state) => state.setTagFilters);
   const setSiteHandlers = useSiteUIStore((state) => state.setHandlers);
@@ -806,8 +812,12 @@ export function Site() {
   }, [sites, selectedSiteIds]);
 
   const batchFailureAccountIds = useMemo(
-    () => buildBatchFailureAccountIds([syncBatchSummary, checkinBatchSummary]),
-    [syncBatchSummary, checkinBatchSummary],
+    () => buildBatchFailureAccountIds([checkinBatchSummary]),
+    [checkinBatchSummary],
+  );
+  const syncFailureAccountIds = useMemo(
+    () => buildBatchFailureAccountIds([syncBatchSummary]),
+    [syncBatchSummary],
   );
   const batchFailureFilterCounts = useMemo(
     () => ({
@@ -818,10 +828,20 @@ export function Site() {
     }),
     [batchFailureAccountIds],
   );
+  const syncFailureFilterCounts = useMemo(
+    () => ({
+      credential: syncFailureAccountIds.credential.size,
+      risk: syncFailureAccountIds.risk.size,
+      transient: syncFailureAccountIds.transient.size,
+      other: syncFailureAccountIds.other.size,
+    }),
+    [syncFailureAccountIds],
+  );
 
   const visibleSites = useMemo<VisibleSite[]>(() => {
     const hasSearch = normalizedQuery.length > 0;
     const hasBatchFailureFilters = batchFailureFilters.length > 0;
+    const hasSyncFailureFilters = syncFailureFilters.length > 0;
 
     const list = (sites ?? []).flatMap((site) => {
       const summary = buildSiteSummary(site);
@@ -852,7 +872,7 @@ export function Site() {
 
       let visibleAccounts = site.accounts;
       let forceExpanded =
-        hasCheckinFilters || hasBatchFailureFilters || isForcedTarget;
+        hasCheckinFilters || hasBatchFailureFilters || hasSyncFailureFilters || isForcedTarget;
 
       if (hasCheckinFilters && !isForcedTarget) {
         visibleAccounts = visibleAccounts.filter((account) =>
@@ -864,6 +884,14 @@ export function Site() {
         visibleAccounts = visibleAccounts.filter((account) =>
           batchFailureFilters.some((category) =>
             batchFailureAccountIds[category].has(account.id),
+          ),
+        );
+      }
+
+      if (hasSyncFailureFilters && !isForcedTarget) {
+        visibleAccounts = visibleAccounts.filter((account) =>
+          syncFailureFilters.some((category) =>
+            syncFailureAccountIds[category].has(account.id),
           ),
         );
       }
@@ -880,7 +908,7 @@ export function Site() {
       const visible =
         isForcedTarget
           ? true
-          : hasCheckinFilters || hasBatchFailureFilters
+          : hasCheckinFilters || hasBatchFailureFilters || hasSyncFailureFilters
             ? visibleAccounts.length > 0
             : !hasSearch || siteMatchesQuery || matchedAccountsBySearch.length > 0;
 
@@ -927,6 +955,8 @@ export function Site() {
     checkinFilterStatuses,
     batchFailureFilters,
     batchFailureAccountIds,
+    syncFailureFilters,
+    syncFailureAccountIds,
     tagFilters,
     forcedSiteId,
     siteSortField,
@@ -937,6 +967,7 @@ export function Site() {
     normalizedQuery.length > 0 ||
     checkinFilterStatuses.length > 0 ||
     batchFailureFilters.length > 0 ||
+    syncFailureFilters.length > 0 ||
     tagFilters.length > 0;
   const visibleAccountCount = visibleSites.reduce(
     (sum, item) => sum + item.visibleAccounts.length,
@@ -1261,6 +1292,7 @@ export function Site() {
     if (status === "all") {
       setCheckinFilterStatuses([]);
       setBatchFailureFilters([]);
+      setSyncFailureFilters([]);
       return;
     }
 
@@ -1279,6 +1311,14 @@ export function Site() {
     );
   }
 
+  function handleSyncFailureFilterChange(category: BatchFailureCategory) {
+    setSyncFailureFilters((current) =>
+      current.includes(category)
+        ? current.filter((item) => item !== category)
+        : [...current, category],
+    );
+  }
+
   function handleTagFilterChange(tag: string) {
     setTagFilters((current) =>
       current.includes(tag)
@@ -1291,6 +1331,7 @@ export function Site() {
     setSearchTerm("site", "");
     setCheckinFilterStatuses([]);
     setBatchFailureFilters([]);
+    setSyncFailureFilters([]);
     setTagFilters([]);
   }
 
@@ -2060,6 +2101,9 @@ export function Site() {
           failureFilterCounts={batchFailureFilterCounts}
           activeFailureFilters={batchFailureFilters}
           onFailureFilterChange={handleBatchFailureFilterChange}
+          syncFailureFilterCounts={syncFailureFilterCounts}
+          activeSyncFailureFilters={syncFailureFilters}
+          onSyncFailureFilterChange={handleSyncFailureFilterChange}
           allTags={allTags}
           activeTags={tagFilters}
           onTagFilterChange={handleTagFilterChange}

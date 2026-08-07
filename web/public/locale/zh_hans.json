@@ -625,7 +625,9 @@
       "autoAddFailed": "自动添加失败",
       "pinned": "已置顶",
       "unpinned": "已取消置顶",
-      "pinFailed": "置顶操作失败"
+      "pinFailed": "置顶操作失败",
+      "applyDefaultsSuccess": "默认策略已应用：{updated} 个分组模式更新，{removed} 个条目移除，{sorted} 个条目重排",
+      "applyDefaultsFailed": "应用默认策略失败"
     },
     "pin": {
       "pin": "置顶",
@@ -814,7 +816,8 @@
         "runSuccess": "已执行自动分组",
         "runFailed": "执行自动分组失败"
       }
-    }
+    },
+    "applyDefaults": "应用默认策略"
   },
   "model": {
     "create": {

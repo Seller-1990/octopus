@@ -7,12 +7,13 @@ export type CheckinFilterStatus =
   | "failed"
   | "idle"
   | "disabled"
-  | "reserve";
+  | "reserve"
+  | "sync_failed";
 
 export type CheckinActiveFilterStatus = Exclude<CheckinFilterStatus, "all">;
 export type DerivedCheckinStatus = Exclude<
   CheckinActiveFilterStatus,
-  "reserve"
+  "reserve" | "sync_failed"
 >;
 
 export type CheckinSummary = {
@@ -139,7 +140,18 @@ export function accountMatchesCheckinFilters(
   }
 
   const wantsReserve = filterStatuses.includes("reserve");
-  const statusFilters = filterStatuses.filter((f) => f !== "reserve");
+  const wantsSyncFailed = filterStatuses.includes("sync_failed");
+  const statusFilters = filterStatuses.filter(
+    (f) => f !== "reserve" && f !== "sync_failed",
+  ) as DerivedCheckinStatus[];
+
+  // sync_failed is an independent dimension: if active, account must have sync failure
+  if (wantsSyncFailed) {
+    const hasSyncFailure =
+      normalizeExecutionStatus(account.last_sync_status) === "failed";
+    if (!hasSyncFailure) return false;
+  }
+
   if (statusFilters.length > 0) {
     const status = deriveCheckinStatus(site, account, now);
     if (!status || !statusFilters.includes(status)) {

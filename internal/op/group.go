@@ -486,7 +486,9 @@ func GroupItemList(groupID int, ctx context.Context) ([]model.GroupItem, error) 
 func groupRefreshCache(ctx context.Context) error {
 	groups := []model.Group{}
 	if err := db.GetDB().WithContext(ctx).
-		Preload("Items").
+		Preload("Items", func(tx *gorm.DB) *gorm.DB {
+			return tx.Order("priority ASC")
+		}).
 		Find(&groups).Error; err != nil {
 		return err
 	}
@@ -500,7 +502,9 @@ func groupRefreshCache(ctx context.Context) error {
 func groupRefreshCacheByID(id int, ctx context.Context) error {
 	var group model.Group
 	if err := db.GetDB().WithContext(ctx).
-		Preload("Items").
+		Preload("Items", func(tx *gorm.DB) *gorm.DB {
+			return tx.Order("priority ASC")
+		}).
 		First(&group, id).Error; err != nil {
 		return err
 	}
@@ -515,7 +519,9 @@ func groupRefreshCacheByIDs(ids []int, ctx context.Context) error {
 	}
 	var groups []model.Group
 	if err := db.GetDB().WithContext(ctx).
-		Preload("Items").
+		Preload("Items", func(tx *gorm.DB) *gorm.DB {
+			return tx.Order("priority ASC")
+		}).
 		Where("id IN ?", ids).
 		Find(&groups).Error; err != nil {
 		return err
