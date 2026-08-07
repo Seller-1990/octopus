@@ -21,7 +21,7 @@ import type { APIKey } from '@/api/endpoints/apikey';
 import { OverlayPortal } from './OverlayPortal';
 
 type Platform = 'ccswitch' | 'cherrystudio';
-type CCSwitchApp = 'claude' | 'codex';
+type CCSwitchApp = 'claude' | 'codex' | 'grokbuild' | 'opencode';
 type CherryApiType = 'openai' | 'anthropic';
 
 const NONE = '__none__';
@@ -52,8 +52,8 @@ export function buildCCSwitchUrl(baseUrl: string, apiKey: string, form: CCSwitch
     params.set('resource', 'provider');
     params.set('app', form.appType);
     params.set('name', form.name);
-    // Codex 客户端需要带 /v1 的 OpenAI 端点，Claude Code 由客户端自行拼接路径
-    params.set('endpoint', form.appType === 'codex' ? `${base}/v1` : base);
+    // Codex/Grok/OpenCode 客户端需要带 /v1 的 OpenAI 端点，Claude Code 由客户端自行拼接路径
+    params.set('endpoint', form.appType === 'claude' ? base : `${base}/v1`);
     params.set('apiKey', apiKey);
     params.set('model', form.model);
     params.set('homepage', base);
@@ -252,6 +252,8 @@ export function APIKeyExportOverlay({
                                     options={[
                                         { value: 'claude', label: 'Claude Code' },
                                         { value: 'codex', label: 'Codex' },
+                                        { value: 'grokbuild', label: 'Grok Build' },
+                                        { value: 'opencode', label: 'OpenCode' },
                                     ]}
                                     onChange={setAppType}
                                 />

@@ -781,7 +781,8 @@ export function APIKeyPanelBase({
     const updateAPIKey = useUpdateAPIKey();
     const deleteAPIKey = useDeleteAPIKey();
     const { value: apiBaseUrl } = useSettingValue(SettingKey.ApiBaseUrl);
-    const canExport = apiBaseUrl.trim() !== '';
+    const effectiveBaseUrl = apiBaseUrl.trim() || (typeof window !== 'undefined' ? window.location.origin : '');
+    const canExport = effectiveBaseUrl !== '';
 
     const instanceId = useId();
     const addLayoutId = `add-btn-${idPrefix}-${instanceId}`;
@@ -928,7 +929,7 @@ export function APIKeyPanelBase({
                     <APIKeyExportOverlay
                         layoutId={exportingKey.layoutId}
                         apiKey={exportingKey.apiKey}
-                        baseUrl={apiBaseUrl}
+                        baseUrl={effectiveBaseUrl}
                         onClose={() => setExportingKey(null)}
                     />
                 )}
