@@ -496,10 +496,16 @@ create_archives() {
     local archive_count=0
     local failed=0
 
-    # Archive all binaries (zip format for all platforms)
+    # Archive only macOS binaries (Linux uses raw binary + deb/rpm; Windows uses NSIS installer)
     while IFS= read -r -d '' file; do
         local basename_file
         basename_file=$(basename "$file")
+
+        # Skip platforms that have dedicated package formats
+        case "${basename_file}" in
+            *-linux-*|*-windows-*|*-desktop-*) continue ;;
+        esac
+
         local archive_file archive_entry
         IFS=$'\t' read -r archive_file archive_entry < <(archive_metadata "${basename_file}")
 

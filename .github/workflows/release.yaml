@@ -78,6 +78,7 @@ jobs:
             build/installer/*
             build/packages/*.deb
             build/packages/*.rpm
+            build/bin/octopus-linux-*
             build/bin/octopus-desktop-*.exe
             build/bin/md5.txt
             build/bin/sha256sums.txt

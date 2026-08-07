@@ -59,7 +59,6 @@ func UpdateCore() error {
 	var updatedBinPath string
 
 	if InContainer() {
-		// In container: write updated binary to data volume so it persists across restarts
 		targetDir = ContainerDataDir()
 		if err := os.MkdirAll(targetDir, 0755); err != nil {
 			log.Warnf("failed to create data dir: %v", err)
@@ -68,7 +67,6 @@ func UpdateCore() error {
 		updatedBinPath = filepath.Join(targetDir, "octopus-updated")
 		log.Infof("container mode: updating binary to %s", updatedBinPath)
 	} else {
-		// Bare metal: overwrite in place
 		execPath, err := os.Executable()
 		if err != nil {
 			log.Warnf("get executable path failed: %v", err)
@@ -77,7 +75,6 @@ func UpdateCore() error {
 		targetDir = filepath.Dir(execPath)
 		updatedBinPath = execPath
 
-		// Backup current binary before replacement
 		backupPath := execPath + ".backup"
 		os.Remove(backupPath)
 		if err := copyFile(execPath, backupPath); err != nil {
@@ -85,24 +82,28 @@ func UpdateCore() error {
 		}
 	}
 
-	if err := unzip(data, targetDir); err != nil {
-		log.Warnf("unzip failed: %v", err)
-		return err
-	}
-
-	// In container mode, the unzipped binary is named "octopus"; rename it.
-	if InContainer() {
-		unzippedPath := filepath.Join(targetDir, "octopus")
-		if _, err := os.Stat(unzippedPath); err == nil {
-			if err := os.Chmod(unzippedPath, 0755); err != nil {
-				log.Warnf("chmod failed: %v", err)
-			}
-			if unzippedPath != updatedBinPath {
-				if err := os.Rename(unzippedPath, updatedBinPath); err != nil {
-					log.Warnf("rename to updated path failed: %v", err)
-					return fmt.Errorf("rename updated binary: %w", err)
+	isZip := strings.HasSuffix(filename, ".zip")
+	if isZip {
+		if err := unzip(data, targetDir); err != nil {
+			log.Warnf("unzip failed: %v", err)
+			return err
+		}
+		if InContainer() {
+			unzippedPath := filepath.Join(targetDir, "octopus")
+			if _, err := os.Stat(unzippedPath); err == nil {
+				os.Chmod(unzippedPath, 0755)
+				if unzippedPath != updatedBinPath {
+					if err := os.Rename(unzippedPath, updatedBinPath); err != nil {
+						return fmt.Errorf("rename updated binary: %w", err)
+					}
 				}
 			}
+		}
+	} else {
+		// Raw binary download — write directly
+		if err := os.WriteFile(updatedBinPath, data, 0755); err != nil {
+			log.Warnf("write binary failed: %v", err)
+			return fmt.Errorf("write binary: %w", err)
 		}
 	}
 
@@ -191,13 +192,13 @@ func getDownloadFilename() (string, error) {
 	case "linux":
 		switch arch {
 		case "386":
-			return "octopus-linux-x86.zip", nil
+			return "octopus-linux-x86", nil
 		case "amd64":
-			return "octopus-linux-x86_64.zip", nil
+			return "octopus-linux-x86_64", nil
 		case "arm":
-			return "octopus-linux-armv7.zip", nil
+			return "octopus-linux-armv7", nil
 		case "arm64":
-			return "octopus-linux-arm64.zip", nil
+			return "octopus-linux-arm64", nil
 		}
 	}
 	return "", fmt.Errorf("unsupported platform: %s/%s", goos, arch)
