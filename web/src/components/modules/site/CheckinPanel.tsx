@@ -245,6 +245,12 @@ export function CheckinPanel({
     () => (sites ?? []).filter((s) => s.is_reserve).length,
     [sites],
   );
+  const syncFailedCount = useMemo(
+    () => (sites ?? []).filter((s) =>
+      s.accounts?.some((a) => a.last_sync_status === 'failed'),
+    ).length,
+    [sites],
+  );
 
   const [failedExpanded, setFailedExpanded] = useState(false);
 
@@ -350,6 +356,14 @@ export function CheckinPanel({
             onClick={() => onFilterChange("reserve")}
             tone={filterTone("reserve", activeFilterStatuses.includes("reserve"))}
           />
+          {syncFailedCount > 0 && (
+            <FilterChip
+              label={`同步失败 ${syncFailedCount}`}
+              active={activeFilterStatuses.includes("failed")}
+              onClick={() => onFilterChange("failed")}
+              tone={filterTone("failed", activeFilterStatuses.includes("failed"))}
+            />
+          )}
 
           <span className="mx-1 h-4 w-px bg-border" />
 
