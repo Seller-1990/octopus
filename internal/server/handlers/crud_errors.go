@@ -29,7 +29,8 @@ const (
 	codeGroupCreateFailed = "group.create_failed"
 	codeGroupUpdateFailed = "group.update_failed"
 	codeGroupDeleteFailed = "group.delete_failed"
-	codeGroupPinFailed    = "group.pin_failed"
+	codeGroupPinFailed            = "group.pin_failed"
+	codeGroupApplyDefaultsFailed  = "group.apply_defaults_failed"
 
 	codeGroupPresetListFailed        = "group.preset.list_failed"
 	codeGroupPresetCreateFailed      = "group.preset.create_failed"

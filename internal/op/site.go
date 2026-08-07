@@ -535,6 +535,7 @@ func SiteAccountCreate(account *model.SiteAccount, ctx context.Context) error {
 		if err := validateSiteCredentialForPlatform(siteRecord.Platform, account.CredentialType); err != nil {
 			return err
 		}
+		account.AccessToken = normalizeCookieValue(account.AccessToken)
 		encrypted, err := EncryptSecret(account.AccessToken)
 		if err != nil {
 			return fmt.Errorf("encrypt site session cookie: %w", err)
@@ -842,6 +843,18 @@ func validateSiteCredentialForPlatform(platform model.SitePlatform, credentialTy
 	return nil
 }
 
+// normalizeCookieValue ensures cookie credentials have proper key=value format.
+// If user enters a bare value without a key prefix, prepend "session=".
+func normalizeCookieValue(value string) string {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return trimmed
+	}
+	if strings.Contains(trimmed, "=") {
+		return trimmed
+	}
+	return "session=" + trimmed
+}
 func SiteAccountEnabled(id int, enabled bool, ctx context.Context) error {
 	return db.GetDB().WithContext(ctx).Model(&model.SiteAccount{}).Where("id = ?", id).Update("enabled", enabled).Error
 }

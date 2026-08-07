@@ -537,3 +537,19 @@ export function useToggleGroupPin() {
     });
 }
 
+/**
+ * 应用默认策略到所有分组
+ */
+export function useApplyGroupDefaults() {
+    const queryClient = useQueryClient();
+    return useMutation({
+        mutationFn: async () =>
+            apiClient.post<{ groups_updated: number; groups_suspended: number }>('/api/v1/group/apply-defaults', {}),
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: ['groups', 'list'] });
+            queryClient.invalidateQueries({ queryKey: ['settings', 'list'] });
+        },
+        onError: (error) => logger.error('应用默认策略失败:', error),
+    });
+}
+

@@ -601,8 +601,8 @@
         "description": "分组内渠道的默认排序策略",
         "placeholder": "选择策略",
         "options": {
-          "non_relay_balance": "非中继优先 + 余额降序",
-          "non_relay_multiplier": "非中继优先 + 倍率升序",
+          "non_relay_balance": "非中转优先 + 余额降序",
+          "non_relay_multiplier": "非中转优先 + 倍率升序",
           "multiplier_balance": "倍率升序 + 余额降序",
           "balance_only": "纯余额降序"
         }

@@ -2,11 +2,12 @@
 
 import { useCallback, useMemo, useState } from 'react';
 import { GroupCard } from './Card';
-import { useGroupList, type Group } from '@/api/endpoints/group';
+import { useGroupList, useApplyGroupDefaults, type Group } from '@/api/endpoints/group';
 import { useSearchStore, useToolbarViewOptionsStore } from '@/components/modules/toolbar';
 import { VirtualizedGrid } from '@/components/common/VirtualizedGrid';
 import { VendorIcon } from '@/components/shared/VendorIcon';
 import { cn } from '@/lib/utils';
+import { Settings2 } from 'lucide-react';
 
 function detectVendorFromModel(modelName: string): string | null {
     const lower = modelName.toLowerCase();
@@ -43,6 +44,7 @@ function getGroupVendors(group: Group): Set<string> {
 
 export function Group() {
     const { data: groups } = useGroupList();
+    const applyDefaults = useApplyGroupDefaults();
     const pageKey = 'group' as const;
     const searchTerm = useSearchStore((s) => s.getSearchTerm(pageKey));
     const sortField = useToolbarViewOptionsStore((s) => s.getSortField(pageKey));
@@ -135,6 +137,15 @@ export function Group() {
                     {VENDOR_LABELS[vendor] ?? vendor}
                 </button>
             ))}
+            <button
+                type="button"
+                onClick={() => applyDefaults.mutate()}
+                disabled={applyDefaults.isPending}
+                className="ml-auto flex items-center gap-1.5 rounded-lg bg-muted px-2.5 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted/80 disabled:opacity-50"
+            >
+                <Settings2 className="size-3.5" />
+                应用默认策略
+            </button>
         </div>
     ) : null;
 

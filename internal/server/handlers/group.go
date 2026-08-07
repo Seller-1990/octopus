@@ -33,6 +33,10 @@ func init() {
 		AddRoute(
 			router.NewRoute("/delete/:id", http.MethodDelete).
 				Handle(deleteGroup),
+		).
+		AddRoute(
+			router.NewRoute("/apply-defaults", http.MethodPost).
+				Handle(applyGroupDefaults),
 		)
 }
 
@@ -98,4 +102,13 @@ func deleteGroup(c *gin.Context) {
 		return
 	}
 	resp.Success(c, "group deleted successfully")
+}
+
+func applyGroupDefaults(c *gin.Context) {
+	result, err := op.ApplyGroupDefaults(c.Request.Context())
+	if err != nil {
+		resp.ErrorWithAppError(c, http.StatusInternalServerError, groupError(codeGroupApplyDefaultsFailed, "apply group defaults failed", err))
+		return
+	}
+	resp.Success(c, result)
 }
