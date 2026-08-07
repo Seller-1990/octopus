@@ -51,7 +51,7 @@ func doRequestWithFallback(url string) ([]byte, error) {
 }
 
 func doRequest(url string, useProxy bool) ([]byte, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
 
 	hc, err := client.GetHTTPClientSystemProxy(useProxy)
@@ -75,6 +75,12 @@ func doRequest(url string, useProxy bool) ([]byte, error) {
 		return nil, err
 	}
 	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		log.Debugf("HTTP %d from %s: %s", resp.StatusCode, url, string(body[:min(len(body), 200)]))
+		return nil, fmt.Errorf("HTTP %d from %s", resp.StatusCode, url)
+	}
 
 	data, err := io.ReadAll(resp.Body)
 	if err != nil {

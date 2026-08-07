@@ -65,6 +65,12 @@ func UpdateCore() error {
 			return fmt.Errorf("create data dir: %w", err)
 		}
 		updatedBinPath = filepath.Join(targetDir, "octopus-updated")
+		// Unlink the old updated binary first — on Linux writing to a running
+		// executable fails with ETXTBSY; os.Remove only removes the directory
+		// entry while the kernel keeps the inode alive for the running process.
+		if err := os.Remove(updatedBinPath); err != nil && !os.IsNotExist(err) {
+			log.Warnf("failed to remove old updated binary: %v", err)
+		}
 		log.Infof("container mode: updating binary to %s", updatedBinPath)
 	} else {
 		execPath, err := os.Executable()
@@ -72,13 +78,25 @@ func UpdateCore() error {
 			log.Warnf("get executable path failed: %v", err)
 			return err
 		}
+		execPath, err = filepath.EvalSymlinks(execPath)
+		if err != nil {
+			log.Warnf("resolve symlink failed: %v", err)
+			return err
+		}
 		targetDir = filepath.Dir(execPath)
 		updatedBinPath = execPath
 
 		backupPath := execPath + ".backup"
 		os.Remove(backupPath)
-		if err := copyFile(execPath, backupPath); err != nil {
-			log.Warnf("failed to backup current binary: %v", err)
+		// Rename (unlink from original path) to avoid ETXTBSY when writing
+		// the new binary on Linux. The kernel keeps the inode alive for
+		// the running process.
+		if err := os.Rename(execPath, backupPath); err != nil {
+			log.Warnf("rename failed, falling back to copy: %v", err)
+			if err := copyFile(execPath, backupPath); err != nil {
+				log.Warnf("failed to backup current binary: %v", err)
+			}
+			os.Remove(execPath)
 		}
 	}
 
