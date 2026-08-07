@@ -51,7 +51,7 @@ func doRequestWithFallback(url string) ([]byte, error) {
 }
 
 func doRequest(url string, useProxy bool) ([]byte, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
 	hc, err := client.GetHTTPClientSystemProxy(useProxy)
