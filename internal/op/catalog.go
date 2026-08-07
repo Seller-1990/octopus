@@ -1248,7 +1248,7 @@ func CatalogPlanGroup(
 		})
 	}
 
-	if canonical == nil || len(candidates) == 0 || group.Mode == model.GroupModeFailover {
+	if canonical == nil || len(candidates) == 0 {
 		filtered := make([]model.GroupItem, 0, len(included))
 		for _, item := range included {
 			filtered = append(filtered, item.item)
@@ -1260,8 +1260,13 @@ func CatalogPlanGroup(
 	sort.SliceStable(included, func(i, j int) bool {
 		left := included[i]
 		right := included[j]
+		// Protocol rank always takes precedence (functional correctness)
 		if left.rank != right.rank {
 			return left.rank > right.rank
+		}
+		// When user explicitly set Failover mode, respect their priority after protocol rank
+		if group.Mode == model.GroupModeFailover && left.item.Priority != right.item.Priority {
+			return left.item.Priority < right.item.Priority
 		}
 		if left.tier != right.tier {
 			return left.tier < right.tier

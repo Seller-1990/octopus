@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react';
+import { useCallback, useMemo, useState, type FormEvent } from 'react';
 import { Check, ChevronDownIcon, Plus, Search, Sparkles, Trash2, ArrowDownWideNarrow } from 'lucide-react';
 import { useTranslations } from 'next-intl';
 import * as AccordionPrimitive from '@radix-ui/react-accordion';
@@ -326,12 +326,6 @@ export function GroupEditor({
     const [sortStrategy, setSortStrategy] = useState<GroupSortStrategy>(
         (initial?.sort_strategy || defaultSortStrategy || 'non_relay_balance') as GroupSortStrategy,
     );
-
-    useEffect(() => {
-        if (!initial?.sort_strategy && defaultSortStrategy) {
-            setSortStrategy(defaultSortStrategy as GroupSortStrategy);
-        }
-    }, [defaultSortStrategy, initial?.sort_strategy]);
 
     const groupKey = normalizeKey(groupName);
     const regexKey = matchRegex.trim();
