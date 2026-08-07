@@ -1248,7 +1248,7 @@ func CatalogPlanGroup(
 		})
 	}
 
-	if canonical == nil || len(candidates) == 0 {
+	if canonical == nil || len(candidates) == 0 || group.Mode == model.GroupModeFailover {
 		filtered := make([]model.GroupItem, 0, len(included))
 		for _, item := range included {
 			filtered = append(filtered, item.item)
@@ -1435,7 +1435,7 @@ func routeCandidateScore(
 }
 
 func routeCandidateKey(channelID int, modelName string) string {
-	return fmt.Sprintf("%d\x00%s", channelID, modelName)
+	return fmt.Sprintf("%d\x00%s", channelID, strings.ToLower(modelName))
 }
 
 func ProtocolForOutboundType(value outbound.OutboundType) model.ProtocolName {

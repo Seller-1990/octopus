@@ -265,10 +265,10 @@ export function Log() {
     }), [tabsId]);
 
     useEffect(() => {
-        if (logDateRange.start || logDateRange.end) return;
         const now = dayjs().tz(timezone);
         setLogDateRange({ start: now.startOf('day').unix(), end: now.unix() });
-    }, [logDateRange.end, logDateRange.start, setLogDateRange, timezone]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
 
     useEffect(() => {
         if (view !== 'analytics' || refreshRequestId === lastAnalyticsRefreshRef.current) return;

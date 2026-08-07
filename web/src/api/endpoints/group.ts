@@ -33,6 +33,7 @@ export interface Group {
     name: string;
     mode: GroupMode;
     match_regex: string;
+    sort_strategy?: string;
     first_token_time_out?: number;
     session_keep_time?: number;
     retry_enabled?: boolean;
@@ -62,6 +63,7 @@ export interface GroupPreset {
     name: string;
     mode: GroupMode;
     match_regex: string;
+    sort_strategy: string;
     first_token_time_out: number;
     session_keep_time: number;
     retry_enabled: boolean;
@@ -79,6 +81,7 @@ export interface GroupPresetUpdateRequest {
     name?: string;
     mode?: GroupMode;
     match_regex?: string;
+    sort_strategy?: string;
     first_token_time_out?: number;
     session_keep_time?: number;
     retry_enabled?: boolean;
@@ -113,6 +116,7 @@ export interface GroupUpdateRequest {
     name?: string;                        // 仅在名称变更时发送
     mode?: GroupMode;                     // 仅在模式变更时发送
     match_regex?: string;                 // 仅在匹配正则变更时发送
+    sort_strategy?: string;               // 仅在排序策略变更时发送
     first_token_time_out?: number;        // 仅在超时变更时发送
     session_keep_time?: number;           // 仅在会话保持时间变更时发送
     retry_enabled?: boolean;              // 仅在同通道重试开关变更时发送
@@ -235,6 +239,7 @@ function applyGroupUpdate(group: Group, req: GroupUpdateRequest): Group {
     if (req.name !== undefined) next.name = req.name;
     if (req.mode !== undefined) next.mode = req.mode;
     if (req.match_regex !== undefined) next.match_regex = req.match_regex;
+    if (req.sort_strategy !== undefined) next.sort_strategy = req.sort_strategy;
     if (req.first_token_time_out !== undefined) next.first_token_time_out = req.first_token_time_out;
     if (req.session_keep_time !== undefined) next.session_keep_time = req.session_keep_time;
     if (req.retry_enabled !== undefined) next.retry_enabled = req.retry_enabled;

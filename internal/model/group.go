@@ -16,6 +16,7 @@ type Group struct {
 	Name              string      `json:"name" gorm:"unique;not null"`
 	Mode              GroupMode   `json:"mode" gorm:"not null"`
 	MatchRegex        string      `json:"match_regex"`
+	SortStrategy      string      `json:"sort_strategy" gorm:"type:varchar(32);default:''"`
 	FirstTokenTimeOut int         `json:"first_token_time_out"`               // 单个渠道首个Token响应超时时间(秒)
 	SessionKeepTime   int         `json:"session_keep_time"`                  // 会话保持时间(秒) 0 为禁用
 	RetryEnabled      bool        `json:"retry_enabled" gorm:"default:false"` // 启用同通道重试+透传429/503
@@ -36,13 +37,14 @@ type GroupItem struct {
 }
 
 // GroupPreset 分组的路由配置预设（命名快照）
-// 切换预设 = 用此快照覆盖 Group 的实时 Mode/超时/重试/regex + group_items 表
+// 切换预设 = 用此快照覆盖 Group 的实时 Mode/超时/重试/regex/sort_strategy + group_items 表
 type GroupPreset struct {
 	ID                int               `json:"id" gorm:"primaryKey"`
 	GroupID           int               `json:"group_id" gorm:"not null;index:idx_group_preset_name,unique"`
 	Name              string            `json:"name" gorm:"not null;index:idx_group_preset_name,unique"`
 	Mode              GroupMode         `json:"mode" gorm:"not null"`
 	MatchRegex        string            `json:"match_regex"`
+	SortStrategy      string            `json:"sort_strategy"`
 	FirstTokenTimeOut int               `json:"first_token_time_out"`
 	SessionKeepTime   int               `json:"session_keep_time"`
 	RetryEnabled      bool              `json:"retry_enabled"`
@@ -67,6 +69,7 @@ type GroupUpdateRequest struct {
 	Name              *string                  `json:"name,omitempty"`                 // 仅在名称变更时发送
 	Mode              *GroupMode               `json:"mode,omitempty"`                 // 仅在模式变更时发送
 	MatchRegex        *string                  `json:"match_regex,omitempty"`          // 仅在匹配正则变更时发送
+	SortStrategy      *string                  `json:"sort_strategy,omitempty"`        // 仅在排序策略变更时发送
 	FirstTokenTimeOut *int                     `json:"first_token_time_out,omitempty"` // 仅在超时变更时发送(秒)
 	SessionKeepTime   *int                     `json:"session_keep_time,omitempty"`    // 仅在会话保持时间变更时发送(秒)
 	RetryEnabled      *bool                    `json:"retry_enabled,omitempty"`        // 启用同通道重试+透传429/503
@@ -108,6 +111,7 @@ type GroupPresetUpdateRequest struct {
 	Name              *string            `json:"name,omitempty"`
 	Mode              *GroupMode         `json:"mode,omitempty"`
 	MatchRegex        *string            `json:"match_regex,omitempty"`
+	SortStrategy      *string            `json:"sort_strategy,omitempty"`
 	FirstTokenTimeOut *int               `json:"first_token_time_out,omitempty"`
 	SessionKeepTime   *int               `json:"session_keep_time,omitempty"`
 	RetryEnabled      *bool              `json:"retry_enabled,omitempty"`

@@ -99,6 +99,10 @@ func GroupUpdate(req *model.GroupUpdateRequest, ctx context.Context) (*model.Gro
 		selectFields = append(selectFields, "match_regex")
 		updates.MatchRegex = *req.MatchRegex
 	}
+	if req.SortStrategy != nil {
+		selectFields = append(selectFields, "sort_strategy")
+		updates.SortStrategy = *req.SortStrategy
+	}
 	if req.FirstTokenTimeOut != nil {
 		selectFields = append(selectFields, "first_token_time_out")
 		updates.FirstTokenTimeOut = *req.FirstTokenTimeOut

@@ -59,15 +59,22 @@ func ApplyGroupDefaults(ctx context.Context) (*ApplyGroupDefaultsResult, error) 
 		}
 	}
 
-	// 2 & 3. Enforce multiplier cap on items + apply sort strategy
-	capStr, _ := SettingGetString(model.SettingKeyDefaultMultiplierCap)
-	capVal, capErr := strconv.ParseFloat(capStr, 64)
-	hasCap := capErr == nil && capVal > 0
-
+	// 2. Apply default sort strategy to all groups
 	sortStr, _ := SettingGetString(model.SettingKeyDefaultGroupSortStrategy)
 	if sortStr == "" {
 		sortStr = "non_relay_balance"
 	}
+	if err := db.GetDB().WithContext(ctx).
+		Model(&model.Group{}).
+		Where("sort_strategy != ?", sortStr).
+		Update("sort_strategy", sortStr).Error; err != nil {
+		return nil, fmt.Errorf("apply default sort strategy: %w", err)
+	}
+
+	// 3 & 4. Enforce multiplier cap on items + apply sort strategy to priorities
+	capStr, _ := SettingGetString(model.SettingKeyDefaultMultiplierCap)
+	capVal, capErr := strconv.ParseFloat(capStr, 64)
+	hasCap := capErr == nil && capVal > 0
 
 	// Collect all channel IDs across all group items
 	groups := groupCache.GetAll()

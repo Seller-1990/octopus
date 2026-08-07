@@ -5,6 +5,7 @@ import { Trash2, X, Pencil, Pin, PinOff, ArrowDownWideNarrow, HeartPulse } from 
 import { motion, AnimatePresence } from 'motion/react';
 import { type Group, useDeleteGroup, useUpdateGroup, useToggleGroupPin } from '@/api/endpoints/group';
 import { useModelChannelList } from '@/api/endpoints/model';
+import { useSettingValue, SettingKey } from '@/api/endpoints/setting';
 import { useTranslations } from 'next-intl';
 import { cn } from '@/lib/utils';
 import { toast } from '@/components/common/Toast';
@@ -57,6 +58,7 @@ function EditDialogContent({ group, displayMembers, isSubmitting, onSubmit }: Ed
                         name: group.name,
                         match_regex: group.match_regex ?? '',
                         mode: group.mode,
+                        sort_strategy: group.sort_strategy ?? '',
                         first_token_time_out: group.first_token_time_out ?? 0,
                         session_keep_time: group.session_keep_time ?? 0,
                         retry_enabled: group.retry_enabled ?? false,
@@ -80,12 +82,13 @@ export function GroupCard({ group }: { group: Group }) {
     const deleteGroup = useDeleteGroup();
     const togglePin = useToggleGroupPin();
     const { data: modelChannels = [] } = useModelChannelList();
+    const { value: defaultSortStrategy } = useSettingValue(SettingKey.DefaultGroupSortStrategy, 'non_relay_balance');
 
     const [confirmDelete, setConfirmDelete] = useState(false);
     const [isDragging, setIsDragging] = useState(false);
     const [members, setMembers] = useState<SelectedMember[]>([]);
     const [weightOverrides, setWeightOverrides] = useState<Record<string, number>>({});
-    const [sortStrategy, setSortStrategy] = useState<GroupSortStrategy>('non_relay_balance');
+    const sortStrategy = (group.sort_strategy || defaultSortStrategy || 'non_relay_balance') as GroupSortStrategy;
     const weightTimerRef = useRef<NodeJS.Timeout | null>(null);
     const membersRef = useRef<SelectedMember[]>([]);
 
@@ -277,6 +280,7 @@ export function GroupCard({ group }: { group: Group }) {
         if (nextName && nextName !== group.name) payload.name = nextName;
         if (values.mode !== group.mode) payload.mode = values.mode;
         if (nextRegex !== (group.match_regex ?? '')) payload.match_regex = nextRegex;
+        if ((values.sort_strategy ?? '') !== (group.sort_strategy ?? '')) payload.sort_strategy = values.sort_strategy;
         if (nextFirstTokenTimeOut !== (group.first_token_time_out ?? 0)) payload.first_token_time_out = nextFirstTokenTimeOut;
         if (nextSessionKeepTime !== (group.session_keep_time ?? 0)) payload.session_keep_time = nextSessionKeepTime;
         if (values.retry_enabled !== (group.retry_enabled ?? false)) payload.retry_enabled = values.retry_enabled;
@@ -297,7 +301,7 @@ export function GroupCard({ group }: { group: Group }) {
             },
             onError,
         });
-    }, [group.first_token_time_out, group.session_keep_time, group.retry_enabled, group.max_retries, group.id, group.items, group.match_regex, group.mode, group.name, onSuccess, onError, updateGroup]);
+    }, [group.first_token_time_out, group.session_keep_time, group.retry_enabled, group.max_retries, group.id, group.items, group.match_regex, group.mode, group.name, group.sort_strategy, onSuccess, onError, updateGroup]);
 
     return (
         <article className="relative group/card flex flex-col rounded-3xl border border-border bg-card text-card-foreground p-4 custom-shadow">
@@ -388,7 +392,10 @@ export function GroupCard({ group }: { group: Group }) {
             <div className="flex items-center gap-1.5 mb-2">
                 <select
                     value={sortStrategy}
-                    onChange={(e) => setSortStrategy(e.target.value as GroupSortStrategy)}
+                    onChange={(e) => {
+                        if (!group.id) return;
+                        updateGroup.mutate({ id: group.id, sort_strategy: e.target.value }, { onSuccess, onError });
+                    }}
                     className="h-6 flex-1 min-w-0 rounded-lg border border-border/60 bg-muted/50 px-1.5 text-xs text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring"
                 >
                     <option value="non_relay_balance">{t('form.sortStrategy.nonRelayBalance')}</option>

@@ -1,10 +1,11 @@
 'use client';
 
-import { useCallback, useMemo, useState, type FormEvent } from 'react';
+import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react';
 import { Check, ChevronDownIcon, Plus, Search, Sparkles, Trash2, ArrowDownWideNarrow } from 'lucide-react';
 import { useTranslations } from 'next-intl';
 import * as AccordionPrimitive from '@radix-ui/react-accordion';
 import { useModelChannelList, type LLMChannel } from '@/api/endpoints/model';
+import { useSettingValue, SettingKey } from '@/api/endpoints/setting';
 import { Button } from '@/components/ui/button';
 import { Field, FieldGroup, FieldLabel } from '@/components/ui/field';
 import { Input } from '@/components/ui/input';
@@ -26,6 +27,7 @@ export type GroupEditorValues = {
     name: string;
     match_regex: string;
     mode: GroupMode;
+    sort_strategy: string;
     first_token_time_out: number;
     session_keep_time: number;
     retry_enabled: boolean;
@@ -310,6 +312,7 @@ export function GroupEditor({
 }) {
     const t = useTranslations('group');
     const { data: modelChannels = [] } = useModelChannelList();
+    const { value: defaultSortStrategy } = useSettingValue(SettingKey.DefaultGroupSortStrategy, 'non_relay_balance');
 
     const [groupName, setGroupName] = useState(initial?.name ?? '');
     const [matchRegex, setMatchRegex] = useState(initial?.match_regex ?? '');
@@ -320,7 +323,15 @@ export function GroupEditor({
     const [maxRetries, setMaxRetries] = useState<number>(initial?.max_retries ?? 3);
     const [selectedMembers, setSelectedMembers] = useState<SelectedMember[]>(initial?.members ?? []);
     const [removingIds, setRemovingIds] = useState<Set<string>>(new Set());
-    const [sortStrategy, setSortStrategy] = useState<GroupSortStrategy>('non_relay_balance');
+    const [sortStrategy, setSortStrategy] = useState<GroupSortStrategy>(
+        (initial?.sort_strategy || defaultSortStrategy || 'non_relay_balance') as GroupSortStrategy,
+    );
+
+    useEffect(() => {
+        if (!initial?.sort_strategy && defaultSortStrategy) {
+            setSortStrategy(defaultSortStrategy as GroupSortStrategy);
+        }
+    }, [defaultSortStrategy, initial?.sort_strategy]);
 
     const groupKey = normalizeKey(groupName);
     const regexKey = matchRegex.trim();
@@ -407,6 +418,7 @@ export function GroupEditor({
             name: groupName,
             match_regex: regexKey,
             mode,
+            sort_strategy: sortStrategy,
             first_token_time_out: firstTokenTimeOut,
             session_keep_time: sessionKeepTime,
             retry_enabled: retryEnabled,

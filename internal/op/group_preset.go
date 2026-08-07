@@ -28,7 +28,7 @@ func GroupPresetList(groupID int, ctx context.Context) ([]model.GroupPreset, err
 }
 
 // groupPresetSnapshotFromCache 从缓存中的 Group 取当前实时状态的快照
-func groupPresetSnapshotFromCache(groupID int) (mode model.GroupMode, matchRegex string, firstTokenTimeOut, sessionKeepTime, maxRetries int, retryEnabled bool, items []model.GroupPresetItem, err error) {
+func groupPresetSnapshotFromCache(groupID int) (mode model.GroupMode, matchRegex, sortStrategy string, firstTokenTimeOut, sessionKeepTime, maxRetries int, retryEnabled bool, items []model.GroupPresetItem, err error) {
 	group, ok := groupCache.Get(groupID)
 	if !ok {
 		err = fmt.Errorf("group not found")
@@ -36,6 +36,7 @@ func groupPresetSnapshotFromCache(groupID int) (mode model.GroupMode, matchRegex
 	}
 	mode = group.Mode
 	matchRegex = group.MatchRegex
+	sortStrategy = group.SortStrategy
 	firstTokenTimeOut = group.FirstTokenTimeOut
 	sessionKeepTime = group.SessionKeepTime
 	maxRetries = group.MaxRetries
@@ -58,7 +59,7 @@ func GroupPresetCreate(groupID int, name string, ctx context.Context) (*model.Gr
 	if name == "" {
 		return nil, fmt.Errorf("preset name required")
 	}
-	mode, matchRegex, fto, skt, mr, re, items, err := groupPresetSnapshotFromCache(groupID)
+	mode, matchRegex, sortStrategy, fto, skt, mr, re, items, err := groupPresetSnapshotFromCache(groupID)
 	if err != nil {
 		return nil, err
 	}
@@ -67,6 +68,7 @@ func GroupPresetCreate(groupID int, name string, ctx context.Context) (*model.Gr
 		Name:              name,
 		Mode:              mode,
 		MatchRegex:        matchRegex,
+		SortStrategy:      sortStrategy,
 		FirstTokenTimeOut: fto,
 		SessionKeepTime:   skt,
 		RetryEnabled:      re,
@@ -136,6 +138,7 @@ func GroupPresetClone(presetID int, newName string, ctx context.Context) (*model
 		Name:              finalName,
 		Mode:              source.Mode,
 		MatchRegex:        source.MatchRegex,
+		SortStrategy:      source.SortStrategy,
 		FirstTokenTimeOut: source.FirstTokenTimeOut,
 		SessionKeepTime:   source.SessionKeepTime,
 		RetryEnabled:      source.RetryEnabled,
@@ -197,6 +200,7 @@ func mirrorPresetToActiveGroupTx(tx *gorm.DB, preset *model.GroupPreset) (groupI
 		Updates(map[string]interface{}{
 			"mode":                 preset.Mode,
 			"match_regex":          preset.MatchRegex,
+			"sort_strategy":        preset.SortStrategy,
 			"first_token_time_out": preset.FirstTokenTimeOut,
 			"session_keep_time":    preset.SessionKeepTime,
 			"retry_enabled":        preset.RetryEnabled,
@@ -268,6 +272,7 @@ func syncActivePresetTx(tx *gorm.DB, groupID int) error {
 
 	preset.Mode = group.Mode
 	preset.MatchRegex = group.MatchRegex
+	preset.SortStrategy = group.SortStrategy
 	preset.FirstTokenTimeOut = group.FirstTokenTimeOut
 	preset.SessionKeepTime = group.SessionKeepTime
 	preset.RetryEnabled = group.RetryEnabled
@@ -299,6 +304,9 @@ func GroupPresetUpdate(presetID int, req *model.GroupPresetUpdateRequest, ctx co
 		}
 		if req.MatchRegex != nil {
 			preset.MatchRegex = *req.MatchRegex
+		}
+		if req.SortStrategy != nil {
+			preset.SortStrategy = *req.SortStrategy
 		}
 		if req.FirstTokenTimeOut != nil {
 			preset.FirstTokenTimeOut = *req.FirstTokenTimeOut
@@ -443,6 +451,7 @@ func GroupPresetActivate(presetID int, ctx context.Context) error {
 		Updates(map[string]interface{}{
 			"mode":                 preset.Mode,
 			"match_regex":          preset.MatchRegex,
+			"sort_strategy":        preset.SortStrategy,
 			"first_token_time_out": preset.FirstTokenTimeOut,
 			"session_keep_time":    preset.SessionKeepTime,
 			"retry_enabled":        preset.RetryEnabled,

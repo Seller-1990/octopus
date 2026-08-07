@@ -281,6 +281,9 @@ export function CheckinPanel({
     }
   }, [manualCheckinUrls]);
 
+  const hasSyncFailureCategories = syncFailureFilterCounts.credential + syncFailureFilterCounts.risk + syncFailureFilterCounts.transient + syncFailureFilterCounts.other > 0;
+  const hasCheckinFailureCategories = failureFilterCounts.credential + failureFilterCounts.risk + failureFilterCounts.transient + failureFilterCounts.other > 0;
+
   const isSyncFailedActive = activeFilterStatuses.includes("sync_failed") || activeSyncFailureFilters.length > 0;
   const isCheckinFailedActive = activeFilterStatuses.includes("failed") || activeFailureFilters.length > 0;
 
@@ -295,7 +298,9 @@ export function CheckinPanel({
       setSyncFailedExpanded(false);
     } else {
       onFilterChange("sync_failed");
-      setSyncFailedExpanded(true);
+      if (hasSyncFailureCategories) {
+        setSyncFailedExpanded(true);
+      }
     }
   }
 
@@ -310,7 +315,9 @@ export function CheckinPanel({
       setCheckinFailedExpanded(false);
     } else {
       onFilterChange("failed");
-      setCheckinFailedExpanded(true);
+      if (hasCheckinFailureCategories) {
+        setCheckinFailedExpanded(true);
+      }
     }
   }
 
@@ -407,7 +414,7 @@ export function CheckinPanel({
               active={isSyncFailedActive}
               onClick={handleSyncFailedToggle}
               tone={filterTone("sync_failed", isSyncFailedActive)}
-              hasExpand
+              hasExpand={hasSyncFailureCategories}
               expanded={syncFailedExpanded}
             />
           )}
@@ -441,7 +448,7 @@ export function CheckinPanel({
             active={isCheckinFailedActive}
             onClick={handleCheckinFailedToggle}
             tone={filterTone("failed", isCheckinFailedActive)}
-            hasExpand={summary.failed > 0}
+            hasExpand={hasCheckinFailureCategories}
             expanded={checkinFailedExpanded}
           />
 
@@ -474,7 +481,7 @@ export function CheckinPanel({
         </div>
 
         {/* Expandable sync failure details */}
-        {syncFailedExpanded && syncFailedCount > 0 && (
+        {syncFailedExpanded && syncFailedCount > 0 && hasSyncFailureCategories && (
           <div className="mt-2 flex flex-wrap gap-1.5">
             <FilterChip
               label={`全部同步失败 ${syncFailedCount}`}
@@ -509,7 +516,7 @@ export function CheckinPanel({
         )}
 
         {/* Expandable checkin failure details */}
-        {checkinFailedExpanded && summary.failed > 0 && (
+        {checkinFailedExpanded && summary.failed > 0 && hasCheckinFailureCategories && (
           <div className="mt-2 flex flex-wrap gap-1.5">
             <FilterChip
               label={`全部签到失败 ${summary.failed}`}
