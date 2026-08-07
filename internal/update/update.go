@@ -1,184 +1,283 @@
 package update
 
 import (
-	"archive/zip"
+	"bufio"
 	"bytes"
-	"context"
-	"encoding/json"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"io"
-	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
-	"time"
+	"sync"
+	"syscall"
 
-	"github.com/bestruirui/octopus/internal/client"
 	"github.com/bestruirui/octopus/internal/conf"
 	"github.com/bestruirui/octopus/internal/utils/log"
+	"github.com/bestruirui/octopus/internal/utils/shutdown"
 )
 
-type LatestInfo struct {
-	TagName     string `json:"tag_name"`
-	PublishedAt string `json:"published_at"`
-	Body        string `json:"body"`
-	Message     string `json:"message"`
-	ReleaseURL  string `json:"release_url"`
-	// Container 标记当前运行在容器中，前端据此禁用自动更新入口。
-	Container bool `json:"container"`
-	// AutoUpdate 标记当前发行形态是否支持安全的原地二进制更新。
-	AutoUpdate bool `json:"auto_update"`
-}
+var (
+	updateMu    sync.Mutex
+	restarting  bool
+)
 
-var github_pat = os.Getenv(strings.ToUpper(conf.APP_NAME) + "_GITHUB_PAT")
-
-func latestReleaseAPIURL() string {
-	return "https://api.github.com/repos/" + conf.GitHubRepository + "/releases/latest"
-}
-
-func releaseDownloadURL(filename string) string {
-	return strings.TrimRight(conf.Repo, "/") + "/releases/latest/download/" + filename
-}
-
-// doRequestWithFallback performs an HTTP GET request, first without proxy, then with proxy if failed.
-func doRequestWithFallback(url string) ([]byte, error) {
-	data, err := doRequest(url, false)
-	if err == nil {
-		return data, nil
+func UpdateCore() error {
+	if restarting {
+		return fmt.Errorf("update completed, server is restarting")
 	}
-	log.Warnf("direct request failed, trying with proxy: %v", err)
-	return doRequest(url, true)
-}
-
-func doRequest(url string, useProxy bool) ([]byte, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
-	defer cancel()
-
-	hc, err := client.GetHTTPClientSystemProxy(useProxy)
-	if err != nil {
-		return nil, err
+	if !updateMu.TryLock() {
+		return fmt.Errorf("update already in progress")
 	}
+	defer updateMu.Unlock()
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	if err != nil {
-		log.Debugf("new request failed: %v", err)
-		return nil, err
-	}
-
-	if github_pat != "" {
-		req.Header.Set("Authorization", "Bearer "+github_pat)
-	}
-
-	resp, err := hc.Do(req)
-	if err != nil {
-		log.Debugf("request failed: %v", err)
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		log.Debugf("HTTP %d from %s: %s", resp.StatusCode, url, string(body[:min(len(body), 200)]))
-		return nil, fmt.Errorf("HTTP %d from %s", resp.StatusCode, url)
-	}
-
-	data, err := io.ReadAll(resp.Body)
-	if err != nil {
-		log.Debugf("read body failed: %v", err)
-		return nil, err
-	}
-	return data, nil
-}
-
-func GetLatestInfo() (*LatestInfo, error) {
-	body, err := doRequestWithFallback(latestReleaseAPIURL())
-	if err != nil {
-		return nil, err
-	}
-
-	var latestInfo LatestInfo
-	if err := json.Unmarshal(body, &latestInfo); err != nil {
-		log.Debugf("unmarshal body failed: %v", err)
-		return nil, err
-	}
-	if latestInfo.Message != "" {
-		return nil, fmt.Errorf("failed to get latest info: %s", latestInfo.Message)
-	}
-	latestInfo.Container = InContainer()
-	latestInfo.AutoUpdate = AutoUpdateSupported()
-	latestInfo.ReleaseURL = strings.TrimRight(conf.Repo, "/") + "/releases/latest"
-	return &latestInfo, nil
-}
-
-func unzip(data []byte, dest string) error {
-	r, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
-	if err != nil {
-		log.Debugf("new zip reader failed: %v", err)
+	log.Infof("start update core")
+	if !AutoUpdateSupported() {
+		err := fmt.Errorf("auto update is disabled on %s; install the latest release from %s/releases/latest", runtime.GOOS, strings.TrimRight(conf.Repo, "/"))
+		log.Warnf("update core failed: %v", err)
 		return err
 	}
 
-	for _, f := range r.File {
-		fpath := filepath.Join(dest, f.Name)
-
-		if !isPathInDest(fpath, dest) {
-			log.Debugf("invalid file path: %s", fpath)
-			return fmt.Errorf("invalid file path: %s", fpath)
-		}
-
-		info := f.FileInfo()
-		if info.IsDir() {
-			os.MkdirAll(fpath, os.ModePerm)
-			continue
-		}
-		if info.Mode()&os.ModeSymlink != 0 {
-			continue
-		}
-
-		if err := extractFile(f, fpath); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func extractFile(f *zip.File, fpath string) error {
-	if err := os.MkdirAll(filepath.Dir(fpath), os.ModePerm); err != nil {
-		log.Debugf("mkdir all failed: %v", err)
+	filename, err := getDownloadFilename()
+	if err != nil {
+		log.Warnf("update core failed: %v", err)
 		return err
 	}
 
-	outFile, err := os.OpenFile(fpath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, f.Mode().Perm())
+	downloadUrl := releaseDownloadURL(filename)
+	log.Infof("download url: %s", downloadUrl)
+	data, err := doRequestWithFallback(downloadUrl)
 	if err != nil {
-		if err = os.Remove(fpath); err != nil {
-			log.Debugf("remove file failed: %v", err)
-			return err
+		log.Warnf("download failed: %v", err)
+		return err
+	}
+
+	if len(data) == 0 {
+		return fmt.Errorf("downloaded binary is empty (0 bytes)")
+	}
+
+	// SHA-256 checksum verification
+	checksumURL := releaseDownloadURL("sha256sums.txt")
+	expectedHash, err := fetchExpectedChecksum(checksumURL, filename)
+	if err != nil {
+		log.Warnf("sha256sums.txt not available, skipping checksum verification: %v", err)
+	} else {
+		if err := verifySHA256(data, expectedHash); err != nil {
+			log.Warnf("checksum verification failed: %v", err)
+			return fmt.Errorf("checksum verification failed: %w", err)
 		}
-		outFile, err = os.OpenFile(fpath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, f.Mode())
+		log.Infof("SHA-256 checksum verified successfully")
+	}
+
+	// Determine target path based on environment
+	var targetDir string
+	var updatedBinPath string
+
+	if InContainer() {
+		targetDir = ContainerDataDir()
+		if err := os.MkdirAll(targetDir, 0755); err != nil {
+			log.Warnf("failed to create data dir: %v", err)
+			return fmt.Errorf("create data dir: %w", err)
+		}
+		updatedBinPath = filepath.Join(targetDir, "octopus-updated")
+		if err := os.Remove(updatedBinPath); err != nil && !os.IsNotExist(err) {
+			log.Warnf("failed to remove old updated binary, aborting: %v", err)
+			return fmt.Errorf("remove old updated binary: %w", err)
+		}
+		log.Infof("container mode: updating binary to %s", updatedBinPath)
+	} else {
+		execPath, err := os.Executable()
 		if err != nil {
-			log.Debugf("open file failed: %v", err)
+			log.Warnf("get executable path failed: %v", err)
 			return err
 		}
-	}
-	defer outFile.Close()
+		execPath, err = filepath.EvalSymlinks(execPath)
+		if err != nil {
+			log.Warnf("resolve symlink failed: %v", err)
+			return err
+		}
+		targetDir = filepath.Dir(execPath)
+		updatedBinPath = execPath
 
-	rc, err := f.Open()
-	if err != nil {
-		log.Debugf("open file failed: %v", err)
-		return err
-	}
-	defer rc.Close()
+		backupPath := execPath + ".backup"
+		os.Remove(backupPath)
+		if err := os.Rename(execPath, backupPath); err != nil {
+			log.Warnf("rename failed, falling back to copy: %v", err)
+			if err := copyFile(execPath, backupPath); err != nil {
+				log.Warnf("failed to backup current binary, aborting update: %v", err)
+				return fmt.Errorf("backup current binary failed: %w", err)
+			}
+			os.Remove(execPath)
+		}
 
-	if _, err = io.Copy(outFile, rc); err != nil {
-		log.Debugf("copy failed: %v", err)
-		return err
+		// Deferred rollback: if write fails, restore backup
+		writeSuccess := false
+		defer func() {
+			if !writeSuccess {
+				log.Warnf("update write failed, rolling back from backup")
+				if rbErr := os.Rename(backupPath, execPath); rbErr != nil {
+					log.Errorf("rollback failed: %v (backup at %s)", rbErr, backupPath)
+				}
+			}
+		}()
+
+		isZip := strings.HasSuffix(filename, ".zip")
+		if isZip {
+			if err := unzip(data, targetDir); err != nil {
+				log.Warnf("unzip failed: %v", err)
+				return err
+			}
+		} else {
+			if err := os.WriteFile(updatedBinPath, data, 0755); err != nil {
+				log.Warnf("write binary failed: %v", err)
+				return fmt.Errorf("write binary: %w", err)
+			}
+		}
+		writeSuccess = true
+		log.Infof("update core success")
+		restarting = true
+		go restartExecutable(updatedBinPath)
+		return nil
+	}
+
+	// Container path: write
+	isZip := strings.HasSuffix(filename, ".zip")
+	if isZip {
+		if err := unzip(data, targetDir); err != nil {
+			log.Warnf("unzip failed: %v", err)
+			return err
+		}
+		unzippedPath := filepath.Join(targetDir, "octopus")
+		if _, err := os.Stat(unzippedPath); err == nil {
+			os.Chmod(unzippedPath, 0755)
+			if unzippedPath != updatedBinPath {
+				if err := os.Rename(unzippedPath, updatedBinPath); err != nil {
+					return fmt.Errorf("rename updated binary: %w", err)
+				}
+			}
+		}
+	} else {
+		if err := os.WriteFile(updatedBinPath, data, 0755); err != nil {
+			log.Warnf("write binary failed: %v", err)
+			return fmt.Errorf("write binary: %w", err)
+		}
+	}
+
+	log.Infof("update core success")
+	restarting = true
+	go restartExecutable(updatedBinPath)
+	return nil
+}
+
+// verifySHA256 checks that the SHA-256 hash of data matches expectedHash.
+func verifySHA256(data []byte, expectedHash string) error {
+	actual := sha256.Sum256(data)
+	actualHex := hex.EncodeToString(actual[:])
+	if !strings.EqualFold(actualHex, strings.TrimSpace(expectedHash)) {
+		return fmt.Errorf("checksum mismatch: expected %s, got %s", expectedHash, actualHex)
 	}
 	return nil
 }
 
-func isPathInDest(fpath, dest string) bool {
-	rel, err := filepath.Rel(dest, fpath)
+// fetchExpectedChecksum downloads sha256sums.txt and returns the hash for filename.
+func fetchExpectedChecksum(checksumURL string, filename string) (string, error) {
+	data, err := doRequestWithFallback(checksumURL)
 	if err != nil {
-		return false
+		return "", fmt.Errorf("download sha256sums.txt: %w", err)
 	}
-	return filepath.IsLocal(rel)
+
+	scanner := bufio.NewScanner(bytes.NewReader(data))
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			continue
+		}
+		parts := strings.Fields(line)
+		if len(parts) >= 2 && parts[1] == filename {
+			return parts[0], nil
+		}
+	}
+	return "", fmt.Errorf("checksum for %s not found in sha256sums.txt", filename)
+}
+
+// copyFile copies src to dst for backup purposes.
+func copyFile(src, dst string) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	out, err := os.Create(dst)
+	if err != nil {
+		return err
+	}
+	defer out.Close()
+	_, err = io.Copy(out, in)
+	return err
+}
+
+func AutoUpdateSupported() bool {
+	return autoUpdateSupported(runtime.GOOS)
+}
+
+func autoUpdateSupported(goos string) bool {
+	return goos != "windows"
+}
+
+func getDownloadFilename() (string, error) {
+	arch := runtime.GOARCH
+	goos := runtime.GOOS
+
+	switch goos {
+	case "windows":
+		switch arch {
+		case "386":
+			return "octopus-windows-x86.zip", nil
+		case "amd64":
+			return "octopus-windows-x86_64.zip", nil
+		}
+	case "darwin":
+		switch arch {
+		case "amd64":
+			return "octopus-darwin-x86_64.zip", nil
+		case "arm64":
+			return "octopus-darwin-arm64.zip", nil
+		}
+	case "linux":
+		switch arch {
+		case "386":
+			return "octopus-linux-x86", nil
+		case "amd64":
+			return "octopus-linux-x86_64", nil
+		case "arm":
+			return "octopus-linux-armv7", nil
+		case "arm64":
+			return "octopus-linux-arm64", nil
+		}
+	}
+	return "", fmt.Errorf("unsupported platform: %s/%s", goos, arch)
+}
+
+func restartExecutable(execPath string) {
+	shutdown.Shutdown()
+
+	log.Infof("restarting: %q %q", execPath, os.Args[1:])
+
+	if runtime.GOOS == "windows" {
+		cmd := exec.Command(execPath, os.Args[1:]...)
+		cmd.Stdin = os.Stdin
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		if err := cmd.Start(); err != nil {
+			log.Errorf("restarting failed: %v", err)
+		}
+		os.Exit(0)
+	}
+
+	if err := syscall.Exec(execPath, os.Args, os.Environ()); err != nil {
+		log.Errorf("restarting failed: %v", err)
+	}
 }

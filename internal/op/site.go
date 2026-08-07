@@ -721,7 +721,7 @@ func SiteAccountUpdate(req *model.SiteAccountUpdateRequest, ctx context.Context)
 	}
 	encryptedSessionCookie := merged.SessionCookieEncrypted
 	if credentialsChanged && merged.CredentialType == model.SiteCredentialTypeCookie && strings.TrimSpace(merged.AccessToken) != "" {
-		encrypted, err := EncryptSecret(merged.AccessToken)
+		encrypted, err := EncryptSecret(normalizeCookieValue(merged.AccessToken))
 		if err != nil {
 			return nil, fmt.Errorf("encrypt site session cookie: %w", err)
 		}
