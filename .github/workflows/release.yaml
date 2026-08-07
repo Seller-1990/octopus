@@ -60,7 +60,7 @@ jobs:
       - name: Generate SHA-256 checksums
         run: |
           cd build/bin
-          sha256sum *.zip *.exe 2>/dev/null | tee sha256sums.txt
+          sha256sum octopus-* *.zip *.exe 2>/dev/null | tee sha256sums.txt
           cd ../archives
           sha256sum * >> ../bin/sha256sums.txt 2>/dev/null || true
 
