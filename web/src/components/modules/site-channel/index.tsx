@@ -24,6 +24,7 @@ import {
     Globe2,
     History,
     KeyRound,
+    Layers3,
     MessageSquare,
     MoreHorizontal,
     Plus,
@@ -530,6 +531,8 @@ function collectSiteSummary(card: SiteChannelCard) {
     let modelCount = 0;
     let totalKeys = 0;
     let enabledKeys = 0;
+    let groupsWithKeys = 0;
+    let groupsMissingKeys = 0;
     const routeCounts = new Map<SiteModelRouteType, number>();
 
     for (const account of card.accounts) {
@@ -539,6 +542,11 @@ function collectSiteSummary(card: SiteChannelCard) {
         for (const group of account.groups) {
             totalKeys += group.key_count;
             enabledKeys += group.enabled_key_count;
+            if (group.has_keys) {
+                groupsWithKeys++;
+            } else {
+                groupsMissingKeys++;
+            }
         }
 
         for (const route of account.route_summaries) {
@@ -546,7 +554,7 @@ function collectSiteSummary(card: SiteChannelCard) {
         }
     }
 
-    return { groupCount, modelCount, totalKeys, enabledKeys, routeCounts };
+    return { groupCount, modelCount, totalKeys, enabledKeys, groupsWithKeys, groupsMissingKeys, routeCounts };
 }
 
 function collectSiteRuntimeSummary(card: SiteChannelCard) {
@@ -2938,6 +2946,27 @@ function SiteCardImpl({
                                 ) : null}
                             </div>
                         </header>
+
+                        {summary.groupCount > 0 ? (
+                            <div className="flex flex-wrap items-center gap-2 text-xs">
+                                <span className="inline-flex items-center gap-1 text-muted-foreground">
+                                    <Layers3 className="size-3" />
+                                    {summary.groupCount} 组
+                                </span>
+                                {summary.groupsWithKeys > 0 ? (
+                                    <span className="inline-flex items-center gap-1 text-emerald-600 dark:text-emerald-400">
+                                        <KeyRound className="size-3" />
+                                        {summary.groupsWithKeys} 有Key
+                                    </span>
+                                ) : null}
+                                {summary.groupsMissingKeys > 0 ? (
+                                    <span className="inline-flex items-center gap-1 text-amber-600 dark:text-amber-400">
+                                        <CircleAlert className="size-3" />
+                                        {summary.groupsMissingKeys} 缺Key
+                                    </span>
+                                ) : null}
+                            </div>
+                        ) : null}
 
                         <dl className={cn('grid gap-2', layout === 'list' ? 'grid-cols-5' : 'grid-cols-2')}>
                             {layout === 'list' ? (
