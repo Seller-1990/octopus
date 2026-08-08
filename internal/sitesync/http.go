@@ -29,6 +29,25 @@ func siteHTTPClient(ctx context.Context, siteRecord *model.Site, accounts ...*mo
 		return nil, fmt.Errorf("site is nil")
 	}
 	proxyMode, proxyConfigID := resolveSiteAccountProxy(siteRecord, accounts...)
+
+	// Resolve proxy URL for fingerprinted client
+	if siteRecord.TLSFingerprint != "" {
+		var proxyURL string
+		switch proxyMode {
+		case model.ProxyUsageModeSystem:
+			proxyURL = client.ResolveSystemProxyURL()
+		case model.ProxyUsageModePool:
+			if proxyConfigID != nil && *proxyConfigID > 0 {
+				var err error
+				proxyURL, err = op.ProxyURLForConfig(*proxyConfigID, ctx)
+				if err != nil {
+					return nil, err
+				}
+			}
+		}
+		return client.GetHTTPClientFingerprinted(siteRecord.TLSFingerprint, proxyURL)
+	}
+
 	switch proxyMode {
 	case "", model.ProxyUsageModeDirect:
 		return client.GetHTTPClientSystemProxy(false)

@@ -166,6 +166,10 @@ func SiteUpdate(req *model.SiteUpdateRequest, ctx context.Context) (*model.Site,
 		merged.AutoProxyRecovery = *req.AutoProxyRecovery
 		selectFields = append(selectFields, "auto_proxy_recovery")
 	}
+	if req.TLSFingerprint != nil {
+		merged.TLSFingerprint = *req.TLSFingerprint
+		selectFields = append(selectFields, "tls_fingerprint")
+	}
 	if req.PreferredProxyConfigIDSet {
 		merged.PreferredProxyConfigID = req.PreferredProxyConfigID
 		selectFields = append(selectFields, "preferred_proxy_config_id")

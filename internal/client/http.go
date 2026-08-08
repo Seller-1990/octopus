@@ -97,6 +97,22 @@ func GetHTTPClientCustomProxy(proxyURL string) (*http.Client, error) {
 	return newHTTPClientCustomProxy(proxyURL)
 }
 
+// ResolveSystemProxyURL returns the effective system proxy URL from app settings or env.
+// Returns empty string if no proxy is configured.
+func ResolveSystemProxyURL() string {
+	proxyURL, _ := op.SettingGetString(model.SettingKeyProxyURL)
+	if proxyURL != "" {
+		return proxyURL
+	}
+	if envProxy := os.Getenv("HTTPS_PROXY"); envProxy != "" {
+		return envProxy
+	}
+	if envProxy := os.Getenv("HTTP_PROXY"); envProxy != "" {
+		return envProxy
+	}
+	return ""
+}
+
 func clonedDefaultTransport() (*http.Transport, error) {
 	transport, ok := http.DefaultTransport.(*http.Transport)
 	if !ok {

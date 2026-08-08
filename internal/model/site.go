@@ -166,6 +166,7 @@ type Site struct {
 	EnabledSet             bool               `json:"-" gorm:"-"`
 	ProxyMode              ProxyUsageMode     `json:"proxy_mode" gorm:"type:varchar(16);not null;default:'direct'"`
 	ProxyConfigID          *int               `json:"proxy_config_id"`
+	TLSFingerprint         string             `json:"tls_fingerprint" gorm:"type:varchar(32);not null;default:''"`
 	AutoProxyRecovery      bool               `json:"auto_proxy_recovery" gorm:"not null;default:false"`
 	PreferredProxyConfigID *int               `json:"preferred_proxy_config_id,omitempty"`
 	PreferredClashNode     string             `json:"preferred_clash_node,omitempty" gorm:"size:191"`
@@ -409,6 +410,7 @@ type SiteUpdateRequest struct {
 	ProxyMode                 *ProxyUsageMode     `json:"proxy_mode,omitempty"`
 	ProxyConfigID             *int                `json:"proxy_config_id,omitempty"`
 	ProxyConfigIDSet          bool                `json:"-"`
+	TLSFingerprint            *string             `json:"tls_fingerprint,omitempty"`
 	AutoProxyRecovery         *bool               `json:"auto_proxy_recovery,omitempty"`
 	PreferredProxyConfigID    *int                `json:"preferred_proxy_config_id,omitempty"`
 	PreferredProxyConfigIDSet bool                `json:"-"`
