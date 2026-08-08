@@ -280,6 +280,16 @@ func ProjectAccount(ctx context.Context, accountID int) ([]int, error) {
 		}
 	}
 
+	// Sort affected groups by their configured sort strategy
+	if len(managedChannelIDs) > 0 {
+		affectedGroupIDs := op.GroupIDsByChannelIDs(managedChannelIDs, ctx)
+		if len(affectedGroupIDs) > 0 {
+			if _, err := op.SortGroupsByStrategy(affectedGroupIDs, ctx); err != nil {
+				log.Warnf("ProjectAccount: sort groups by strategy failed: %v", err)
+			}
+		}
+	}
+
 	return managedChannelIDs, nil
 }
 

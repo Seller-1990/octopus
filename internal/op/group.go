@@ -489,6 +489,20 @@ func GroupItemList(groupID int, ctx context.Context) ([]model.GroupItem, error) 
 	return items, nil
 }
 
+// GroupIDsByChannelIDs returns distinct group IDs that contain items from any of the given channels.
+func GroupIDsByChannelIDs(channelIDs []int, ctx context.Context) []int {
+	if len(channelIDs) == 0 {
+		return nil
+	}
+	var groupIDs []int
+	db.GetDB().WithContext(ctx).
+		Model(&model.GroupItem{}).
+		Where("channel_id IN ?", channelIDs).
+		Distinct("group_id").
+		Pluck("group_id", &groupIDs)
+	return groupIDs
+}
+
 func groupRefreshCache(ctx context.Context) error {
 	groups := []model.Group{}
 	if err := db.GetDB().WithContext(ctx).
