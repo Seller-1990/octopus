@@ -30,24 +30,6 @@ func siteHTTPClient(ctx context.Context, siteRecord *model.Site, accounts ...*mo
 	}
 	proxyMode, proxyConfigID := resolveSiteAccountProxy(siteRecord, accounts...)
 
-	// Resolve proxy URL for fingerprinted client
-	if siteRecord.TLSFingerprint != "" {
-		var proxyURL string
-		switch proxyMode {
-		case model.ProxyUsageModeSystem:
-			proxyURL = client.ResolveSystemProxyURL()
-		case model.ProxyUsageModePool:
-			if proxyConfigID != nil && *proxyConfigID > 0 {
-				var err error
-				proxyURL, err = op.ProxyURLForConfig(*proxyConfigID, ctx)
-				if err != nil {
-					return nil, err
-				}
-			}
-		}
-		return client.GetHTTPClientFingerprinted(siteRecord.TLSFingerprint, proxyURL)
-	}
-
 	switch proxyMode {
 	case "", model.ProxyUsageModeDirect:
 		return client.GetHTTPClientSystemProxy(false)
@@ -143,6 +125,74 @@ func requestJSON(ctx context.Context, siteRecord *model.Site, method string, req
 				continue
 			}
 			return parseSiteJSONResponse(response.Status, responseHeader, responseBody)
+		}
+		return nil, fmt.Errorf("site read retry attempts exhausted")
+	}
+
+	// Fingerprinted path: use tls-client directly to preserve header ordering
+	if siteRecord.TLSFingerprint != "" {
+		proxyMode, proxyConfigID := resolveSiteAccountProxy(siteRecord, accounts...)
+		var proxyURL string
+		switch proxyMode {
+		case model.ProxyUsageModeSystem:
+			proxyURL = client.ResolveSystemProxyURL()
+		case model.ProxyUsageModePool:
+			if proxyConfigID != nil && *proxyConfigID > 0 {
+				var err error
+				proxyURL, err = op.ProxyURLForConfig(*proxyConfigID, ctx)
+				if err != nil {
+					return nil, err
+				}
+			}
+		}
+		tlsClient, err := client.NewFingerprintedClient(siteRecord.TLSFingerprint, proxyURL)
+		if err != nil {
+			return nil, err
+		}
+		for attempt := 0; attempt < siteSafeReadMaxAttempts; attempt++ {
+			req, err := buildRequest()
+			if err != nil {
+				return nil, err
+			}
+			// Flatten http.Header to map[string]string for DoFingerprintedRequest
+			flatHeaders := make(map[string]string, len(req.Header))
+			for key, vals := range req.Header {
+				if len(vals) > 0 {
+					flatHeaders[key] = vals[0]
+				}
+			}
+			var bodyReader io.Reader
+			if payloadBytes != nil {
+				bodyReader = bytes.NewReader(payloadBytes)
+			}
+			resp, err := client.DoFingerprintedRequest(tlsClient, req.Method, req.URL.String(), bodyReader, flatHeaders)
+			if err != nil {
+				if !shouldRetrySiteReadTransport(ctx, method, attempt, err) {
+					return nil, err
+				}
+				if err := waitForSiteReadRetry(ctx, attempt, nil); err != nil {
+					return nil, err
+				}
+				continue
+			}
+			bodyBytes, readErr := io.ReadAll(resp.Body)
+			resp.Body.Close()
+			if readErr != nil {
+				if !shouldRetrySiteReadTransport(ctx, method, attempt, readErr) {
+					return nil, readErr
+				}
+				if err := waitForSiteReadRetry(ctx, attempt, nil); err != nil {
+					return nil, err
+				}
+				continue
+			}
+			if shouldRetrySiteReadResponse(method, attempt, resp.StatusCode, resp.Header, bodyBytes) {
+				if err := waitForSiteReadRetry(ctx, attempt, resp.Header); err != nil {
+					return nil, err
+				}
+				continue
+			}
+			return parseSiteJSONResponse(resp.StatusCode, resp.Header, bodyBytes)
 		}
 		return nil, fmt.Errorf("site read retry attempts exhausted")
 	}

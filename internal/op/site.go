@@ -241,6 +241,9 @@ func SiteUpdate(req *model.SiteUpdateRequest, ctx context.Context) (*model.Site,
 	if req.AutoProxyRecovery != nil {
 		updates.AutoProxyRecovery = merged.AutoProxyRecovery
 	}
+	if req.TLSFingerprint != nil {
+		updates.TLSFingerprint = merged.TLSFingerprint
+	}
 	if req.PreferredProxyConfigIDSet {
 		updates.PreferredProxyConfigID = merged.PreferredProxyConfigID
 	}

@@ -802,6 +802,10 @@ func anyRouterRequestJSONWithCookieScope(ctx context.Context, siteRecord *model.
 		payload, err := requestJSON(ctx, siteRecord, method, requestURL, body, headers, accounts...)
 		return payload, "", err
 	}
+	if siteRecord != nil && siteRecord.TLSFingerprint != "" {
+		payload, err := requestJSON(ctx, siteRecord, method, requestURL, body, headers, accounts...)
+		return payload, "", err
+	}
 
 	var payloadBytes []byte
 	var err error
