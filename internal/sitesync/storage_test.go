@@ -719,3 +719,45 @@ func TestPersistSyncSnapshotEmptySuspendsWithoutAdvancingSuccessTime(t *testing.
 		t.Fatalf("expected empty sync to preserve last success time %v, got %v", previousSuccess, reloaded.LastModelSyncSuccessAt)
 	}
 }
+
+// TestPersistSyncSnapshotKeepBlockDemotesKnown 阶段 2 X2 落点的回归锁（阶段 7 收口）：
+// 站点停发倍率（快照无 multiplier）时 keep-block 保留旧值 5x、known 显式降 false（修订 12 选 B）。
+func TestPersistSyncSnapshotKeepBlockDemotesKnown(t *testing.T) {
+	ctx := setupProjectTestDB(t)
+	_, account := createProjectionFixture(t, ctx)
+
+	five := 5.0
+	knownTrue := true
+	oldGroup := model.SiteUserGroup{SiteAccountID: account.ID, GroupKey: "vip", Name: "VIP", Multiplier: &five, MultiplierKnown: &knownTrue}
+	if err := dbpkg.GetDB().WithContext(ctx).Create(&oldGroup).Error; err != nil {
+		t.Fatalf("create old group failed: %v", err)
+	}
+
+	// 快照组无 multiplier（站点停发倍率）→ keep-block 保留数值 5、known 降 false
+	snapshot := &syncSnapshot{
+		accessToken:        account.AccessToken,
+		credentialRevision: account.CredentialRevision,
+		groups: []model.SiteUserGroup{
+			{GroupKey: "vip", Name: "VIP"},
+		},
+		tokens: []model.SiteToken{
+			{Name: "vip", Token: "key-vip", GroupKey: "vip", GroupName: "VIP", Enabled: true, Source: "sync"},
+		},
+		status:  model.SiteExecutionStatusSuccess,
+		message: "ok",
+	}
+	if err := persistSyncSnapshot(ctx, account.ID, snapshot); err != nil {
+		t.Fatalf("persistSyncSnapshot returned error: %v", err)
+	}
+
+	var reloaded model.SiteUserGroup
+	if err := dbpkg.GetDB().WithContext(ctx).Where("site_account_id = ? AND group_key = ?", account.ID, "vip").First(&reloaded).Error; err != nil {
+		t.Fatalf("query reloaded group failed: %v", err)
+	}
+	if reloaded.Multiplier == nil || *reloaded.Multiplier != 5 {
+		t.Fatalf("expected multiplier 5 retained, got %+v", reloaded.Multiplier)
+	}
+	if reloaded.MultiplierKnown == nil || *reloaded.MultiplierKnown {
+		t.Fatalf("expected multiplier_known demoted to false, got %+v", reloaded.MultiplierKnown)
+	}
+}

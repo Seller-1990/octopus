@@ -745,6 +745,11 @@ func importDBDump(
 			return err
 		}
 		group.SiteAccountID = accountID
+		// 阶段 2 v2 X7：老备份无 multiplier_known 字段 → 补 false（保持回填后无 NULL 不变式）
+		if group.MultiplierKnown == nil {
+			known := false
+			group.MultiplierKnown = &known
+		}
 		var existing model.SiteUserGroup
 		if err := tx.Where("site_account_id = ? AND group_key = ?", group.SiteAccountID, group.GroupKey).First(&existing).Error; err == nil {
 			userGroupIDMap[oldID] = existing.ID

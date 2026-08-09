@@ -852,6 +852,11 @@ func mergeSiteGroups(groups []model.SiteUserGroup, tokens []model.SiteToken) []m
 			if existing.Multiplier == nil && token.GroupMultiplier != nil {
 				multiplier := *token.GroupMultiplier
 				existing.Multiplier = &multiplier
+				// V4 拍板（阶段 2 v2 X4）：token 携带倍率视为真值；==1 不标 true（与阶段 1 迁移规则对齐护栏）
+				if multiplier != 1 {
+					known := true
+					existing.MultiplierKnown = &known
+				}
 				merged[key] = existing
 			}
 			continue
@@ -860,6 +865,10 @@ func mergeSiteGroups(groups []model.SiteUserGroup, tokens []model.SiteToken) []m
 		if token.GroupMultiplier != nil {
 			multiplier := *token.GroupMultiplier
 			group.Multiplier = &multiplier
+			if multiplier != 1 {
+				known := true
+				group.MultiplierKnown = &known
+			}
 		}
 		merged[key] = group
 	}

@@ -13,6 +13,14 @@ export interface GroupItem {
     model_name: string;
     priority: number;
     weight: number;
+    multiplier?: number | null;
+    group_multiplier?: number | null;
+    effective_multiplier?: number | null;
+    multiplier_source?: 'group' | 'candidate' | string;
+    multiplier_cap?: number | null;
+    multiplier_known?: boolean;
+    policy_status?: 'allowed' | 'blocked' | 'unknown' | 'tentative' | string;
+    policy_reason?: string;
 }
 
 /**
@@ -549,7 +557,7 @@ export function useApplyGroupDefaults() {
     const queryClient = useQueryClient();
     return useMutation({
         mutationFn: async () =>
-            apiClient.post<{ groups_updated: number; groups_suspended: number; items_removed: number; items_sorted: number }>('/api/v1/group/apply-defaults', {}),
+            apiClient.post<{ groups_updated: number; groups_suspended: number; groups_recovered: number; items_removed: number; items_blocked: number; items_sorted: number }>('/api/v1/group/apply-defaults', {}),
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: ['groups', 'list'] });
             queryClient.invalidateQueries({ queryKey: ['settings', 'list'] });
@@ -557,4 +565,3 @@ export function useApplyGroupDefaults() {
         onError: (error) => logger.error('应用默认策略失败:', error),
     });
 }
-

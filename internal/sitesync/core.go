@@ -56,6 +56,12 @@ func SyncAccount(ctx context.Context, accountID int) (*model.SiteSyncResult, err
 	if err := persistSyncSnapshot(ctx, account.ID, snapshot); err != nil {
 		return nil, sanitizeSiteError(err)
 	}
+	// 阶段 2 补充（阶段 4 第 15 条提前，用户拍板「提前 evaluate 两态化」的配套）：
+	// 同步后无条件重算倍率策略——不依赖 pricing 刷新成功与否（sub2api 平台永无 pricing，
+	// 否则 keep-block 保留的 known=false 行永远不被 EnforceMultiplierCap 处理、policy_blocked 卡死）。
+	if _, _, err := op.EnforceMultiplierCap(ctx); err != nil {
+		log.Warnf("enforce multiplier cap after sync failed (account=%d): %v", account.ID, err)
+	}
 
 	channelIDs, err := ProjectAccount(ctx, account.ID)
 	if err != nil {

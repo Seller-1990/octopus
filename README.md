@@ -141,3 +141,14 @@ Edit `~/.codex/auth.json`:
 ## 🔗 Friend Links
 
 - 🐧 [LinuxDO](https://linux.do) - A community for tech enthusiasts
+
+## 💰 Multiplier Cap — Known Behaviors
+
+The `default_multiplier_cap` setting limits the **group (key) multiplier** only; model-level multipliers are intentionally excluded (per-token/per-request pricing varies too widely to normalize).
+
+- **After upgrade, the cap may stay inactive for groups whose true multiplier can no longer be confirmed.** The migration conservatively marks unverifiable values as "tentative", which bypasses the cap until the upstream reports a confirmable (non-1) multiplier again. Groups that never report a real multiplier stay unblocked indefinitely (shown as "tentative").
+- **"Tentative" badges have two meanings** (tooltip distinguishes them): *retained old value* (display-only; actual billing follows the site quote) vs *site never set* (billed at 1x). Tentative state persists until upstream reports a confirmable multiplier.
+- **Sorting behavior changed**: entries without a confirmed multiplier now sort as 1x (previously sorted last). The card order and the route-plan order may differ (route planning still uses candidate pricing).
+- **Block reasons are English** (e.g. "multiplier exceeds cap (5 > 4)") in a Chinese UI; not yet translated.
+
+Full technical notes: see `docs/group-multiplier-policy-analysis.md`.

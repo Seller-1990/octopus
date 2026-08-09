@@ -79,6 +79,12 @@ func setSetting(c *gin.Context) {
 		resp.Error(c, http.StatusInternalServerError, err.Error())
 		return
 	}
+	if setting.Key == model.SettingKeyDefaultMultiplierCap {
+		if _, _, err := op.EnforceMultiplierCap(c.Request.Context()); err != nil {
+			resp.Error(c, http.StatusInternalServerError, err.Error())
+			return
+		}
+	}
 	switch setting.Key {
 	case model.SettingKeyModelInfoUpdateInterval,
 		model.SettingKeySyncLLMInterval,

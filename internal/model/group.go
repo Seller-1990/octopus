@@ -34,6 +34,17 @@ type GroupItem struct {
 	ModelName string `json:"model_name" gorm:"not null;index:idx_group_channel_model,unique"`
 	Priority  int    `json:"priority"`
 	Weight    int    `json:"weight"`
+
+	// Multiplier policy metadata is computed at the API/routing boundary and
+	// is intentionally not persisted with the group membership row.
+	Multiplier          *float64 `json:"multiplier,omitempty" gorm:"-"`
+	GroupMultiplier     *float64 `json:"group_multiplier,omitempty" gorm:"-"`
+	EffectiveMultiplier *float64 `json:"effective_multiplier,omitempty" gorm:"-"`
+	MultiplierSource    string   `json:"multiplier_source,omitempty" gorm:"-"`
+	MultiplierCap       *float64 `json:"multiplier_cap,omitempty" gorm:"-"`
+	MultiplierKnown     *bool    `json:"multiplier_known,omitempty" gorm:"-"`
+	PolicyStatus        string   `json:"policy_status,omitempty" gorm:"-"`
+	PolicyReason        string   `json:"policy_reason,omitempty" gorm:"-"`
 }
 
 // GroupPreset 分组的路由配置预设（命名快照）

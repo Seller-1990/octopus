@@ -189,6 +189,15 @@ func buildSiteChannelGroups(ctx context.Context, site model.Site, account model.
 	for _, token := range account.Tokens {
 		key := model.NormalizeSiteGroupKey(token.GroupKey)
 		group := ensureSiteChannelGroup(groups, key, token.GroupName)
+		if group.GroupMultiplier == nil && token.GroupMultiplier != nil {
+			multiplier := *token.GroupMultiplier
+			group.GroupMultiplier = &multiplier
+			// 阶段 5 v2 Y1：token 来源倍率同步 known（V4/X4：非 1 视为真值）
+			if multiplier != 1 {
+				known := true
+				group.MultiplierKnown = &known
+			}
+		}
 		group.KeyCount++
 		if model.NormalizeSiteTokenValueStatus(token.ValueStatus, token.Token) == model.SiteTokenValueStatusMaskedPending {
 			group.MaskedPendingKeyCount++
@@ -346,6 +355,11 @@ func ensureSiteChannelGroup(groups map[string]*model.SiteChannelGroup, groupKey 
 }
 
 func newSiteChannelGroupView(groupKey string, groupName string, group model.SiteUserGroup) *model.SiteChannelGroup {
+	var policyBlockedAt *int64
+	if group.PolicyBlockedAt != nil && !group.PolicyBlockedAt.IsZero() {
+		unix := group.PolicyBlockedAt.UnixMilli()
+		policyBlockedAt = &unix
+	}
 	var projectionSuspendedAt *int64
 	if group.ProjectionSuspendedAt != nil && !group.ProjectionSuspendedAt.IsZero() {
 		unix := group.ProjectionSuspendedAt.UnixMilli()
@@ -368,10 +382,15 @@ func newSiteChannelGroupView(groupKey string, groupName string, group model.Site
 	return &model.SiteChannelGroup{
 		GroupKey:                groupKey,
 		GroupName:               groupName,
+		GroupMultiplier:         group.Multiplier,
+		MultiplierKnown:         group.MultiplierKnown,
 		ProjectionDisabled:      group.ProjectionDisabled,
 		ProjectionSuspended:     group.ProjectionSuspended,
 		ProjectionSuspendReason: group.ProjectionSuspendReason,
 		ProjectionSuspendedAt:   projectionSuspendedAt,
+		PolicyBlocked:           group.PolicyBlocked,
+		PolicyBlockReason:       group.PolicyBlockReason,
+		PolicyBlockedAt:         policyBlockedAt,
 		ModelSyncStatus:         status,
 		ModelSyncMessage:        group.ModelSyncMessage,
 		ModelSyncAuthoritative:  group.ModelSyncAuthoritative,
@@ -598,11 +617,13 @@ func UpdateSiteGroupProjection(siteID int, accountID int, req *model.SiteGroupPr
 		if !req.ProjectionDisabled {
 			return nil
 		}
+		known := false // 阶段 2 v2 X6：投影创建路径显式写 false（保持回填后无 NULL 不变式）
 		row := model.SiteUserGroup{
 			SiteAccountID:      accountID,
 			GroupKey:           groupKey,
 			Name:               groupName,
 			ProjectionDisabled: req.ProjectionDisabled,
+			MultiplierKnown:    &known,
 		}
 		return tx.Clauses(clause.OnConflict{
 			Columns:   []clause.Column{{Name: "site_account_id"}, {Name: "group_key"}},

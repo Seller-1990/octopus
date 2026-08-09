@@ -30,10 +30,15 @@ type SiteRouteSummary struct {
 type SiteChannelGroup struct {
 	GroupKey                string                         `json:"group_key"`
 	GroupName               string                         `json:"group_name"`
+	GroupMultiplier         *float64                       `json:"group_multiplier,omitempty"`
+	MultiplierKnown         *bool                          `json:"multiplier_known,omitempty"`
 	ProjectionDisabled      bool                           `json:"projection_disabled"`
 	ProjectionSuspended     bool                           `json:"projection_suspended"`
 	ProjectionSuspendReason string                         `json:"projection_suspend_reason,omitempty"`
 	ProjectionSuspendedAt   *int64                         `json:"projection_suspended_at,omitempty"`
+	PolicyBlocked           bool                           `json:"policy_blocked"`
+	PolicyBlockReason       string                         `json:"policy_block_reason,omitempty"`
+	PolicyBlockedAt         *int64                         `json:"policy_blocked_at,omitempty"`
 	ModelSyncStatus         SiteGroupModelSyncStatus       `json:"model_sync_status"`
 	ModelSyncMessage        string                         `json:"model_sync_message,omitempty"`
 	ModelSyncAuthoritative  bool                           `json:"model_sync_authoritative"`

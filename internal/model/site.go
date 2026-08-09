@@ -364,11 +364,15 @@ type SiteUserGroup struct {
 	GroupKey                string                   `json:"group_key" gorm:"size:128;uniqueIndex:idx_site_account_group;not null"`
 	Name                    string                   `json:"name"`
 	Multiplier              *float64                 `json:"group_multiplier,omitempty"` // API Key 所属分组倍率，nil 表示站点未提供
+	MultiplierKnown         *bool                    `json:"multiplier_known,omitempty"` // 倍率来源可信度：true=真实倍率，false=暂定 1x 或未知，nil=未知（未迁移或创建未设置，判定侧视同 false）
 	RawPayload              string                   `json:"raw_payload"`
 	ProjectionDisabled      bool                     `json:"projection_disabled" gorm:"default:false"`
 	ProjectionSuspended     bool                     `json:"projection_suspended" gorm:"default:false;index"`
 	ProjectionSuspendReason string                   `json:"projection_suspend_reason"`
 	ProjectionSuspendedAt   *time.Time               `json:"projection_suspended_at"`
+	PolicyBlocked           bool                     `json:"policy_blocked" gorm:"default:false;index"`
+	PolicyBlockReason       string                   `json:"policy_block_reason"`
+	PolicyBlockedAt         *time.Time               `json:"policy_blocked_at"`
 	ModelSyncStatus         SiteGroupModelSyncStatus `json:"model_sync_status" gorm:"type:varchar(32);not null;default:'idle';index"`
 	ModelSyncMessage        string                   `json:"model_sync_message"`
 	ModelSyncAuthoritative  bool                     `json:"model_sync_authoritative" gorm:"default:false"`

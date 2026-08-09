@@ -50,11 +50,15 @@ export type SiteUserGroup = {
   site_account_id: number;
   group_key: string;
   name: string;
+  group_multiplier?: number | null;
   raw_payload?: string | null;
   projection_disabled?: boolean;
   projection_suspended?: boolean;
   projection_suspend_reason?: string;
   projection_suspended_at?: string | null;
+  policy_blocked?: boolean;
+  policy_block_reason?: string;
+  policy_blocked_at?: string | null;
   model_sync_status?: 'idle' | 'synced' | 'empty' | 'stale' | 'failed' | 'unresolved' | 'missing_key' | 'removed';
   model_sync_message?: string;
   model_sync_authoritative?: boolean;

@@ -36,6 +36,13 @@ export interface SelectedMember extends LLMChannel {
     id: string;
     item_id?: number;
     weight?: number;
+    group_multiplier?: number | null;
+    effective_multiplier?: number | null;
+    multiplier_source?: string;
+    multiplier_cap?: number | null;
+    multiplier_known?: boolean | null;
+    policy_status?: string;
+    policy_reason?: string;
 }
 
 function reorderList<T>(list: T[], startIndex: number, endIndex: number): T[] {
@@ -145,9 +152,14 @@ function MemberItem({
                                 {t('member.reserveBadge')}
                             </span>
                         )}
+                        {member.policy_status === 'blocked' && (
+                            <Badge variant="destructive" className="ml-auto shrink-0 px-1.5 py-px text-[9px]" title={member.policy_reason || undefined}>
+                                倍率阻断
+                            </Badge>
+                        )}
                     </div>
                     <span className="text-[10px] text-muted-foreground truncate leading-tight">{sourceLabel}</span>
-                    {(member.balance != null || member.group_multiplier != null) && (
+                    {(member.balance != null || (member.site_id != null && (member.group_multiplier != null || member.multiplier_known !== true))) && (
                         <span className="flex items-center gap-1 mt-0.5">
                             {member.balance != null && (
                                 <Badge variant="secondary" className="shrink-0 gap-1 px-1.5 py-0 text-[9px] bg-emerald-500/15 text-emerald-700 dark:text-emerald-300">
@@ -155,10 +167,30 @@ function MemberItem({
                                     {formatBalance(member.balance)}
                                 </Badge>
                             )}
-                            {member.group_multiplier != null && (
+                            {member.multiplier_known === true && member.group_multiplier != null && (
                                 <Badge variant="secondary" className="shrink-0 gap-1 px-1.5 py-0 text-[9px] bg-amber-500/15 text-amber-700 dark:text-amber-300">
                                     <Coins className="size-2.5 shrink-0" />
                                     {formatMultiplier(member.group_multiplier)}
+                                </Badge>
+                            )}
+                            {member.multiplier_known !== true && member.site_id != null && member.group_multiplier != null && (
+                                <Badge
+                                    variant="secondary"
+                                    className="shrink-0 gap-1 px-1.5 py-0 text-[9px] bg-sky-500/15 text-sky-700 dark:text-sky-300"
+                                    title={`保留站点旧值 ${formatMultiplier(member.group_multiplier)}，实际计费以站点报价为准`}
+                                >
+                                    <Coins className="size-2.5 shrink-0" />
+                                    暂定 {formatMultiplier(member.group_multiplier)}
+                                </Badge>
+                            )}
+                            {member.multiplier_known !== true && member.site_id != null && member.group_multiplier == null && (
+                                <Badge
+                                    variant="secondary"
+                                    className="shrink-0 gap-1 px-1.5 py-0 text-[9px] bg-sky-500/15 text-sky-700 dark:text-sky-300"
+                                    title="站点未再上报倍率，当前按 1x 处理"
+                                >
+                                    <Coins className="size-2.5 shrink-0" />
+                                    暂定 1x
                                 </Badge>
                             )}
                         </span>

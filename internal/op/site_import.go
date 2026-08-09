@@ -487,9 +487,11 @@ func buildMetAPIGroups(tokens []model.SiteToken) []model.SiteUserGroup {
 	seen := make(map[string]model.SiteUserGroup)
 	for _, token := range tokens {
 		groupKey := model.NormalizeSiteGroupKey(token.GroupKey)
+		known := false // 阶段 2 v2 X6：创建路径显式写 false（保持回填后无 NULL 不变式）
 		seen[groupKey] = model.SiteUserGroup{
-			GroupKey: groupKey,
-			Name:     model.NormalizeSiteGroupName(groupKey, token.GroupName),
+			GroupKey:        groupKey,
+			Name:            model.NormalizeSiteGroupName(groupKey, token.GroupName),
+			MultiplierKnown: &known,
 		}
 	}
 	if len(seen) == 0 {
@@ -708,11 +710,13 @@ func prepareMetAPIImportedGroups(accountID int, groups []model.SiteUserGroup) []
 	seen := make(map[string]model.SiteUserGroup, len(groups))
 	for _, group := range groups {
 		groupKey := model.NormalizeSiteGroupKey(group.GroupKey)
+		known := false // 阶段 2 v2 X6：导入路径显式写 false
 		seen[groupKey] = model.SiteUserGroup{
-			SiteAccountID: accountID,
-			GroupKey:      groupKey,
-			Name:          model.NormalizeSiteGroupName(groupKey, group.Name),
-			RawPayload:    strings.TrimSpace(group.RawPayload),
+			SiteAccountID:   accountID,
+			GroupKey:        groupKey,
+			Name:            model.NormalizeSiteGroupName(groupKey, group.Name),
+			RawPayload:      strings.TrimSpace(group.RawPayload),
+			MultiplierKnown: &known,
 		}
 	}
 	keys := make([]string, 0, len(seen))

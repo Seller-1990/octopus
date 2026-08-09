@@ -1629,7 +1629,9 @@ func normalizePriceQuoteBackup(item *model.SiteModelPriceQuote) {
 			item.Currency = "USD"
 		}
 	}
-	if item.GroupMultiplier == 0 {
+	// 阶段 6 v2 实施后审查 B1：known=true 的 0x（免费组）必须在恢复时保留——
+	// 无条件 0→1 会把免费组恢复成 (1x, known=true) 的静默错误真值（与运行时 preserve-zero 语义冲突）。
+	if item.GroupMultiplier == 0 && !item.GroupMultiplierKnown {
 		item.GroupMultiplier = 1
 	}
 	if item.Currency == "USD" && item.ExchangeRateToUSD == 0 {

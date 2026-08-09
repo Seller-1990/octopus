@@ -138,69 +138,70 @@ const (
 )
 
 type RelayLog struct {
-	ID                   int64                `json:"id" gorm:"primaryKey;autoIncrement:false"` // Snowflake ID
-	Time                 int64                `json:"time"`                                     // 时间戳（秒）
-	RequestModelName     string               `json:"request_model_name"`                       // 请求模型名称
-	RequestAPIKeyID      int                  `json:"request_api_key_id,omitempty" gorm:"index"`
-	RequestAPIKeyName    string               `json:"request_api_key_name"` // 请求使用的 API Key 名称
-	ChannelId            int                  `json:"channel" gorm:"index"` // 实际使用的渠道ID
-	ChannelName          string               `json:"channel_name"`         // 渠道名称
-	ActualModelName      string               `json:"actual_model_name"`    // 实际使用模型名称
-	CanonicalModelName   string               `json:"canonical_model_name,omitempty" gorm:"size:191;index"`
-	RouteCandidateID     int                  `json:"route_candidate_id,omitempty" gorm:"index"`
-	InboundProtocol      ProtocolName         `json:"inbound_protocol,omitempty" gorm:"type:varchar(32)"`
-	OutboundProtocol     ProtocolName         `json:"outbound_protocol,omitempty" gorm:"type:varchar(32)"`
-	ProtocolMode         string               `json:"protocol_mode,omitempty" gorm:"type:varchar(24)"`
-	ProtocolPolicy       ProtocolPolicy       `json:"protocol_policy,omitempty" gorm:"type:varchar(32)"`
-	ProtocolAllowLossy   bool                 `json:"protocol_allow_lossy" gorm:"not null;default:false"`
-	ProtocolWarnings     []string             `json:"protocol_warnings,omitempty" gorm:"serializer:json"`
-	ProtocolFailureStage ProtocolFailureStage `json:"protocol_failure_stage,omitempty" gorm:"type:varchar(48)"`
-	InputTokens          int                  `json:"input_tokens"`                     // 输入Token
-	TransportInputTokens *int                 `json:"transport_input_tokens,omitempty"` // 实际发送到上游请求体的 Token 估算
-	BillInputTokens      *int                 `json:"bill_input_tokens,omitempty"`      // 按常规输入价格计费的 Token
-	CacheReadTokens      *int                 `json:"cache_read_tokens,omitempty"`      // 从缓存读取的 Token
-	CacheWriteTokens     *int                 `json:"cache_write_tokens,omitempty"`     // 写入缓存的 Token
-	OutputTokens         int                  `json:"output_tokens"`                    // 输出 Token
-	Ftut                 int                  `json:"ftut"`                             // 首字时间(毫秒)
-	UseTime              int                  `json:"use_time"`                         // 总用时(毫秒)
-	Cost                 float64              `json:"cost"`                             // 消耗费用
-	PriceQuoteID         int                  `json:"price_quote_id,omitempty" gorm:"index"`
-	PriceSource          PriceQuoteSource     `json:"price_source,omitempty" gorm:"type:varchar(32)"`
-	PriceUnit            PriceUnit            `json:"price_unit,omitempty" gorm:"type:varchar(32)"`
-	PriceCurrency        string               `json:"price_currency,omitempty" gorm:"size:16"`
-	PriceInput           float64              `json:"price_input,omitempty"`
-	PriceOutput          float64              `json:"price_output,omitempty"`
-	PriceCacheRead       float64              `json:"price_cache_read,omitempty"`
-	PriceCacheWrite      float64              `json:"price_cache_write,omitempty"`
-	PricePerRequest      float64              `json:"price_per_request,omitempty"`
-	PriceGroupMultiplier *float64             `json:"price_group_multiplier"`
-	PriceExchangeRateUSD float64              `json:"price_exchange_rate_usd,omitempty"`
-	PriceObservedAt      *time.Time           `json:"price_observed_at,omitempty"`
-	PriceStale           bool                 `json:"price_stale" gorm:"not null;default:false"`
-	PriceConvertible     bool                 `json:"price_convertible" gorm:"not null;default:false"`
-	PriceOriginalCost    float64              `json:"price_original_cost,omitempty"`
-	PriceMatchReason     string               `json:"price_match_reason,omitempty" gorm:"type:text"`
-	TokenSource          UsageValueSource     `json:"token_source,omitempty" gorm:"type:varchar(16);not null;default:'unknown'"`
-	RequestContent       string               `json:"request_content"`                       // 请求内容
-	ResponseContent      string               `json:"response_content"`                      // 响应内容
-	Error                string               `json:"error"`                                 // 错误信息
-	Success              bool                 `json:"success" gorm:"not null;default:false"` // 是否成功，便于状态筛选索引
-	Outcome              RequestOutcome       `json:"outcome" gorm:"type:varchar(24);not null;default:'';index"`
-	TransportTermination TransportTermination `json:"transport_termination" gorm:"type:varchar(48);not null;default:''"`
-	CompletionEvidence   CompletionEvidence   `json:"completion_evidence" gorm:"type:varchar(48);not null;default:''"`
-	TerminalEvent        string               `json:"terminal_event,omitempty" gorm:"type:varchar(64)"`
-	HeaderPolicyTrace    string               `json:"header_policy_trace,omitempty" gorm:"type:text"`
-	Attempts             []ChannelAttempt     `json:"attempts" gorm:"serializer:json"` // 所有尝试记录
-	TotalAttempts        int                  `json:"total_attempts"`                  // 总尝试次数
-	UsedWS               bool                 `json:"used_ws" gorm:"default:false"`    // 是否使用了上游WebSocket
-	WSMode               *RelayLogWSMode      `json:"ws_mode,omitempty"`               // 上游 WebSocket 会话模式
-	WSExecMode           *RelayLogWSExecMode  `json:"ws_exec_mode,omitempty"`          // 上游 WebSocket 事件处理方式
-	WSRecovery           *RelayLogWSRecovery  `json:"ws_recovery,omitempty"`           // 本次请求触发的恢复动作
-	OriginalOutcome      RequestOutcome       `json:"original_outcome,omitempty" gorm:"type:varchar(24)"`
-	OriginalError        string               `json:"original_error,omitempty"`
-	RepairBatchID        string               `json:"repair_batch_id,omitempty" gorm:"type:varchar(64);index"`
-	RepairRuleVersion    string               `json:"repair_rule_version,omitempty" gorm:"type:varchar(32)"`
-	RepairedAt           *time.Time           `json:"repaired_at,omitempty"`
+	ID                        int64                `json:"id" gorm:"primaryKey;autoIncrement:false"` // Snowflake ID
+	Time                      int64                `json:"time"`                                     // 时间戳（秒）
+	RequestModelName          string               `json:"request_model_name"`                       // 请求模型名称
+	RequestAPIKeyID           int                  `json:"request_api_key_id,omitempty" gorm:"index"`
+	RequestAPIKeyName         string               `json:"request_api_key_name"` // 请求使用的 API Key 名称
+	ChannelId                 int                  `json:"channel" gorm:"index"` // 实际使用的渠道ID
+	ChannelName               string               `json:"channel_name"`         // 渠道名称
+	ActualModelName           string               `json:"actual_model_name"`    // 实际使用模型名称
+	CanonicalModelName        string               `json:"canonical_model_name,omitempty" gorm:"size:191;index"`
+	RouteCandidateID          int                  `json:"route_candidate_id,omitempty" gorm:"index"`
+	InboundProtocol           ProtocolName         `json:"inbound_protocol,omitempty" gorm:"type:varchar(32)"`
+	OutboundProtocol          ProtocolName         `json:"outbound_protocol,omitempty" gorm:"type:varchar(32)"`
+	ProtocolMode              string               `json:"protocol_mode,omitempty" gorm:"type:varchar(24)"`
+	ProtocolPolicy            ProtocolPolicy       `json:"protocol_policy,omitempty" gorm:"type:varchar(32)"`
+	ProtocolAllowLossy        bool                 `json:"protocol_allow_lossy" gorm:"not null;default:false"`
+	ProtocolWarnings          []string             `json:"protocol_warnings,omitempty" gorm:"serializer:json"`
+	ProtocolFailureStage      ProtocolFailureStage `json:"protocol_failure_stage,omitempty" gorm:"type:varchar(48)"`
+	InputTokens               int                  `json:"input_tokens"`                     // 输入Token
+	TransportInputTokens      *int                 `json:"transport_input_tokens,omitempty"` // 实际发送到上游请求体的 Token 估算
+	BillInputTokens           *int                 `json:"bill_input_tokens,omitempty"`      // 按常规输入价格计费的 Token
+	CacheReadTokens           *int                 `json:"cache_read_tokens,omitempty"`      // 从缓存读取的 Token
+	CacheWriteTokens          *int                 `json:"cache_write_tokens,omitempty"`     // 写入缓存的 Token
+	OutputTokens              int                  `json:"output_tokens"`                    // 输出 Token
+	Ftut                      int                  `json:"ftut"`                             // 首字时间(毫秒)
+	UseTime                   int                  `json:"use_time"`                         // 总用时(毫秒)
+	Cost                      float64              `json:"cost"`                             // 消耗费用
+	PriceQuoteID              int                  `json:"price_quote_id,omitempty" gorm:"index"`
+	PriceSource               PriceQuoteSource     `json:"price_source,omitempty" gorm:"type:varchar(32)"`
+	PriceUnit                 PriceUnit            `json:"price_unit,omitempty" gorm:"type:varchar(32)"`
+	PriceCurrency             string               `json:"price_currency,omitempty" gorm:"size:16"`
+	PriceInput                float64              `json:"price_input,omitempty"`
+	PriceOutput               float64              `json:"price_output,omitempty"`
+	PriceCacheRead            float64              `json:"price_cache_read,omitempty"`
+	PriceCacheWrite           float64              `json:"price_cache_write,omitempty"`
+	PricePerRequest           float64              `json:"price_per_request,omitempty"`
+	PriceGroupMultiplier      *float64             `json:"price_group_multiplier"`
+	PriceGroupMultiplierKnown *bool                `json:"price_group_multiplier_known,omitempty"` // 阶段 6：计费倍率可信度（nil=未解析到价格、true=真值、false=非分组倍率真值/暂定）
+	PriceExchangeRateUSD      float64              `json:"price_exchange_rate_usd,omitempty"`
+	PriceObservedAt           *time.Time           `json:"price_observed_at,omitempty"`
+	PriceStale                bool                 `json:"price_stale" gorm:"not null;default:false"`
+	PriceConvertible          bool                 `json:"price_convertible" gorm:"not null;default:false"`
+	PriceOriginalCost         float64              `json:"price_original_cost,omitempty"`
+	PriceMatchReason          string               `json:"price_match_reason,omitempty" gorm:"type:text"`
+	TokenSource               UsageValueSource     `json:"token_source,omitempty" gorm:"type:varchar(16);not null;default:'unknown'"`
+	RequestContent            string               `json:"request_content"`                       // 请求内容
+	ResponseContent           string               `json:"response_content"`                      // 响应内容
+	Error                     string               `json:"error"`                                 // 错误信息
+	Success                   bool                 `json:"success" gorm:"not null;default:false"` // 是否成功，便于状态筛选索引
+	Outcome                   RequestOutcome       `json:"outcome" gorm:"type:varchar(24);not null;default:'';index"`
+	TransportTermination      TransportTermination `json:"transport_termination" gorm:"type:varchar(48);not null;default:''"`
+	CompletionEvidence        CompletionEvidence   `json:"completion_evidence" gorm:"type:varchar(48);not null;default:''"`
+	TerminalEvent             string               `json:"terminal_event,omitempty" gorm:"type:varchar(64)"`
+	HeaderPolicyTrace         string               `json:"header_policy_trace,omitempty" gorm:"type:text"`
+	Attempts                  []ChannelAttempt     `json:"attempts" gorm:"serializer:json"` // 所有尝试记录
+	TotalAttempts             int                  `json:"total_attempts"`                  // 总尝试次数
+	UsedWS                    bool                 `json:"used_ws" gorm:"default:false"`    // 是否使用了上游WebSocket
+	WSMode                    *RelayLogWSMode      `json:"ws_mode,omitempty"`               // 上游 WebSocket 会话模式
+	WSExecMode                *RelayLogWSExecMode  `json:"ws_exec_mode,omitempty"`          // 上游 WebSocket 事件处理方式
+	WSRecovery                *RelayLogWSRecovery  `json:"ws_recovery,omitempty"`           // 本次请求触发的恢复动作
+	OriginalOutcome           RequestOutcome       `json:"original_outcome,omitempty" gorm:"type:varchar(24)"`
+	OriginalError             string               `json:"original_error,omitempty"`
+	RepairBatchID             string               `json:"repair_batch_id,omitempty" gorm:"type:varchar(64);index"`
+	RepairRuleVersion         string               `json:"repair_rule_version,omitempty" gorm:"type:varchar(32)"`
+	RepairedAt                *time.Time           `json:"repaired_at,omitempty"`
 }
 
 type RelayLogRepairAudit struct {

@@ -35,10 +35,12 @@ func MarkAccountProjectionStale(ctx context.Context, accountID int, reason strin
 
 func ensureStaleAccountGroups(ctx context.Context, accountID int, message string, now time.Time) error {
 	return ensureAccountGroups(ctx, accountID, func(groupKey string, groupName string) model.SiteUserGroup {
+		known := false // 阶段 2 v2 X6：暂停兜底建组显式写 false（保持回填后无 NULL 不变式）
 		return model.SiteUserGroup{
 			SiteAccountID:          accountID,
 			GroupKey:               groupKey,
 			Name:                   model.NormalizeSiteGroupName(groupKey, groupName),
+			MultiplierKnown:        &known,
 			ModelSyncStatus:        model.SiteGroupModelSyncStatusStale,
 			ModelSyncMessage:       message,
 			ModelSyncAuthoritative: false,

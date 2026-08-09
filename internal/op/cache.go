@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/bestruirui/octopus/internal/conf"
+	"github.com/bestruirui/octopus/internal/utils/log"
 )
 
 func InitCache() error {
@@ -19,6 +20,12 @@ func InitCache() error {
 	}
 	if err := proxyConfigurationRefreshCache(ctx); err != nil {
 		return fmt.Errorf("proxy configuration refresh cache error: %v", err)
+	}
+	// 阶段 4 第 16 条（v2 Z6）：启动后重算倍率策略状态——settings 就绪后、group 缓存构建前执行，
+	// 使重启/外部改库后 policy_blocked 一致性恢复，且 group 缓存按重算后的库构建。
+	// 实施后审查 B3：失败降级 Warn 继续启动（内网自用容错优先，避免大实例超时导致整体启动失败）。
+	if _, _, err := EnforceMultiplierCap(ctx); err != nil {
+		log.Warnf("enforce multiplier cap at startup failed, continuing: %v", err)
 	}
 	if err := groupRefreshCache(ctx); err != nil {
 		return fmt.Errorf("group refresh cache error: %v", err)

@@ -626,7 +626,7 @@
       "pinned": "Pinned",
       "unpinned": "Unpinned",
       "pinFailed": "Pin toggle failed",
-      "applyDefaultsSuccess": "Defaults applied: {updated} groups updated, {removed} items removed, {sorted} items re-sorted",
+      "applyDefaultsSuccess": "Defaults applied: {updated} groups updated, {blocked} items blocked by multiplier policy, {sorted} items re-sorted",
       "applyDefaultsFailed": "Failed to apply defaults"
     },
     "pin": {

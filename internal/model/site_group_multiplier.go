@@ -1,13 +1,16 @@
-package op
+package model
 
 import (
 	"encoding/json"
 	"math"
 	"strconv"
 	"strings"
-
-	"github.com/bestruirui/octopus/internal/model"
 )
+
+// 解析器迁移自 internal/op/site_group_multiplier.go（阶段 1 改动 B'）：
+// 移入 model 叶子包以消除 migrate → op → db → migrate 循环依赖。
+// 用途：迁移回填时以 raw_payload 自证倍率真值；阶段 3 读路径兜底关闭后，
+// 生产调用点仅剩迁移（channel.go 原调用点随读兜底一并移除）。
 
 var storedGroupMultiplierFields = []string{
 	"rate_multiplier",
@@ -35,8 +38,10 @@ var storedGroupPayloadWrappers = []string{
 	"result",
 }
 
-func storedSiteGroupMultiplier(rawPayload, groupKey string) (float64, bool) {
-	target := model.NormalizeSiteGroupKey(groupKey)
+// StoredSiteGroupMultiplier 从站点分组接口的 raw_payload 中解析指定分组的倍率。
+// 返回 (0,false) 表示无法解析（字段缺失、值非数字、无效 JSON 或分组不匹配）。
+func StoredSiteGroupMultiplier(rawPayload, groupKey string) (float64, bool) {
+	target := NormalizeSiteGroupKey(groupKey)
 	if strings.TrimSpace(rawPayload) == "" || target == "" {
 		return 0, false
 	}
@@ -134,7 +139,7 @@ func storedSiteGroupScalar(value any) string {
 
 func sameStoredSiteGroupKey(value, target string) bool {
 	return strings.EqualFold(
-		model.NormalizeSiteGroupKey(value),
-		model.NormalizeSiteGroupKey(target),
+		NormalizeSiteGroupKey(value),
+		NormalizeSiteGroupKey(target),
 	)
 }

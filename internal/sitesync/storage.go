@@ -139,7 +139,16 @@ func persistSyncSnapshot(ctx context.Context, accountID int, snapshot *syncSnaps
 				if snapshot.groups[i].Multiplier == nil && item.Multiplier != nil {
 					multiplier := *item.Multiplier
 					snapshot.groups[i].Multiplier = &multiplier
+					// 阶段 2 v2 X2：keep-block 保留数值（站点停发倍率），known 显式降 false
+					// （修订 12 选 B：保留数值但按暂定放行；不覆盖同步解析路径已设的 known）
+					if snapshot.groups[i].MultiplierKnown == nil {
+						known := false
+						snapshot.groups[i].MultiplierKnown = &known
+					}
 				}
+				snapshot.groups[i].PolicyBlocked = item.PolicyBlocked
+				snapshot.groups[i].PolicyBlockReason = item.PolicyBlockReason
+				snapshot.groups[i].PolicyBlockedAt = item.PolicyBlockedAt
 			}
 			if result, ok := groupResultMap[snapshot.groups[i].GroupKey]; ok {
 				applyPersistedGroupSyncState(&snapshot.groups[i], existing, result, now)
@@ -263,6 +272,9 @@ func copyPersistedGroupSyncState(group *model.SiteUserGroup, existing model.Site
 	group.ProjectionSuspended = existing.ProjectionSuspended
 	group.ProjectionSuspendReason = existing.ProjectionSuspendReason
 	group.ProjectionSuspendedAt = existing.ProjectionSuspendedAt
+	group.PolicyBlocked = existing.PolicyBlocked
+	group.PolicyBlockReason = existing.PolicyBlockReason
+	group.PolicyBlockedAt = existing.PolicyBlockedAt
 	group.ModelSyncStatus = existing.ModelSyncStatus
 	group.ModelSyncMessage = existing.ModelSyncMessage
 	group.ModelSyncAuthoritative = existing.ModelSyncAuthoritative
@@ -276,6 +288,9 @@ func applyPersistedGroupSyncState(group *model.SiteUserGroup, existing *model.Si
 	if existing != nil {
 		group.ModelSyncFailureCount = existing.ModelSyncFailureCount
 		group.LastModelSyncSuccessAt = existing.LastModelSyncSuccessAt
+		group.PolicyBlocked = existing.PolicyBlocked
+		group.PolicyBlockReason = existing.PolicyBlockReason
+		group.PolicyBlockedAt = existing.PolicyBlockedAt
 	}
 	group.ModelSyncStatus = modelSiteGroupSyncStatus(result.Status)
 	group.ModelSyncMessage = sanitizeSiteStatusText(result.Message)

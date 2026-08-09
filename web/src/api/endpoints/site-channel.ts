@@ -77,10 +77,15 @@ export type SiteProjectedChannelSettings = {
 export type SiteChannelGroup = {
     group_key: string;
     group_name: string;
+    group_multiplier?: number | null;
+    multiplier_known?: boolean;
     projection_disabled: boolean;
     projection_suspended: boolean;
     projection_suspend_reason?: string;
     projection_suspended_at?: number | null;
+    policy_blocked: boolean;
+    policy_block_reason?: string;
+    policy_blocked_at?: number | null;
     model_sync_status: 'idle' | 'synced' | 'empty' | 'stale' | 'failed' | 'unresolved' | 'missing_key' | 'removed';
     model_sync_message?: string;
     model_sync_authoritative: boolean;
@@ -289,10 +294,15 @@ function normalizeSiteChannelAccount(account: SiteChannelAccountServer): SiteCha
         ...account,
         groups: (account.groups ?? []).map((group) => ({
             ...group,
+            group_multiplier: typeof group.group_multiplier === 'number' && Number.isFinite(group.group_multiplier) ? group.group_multiplier : null,
+            multiplier_known: group.multiplier_known,
             projection_disabled: group.projection_disabled === true,
             projection_suspended: group.projection_suspended === true,
             projection_suspend_reason: typeof group.projection_suspend_reason === 'string' ? group.projection_suspend_reason : undefined,
             projection_suspended_at: typeof group.projection_suspended_at === 'number' ? group.projection_suspended_at : null,
+            policy_blocked: group.policy_blocked === true,
+            policy_block_reason: typeof group.policy_block_reason === 'string' ? group.policy_block_reason : undefined,
+            policy_blocked_at: typeof group.policy_blocked_at === 'number' ? group.policy_blocked_at : null,
             model_sync_status: normalizeSiteGroupModelSyncStatus(group.model_sync_status),
             model_sync_message: typeof group.model_sync_message === 'string' ? group.model_sync_message : undefined,
             model_sync_authoritative: group.model_sync_authoritative === true,

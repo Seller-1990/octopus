@@ -126,7 +126,8 @@ func TestParseSitePricingGroupMultipliersDoesNotRequireModelQuotes(t *testing.T)
 	}
 
 	multipliers := parseSitePricingGroupMultipliers(payload)
-	if len(multipliers) != 2 || multipliers["default"] != 1 || multipliers["vip"] != 0.25 {
+	if len(multipliers) != 2 || multipliers["default"].Value != 1 || multipliers["vip"].Value != 0.25 ||
+		!multipliers["default"].Known || !multipliers["vip"].Known {
 		t.Fatalf("unexpected group multipliers: %+v", multipliers)
 	}
 }
@@ -146,7 +147,10 @@ func TestParseSitePricingGroupMultipliersDefaultsExplicitUnconfiguredGroup(t *te
 	}
 
 	multipliers := parseSitePricingGroupMultipliers(payload)
-	if len(multipliers) != 2 || multipliers["GPT-Plus-正价"] != 1 || multipliers["GPT-Pro-正价"] != 0.31 {
+	// 阶段 2 v2 X10：S2 修正后——group_ratio 有值（GPT-Pro）known=true；
+	// enable_groups 缺省补 1x（GPT-Plus）known=false（原断言「全部 known」反转）
+	if len(multipliers) != 2 || multipliers["GPT-Plus-正价"].Value != 1 || multipliers["GPT-Plus-正价"].Known ||
+		multipliers["GPT-Pro-正价"].Value != 0.31 || !multipliers["GPT-Pro-正价"].Known {
 		t.Fatalf("unexpected group multipliers: %+v", multipliers)
 	}
 
@@ -154,10 +158,12 @@ func TestParseSitePricingGroupMultipliersDefaultsExplicitUnconfiguredGroup(t *te
 	if len(quotes) != 2 {
 		t.Fatalf("got %d quotes, want 2", len(quotes))
 	}
+	knownByGroup := map[string]bool{}
 	for _, quote := range quotes {
-		if !quote.GroupMultiplierKnown {
-			t.Fatalf("explicitly enabled group %q was left unknown: %+v", quote.GroupKey, quote)
-		}
+		knownByGroup[quote.GroupKey] = quote.GroupMultiplierKnown
+	}
+	if !knownByGroup["GPT-Pro-正价"] || knownByGroup["GPT-Plus-正价"] {
+		t.Fatalf("unexpected quote known states: %+v", knownByGroup)
 	}
 }
 

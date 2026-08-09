@@ -626,7 +626,7 @@
       "pinned": "已置頂",
       "unpinned": "已取消置頂",
       "pinFailed": "置頂操作失敗",
-      "applyDefaultsSuccess": "預設策略已套用：{updated} 個分組模式更新，{removed} 個條目移除，{sorted} 個條目重排",
+      "applyDefaultsSuccess": "預設策略已套用：{updated} 個分組模式更新，{blocked} 個條目被倍率策略阻斷，{sorted} 個條目重排",
       "applyDefaultsFailed": "套用預設策略失敗"
     },
     "pin": {

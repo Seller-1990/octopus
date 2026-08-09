@@ -254,7 +254,7 @@ func TestSiteUserGroupMultipliersUpdatePersistsZero(t *testing.T) {
 	}
 	mustCreatePricingRow(t, ctx, &group)
 
-	if err := SiteUserGroupMultipliersUpdate(ctx, account.ID, map[string]float64{"complimentary": 0}); err != nil {
+	if err := SiteUserGroupMultipliersUpdate(ctx, account.ID, map[string]GroupMultiplierValue{"complimentary": {Value: 0, Known: true}}); err != nil {
 		t.Fatalf("SiteUserGroupMultipliersUpdate: %v", err)
 	}
 	var reloaded model.SiteUserGroup

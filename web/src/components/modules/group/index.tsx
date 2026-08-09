@@ -146,7 +146,7 @@ export function Group() {
                     onSuccess: (data) => {
                         const msg = t('toast.applyDefaultsSuccess', {
                             updated: data?.groups_updated ?? 0,
-                            removed: data?.items_removed ?? 0,
+                            blocked: data?.items_blocked ?? 0,
                             sorted: data?.items_sorted ?? 0,
                         });
                         toast.success(msg);

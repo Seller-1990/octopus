@@ -665,9 +665,15 @@ func parseGroupCandidate(candidate any) []model.SiteUserGroup {
 			}
 			group := model.SiteUserGroup{GroupKey: key, Name: name}
 			if item, ok := raw.(map[string]any); ok {
-				group.Multiplier = parseOptionalSiteGroupMultiplier(
+				multiplier := parseOptionalSiteGroupMultiplier(
 					item["rate_multiplier"], item["group_multiplier"], item["multiplier"], item["ratio"], item["rate"],
 				)
+				group.Multiplier = multiplier
+				// 阶段 2 v2 X5：同 parseGroupObject，解析出倍率（≠1）标 known=true
+				if multiplier != nil && *multiplier != 1 {
+					known := true
+					group.MultiplierKnown = &known
+				}
 			}
 			items = append(items, group)
 		}
@@ -699,13 +705,20 @@ func parseGroupObject(item map[string]any) (model.SiteUserGroup, bool) {
 	if strings.TrimSpace(groupKey) == "" {
 		return model.SiteUserGroup{}, false
 	}
-	return model.SiteUserGroup{
-		GroupKey: strings.TrimSpace(groupKey),
-		Name:     strings.TrimSpace(groupName),
-		Multiplier: parseOptionalSiteGroupMultiplier(
-			item["rate_multiplier"], item["group_multiplier"], item["multiplier"], item["ratio"], item["rate"],
-		),
-	}, true
+	multiplier := parseOptionalSiteGroupMultiplier(
+		item["rate_multiplier"], item["group_multiplier"], item["multiplier"], item["ratio"], item["rate"],
+	)
+	group := model.SiteUserGroup{
+		GroupKey:   strings.TrimSpace(groupKey),
+		Name:       strings.TrimSpace(groupName),
+		Multiplier: multiplier,
+	}
+	// 阶段 2 v2 X5：groups 接口显式解析出倍率（≠1）视为真值标 known=true（==1 护栏与迁移规则对齐）
+	if multiplier != nil && *multiplier != 1 {
+		known := true
+		group.MultiplierKnown = &known
+	}
+	return group, true
 }
 
 func isIgnorableGroupMapKey(key string) bool {

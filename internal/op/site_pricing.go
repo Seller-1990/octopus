@@ -17,6 +17,12 @@ import (
 
 const sitePriceFreshness = 24 * time.Hour
 
+// GroupMultiplierValue 携带分组倍率值与其来源可信度（known=true=真实上报，false=暂定/缺省补）。
+type GroupMultiplierValue struct {
+	Value float64
+	Known bool
+}
+
 func SiteModelPriceQuotesUpsert(ctx context.Context, quotes []model.SiteModelPriceQuote) error {
 	if len(quotes) == 0 {
 		return nil
@@ -45,6 +51,7 @@ func SiteModelPriceQuotesUpsert(ctx context.Context, quotes []model.SiteModelPri
 					"per_request",
 					"model_multiplier",
 					"group_multiplier",
+					"group_multiplier_known",
 					"exchange_rate_to_usd",
 					"raw_payload",
 					"observed_at",
@@ -73,23 +80,50 @@ func SiteModelPriceQuotesUpsert(ctx context.Context, quotes []model.SiteModelPri
 	})
 }
 
-func SiteUserGroupMultipliersUpdate(ctx context.Context, accountID int, multipliers map[string]float64) error {
+func SiteUserGroupMultipliersUpdate(ctx context.Context, accountID int, multipliers map[string]GroupMultiplierValue) error {
 	if accountID <= 0 || len(multipliers) == 0 {
 		return nil
 	}
-	return db.GetDB().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		for groupKey, multiplier := range multipliers {
-			if multiplier < 0 || math.IsNaN(multiplier) || math.IsInf(multiplier, 0) {
+	if err := db.GetDB().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		for groupKey, m := range multipliers {
+			if m.Value < 0 || math.IsNaN(m.Value) || math.IsInf(m.Value, 0) {
 				continue
 			}
+			key := model.NormalizeSiteGroupKey(groupKey)
+			value := m.Value
+			known := m.Known
+			if known {
+				// group_ratio 证据（真值）：upsert 覆盖（含创建 pricing-only 行）。
+				row := model.SiteUserGroup{
+					SiteAccountID:   accountID,
+					GroupKey:        key,
+					Name:            model.NormalizeSiteGroupName(key, key),
+					Multiplier:      &value,
+					MultiplierKnown: &known,
+				}
+				if err := tx.Clauses(clause.OnConflict{
+					Columns:   []clause.Column{{Name: "site_account_id"}, {Name: "group_key"}},
+					DoUpdates: clause.AssignmentColumns([]string{"multiplier", "multiplier_known"}),
+				}).Create(&row).Error; err != nil {
+					return err
+				}
+				continue
+			}
+			// enable_groups 缺省补 1x（known=false，暂定）：只改已存在且非 true 的行，
+			// 不覆盖自证真值、不创建行（阶段 2 v2 X1）。
+			knownFalse := false
 			if err := tx.Model(&model.SiteUserGroup{}).
-				Where("site_account_id = ? AND group_key = ?", accountID, model.NormalizeSiteGroupKey(groupKey)).
-				Update("multiplier", multiplier).Error; err != nil {
+				Where("site_account_id = ? AND group_key = ? AND (multiplier_known IS NULL OR multiplier_known = ?)", accountID, key, false).
+				Updates(map[string]any{"multiplier": &value, "multiplier_known": &knownFalse}).Error; err != nil {
 				return err
 			}
 		}
 		return nil
-	})
+	}); err != nil {
+		return err
+	}
+	_, _, err := EnforceMultiplierCap(ctx)
+	return err
 }
 
 func normalizeSiteModelPriceQuote(ctx context.Context, quote *model.SiteModelPriceQuote) error {
@@ -281,6 +315,7 @@ func SiteModelPriceManualUpsert(ctx context.Context, quote model.SiteModelPriceQ
 	quote.Source = model.PriceQuoteSourceManualOverride
 	quote.ManualOverride = true
 	quote.ObservedAt = time.Now()
+	quote.GroupMultiplierKnown = true // 阶段 6 v2 Z4：管理员显式设价=真值（修 F17）
 	if err := normalizeSiteModelPriceQuote(ctx, &quote); err != nil {
 		return nil, err
 	}
@@ -387,30 +422,32 @@ func EffectivePriceForCandidate(ctx context.Context, candidateID int, fallbackMo
 		return effectivePriceFromGlobal(candidateID, global), nil
 	}
 	return model.EffectivePrice{
-		RouteCandidateID: candidateID,
-		Source:           model.PriceQuoteSourceUnknown,
-		Unit:             model.PriceUnitPerMillionTokens,
-		Currency:         "USD",
-		GroupMultiplier:  1,
-		Convertible:      false,
-		MatchReason:      "no matching site or global price",
+		RouteCandidateID:     candidateID,
+		Source:               model.PriceQuoteSourceUnknown,
+		Unit:                 model.PriceUnitPerMillionTokens,
+		Currency:             "USD",
+		GroupMultiplier:      1,
+		GroupMultiplierKnown: false,
+		Convertible:          false,
+		MatchReason:          "no matching site or global price",
 	}, nil
 }
 
 func effectivePriceFromGlobal(candidateID int, price model.LLMPrice) model.EffectivePrice {
 	return model.EffectivePrice{
-		RouteCandidateID:  candidateID,
-		Source:            model.PriceQuoteSourceGlobal,
-		Unit:              model.PriceUnitPerMillionTokens,
-		Currency:          "USD",
-		Input:             price.Input,
-		Output:            price.Output,
-		CacheRead:         price.CacheRead,
-		CacheWrite:        price.CacheWrite,
-		GroupMultiplier:   1,
-		ExchangeRateToUSD: 1,
-		Convertible:       true,
-		MatchReason:       "global model fallback",
+		RouteCandidateID:     candidateID,
+		Source:               model.PriceQuoteSourceGlobal,
+		Unit:                 model.PriceUnitPerMillionTokens,
+		Currency:             "USD",
+		Input:                price.Input,
+		Output:               price.Output,
+		CacheRead:            price.CacheRead,
+		CacheWrite:           price.CacheWrite,
+		GroupMultiplier:      1,
+		GroupMultiplierKnown: false, // 全局价无分组倍率概念（非分组倍率真值，v2 Z3）
+		ExchangeRateToUSD:    1,
+		Convertible:          true,
+		MatchReason:          "global model fallback",
 	}
 }
 
@@ -554,22 +591,23 @@ func effectivePriceFromQuote(
 		}
 	}
 	return model.EffectivePrice{
-		QuoteID:           quote.ID,
-		RouteCandidateID:  candidateID,
-		Source:            source,
-		Unit:              quote.Unit,
-		Currency:          quote.Currency,
-		Input:             quote.Input * multiplier,
-		Output:            quote.Output * multiplier,
-		CacheRead:         quote.CacheRead * multiplier,
-		CacheWrite:        quote.CacheWrite * multiplier,
-		PerRequest:        quote.PerRequest * multiplier,
-		GroupMultiplier:   multiplier,
-		ExchangeRateToUSD: rate,
-		ObservedAt:        &observedAt,
-		Stale:             stale,
-		Convertible:       rate > 0,
-		MatchReason:       reason,
+		QuoteID:              quote.ID,
+		RouteCandidateID:     candidateID,
+		Source:               source,
+		Unit:                 quote.Unit,
+		Currency:             quote.Currency,
+		Input:                quote.Input * multiplier,
+		Output:               quote.Output * multiplier,
+		CacheRead:            quote.CacheRead * multiplier,
+		CacheWrite:           quote.CacheWrite * multiplier,
+		PerRequest:           quote.PerRequest * multiplier,
+		GroupMultiplier:      multiplier,
+		GroupMultiplierKnown: quote.GroupMultiplierKnown,
+		ExchangeRateToUSD:    rate,
+		ObservedAt:           &observedAt,
+		Stale:                stale,
+		Convertible:          rate > 0,
+		MatchReason:          reason,
 	}
 }
 

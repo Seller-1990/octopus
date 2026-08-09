@@ -43,6 +43,16 @@ func refreshSitePricingQuotes(
 		}
 		return err
 	}
+	// Pricing can change the independent multiplier policy after the initial
+	// projection pass. Reconcile managed channels now so a newly blocked group
+	// is disabled immediately and a recovered group is re-enabled without
+	// waiting for the next full sync.
+	if _, err := ProjectAccount(ctx, account.ID); err != nil {
+		if markErr := op.SiteModelPriceQuoteMarkRefreshError(ctx, siteRecord.ID, account.ID, err); markErr != nil {
+			return fmt.Errorf("%w (record projection refresh error: %v)", err, markErr)
+		}
+		return err
+	}
 	quotes := parseSitePricingQuotes(siteRecord.ID, account.ID, payload)
 	if err := op.SiteModelPriceQuotesUpsert(ctx, quotes); err != nil {
 		if markErr := op.SiteModelPriceQuoteMarkRefreshError(ctx, siteRecord.ID, account.ID, err); markErr != nil {
@@ -142,9 +152,10 @@ func parseSitePricingQuotes(siteID, accountID int, payload map[string]any) []mod
 
 		for _, group := range groups {
 			groupKey := model.NormalizeSiteGroupKey(group)
-			groupMultiplier, groupMultiplierKnown := groupRatios[groupKey]
-			if !groupMultiplierKnown {
-				groupMultiplier = 1
+			// X9 ok-check：隐式 default 组（enable_groups 为空）不在 map 时按 {1, false}，不依赖 S3 补 1。
+			gv, ok := groupRatios[groupKey]
+			if !ok {
+				gv = op.GroupMultiplierValue{Value: 1}
 			}
 			source := model.PriceQuoteSourceSiteWide
 			if hasExplicitGroups {
@@ -159,8 +170,8 @@ func parseSitePricingQuotes(siteID, accountID int, payload map[string]any) []mod
 				Unit:                 unit,
 				Currency:             currency,
 				ModelMultiplier:      modelRatio,
-				GroupMultiplier:      groupMultiplier,
-				GroupMultiplierKnown: groupMultiplierKnown,
+				GroupMultiplier:      gv.Value,
+				GroupMultiplierKnown: gv.Known,
 				RawPayload:           string(raw),
 				ObservedAt:           now,
 			}
@@ -190,23 +201,27 @@ func parseSitePricingQuotes(siteID, accountID int, payload map[string]any) []mod
 	return result
 }
 
-func parseSitePricingGroupMultipliers(payload map[string]any) map[string]float64 {
+func parseSitePricingGroupMultipliers(payload map[string]any) map[string]op.GroupMultiplierValue {
+	result := make(map[string]op.GroupMultiplierValue)
 	if payload == nil {
-		return map[string]float64{}
-	}
-	result := parsePricingGroupRatios(payload["group_ratio"])
-	if len(result) == 0 {
-		result = parsePricingGroupRatios(nestedValue(payload, "data", "group_ratio"))
-	}
-	if len(result) == 0 {
 		return result
 	}
+	// S2 修正：known 只来自原始 group_ratio（不用补后 map 反推，修复坏标记）
+	for key, v := range parsePricingGroupRatios(payload["group_ratio"]) {
+		result[model.NormalizeSiteGroupKey(key)] = op.GroupMultiplierValue{Value: v, Known: true}
+	}
+	if len(result) == 0 {
+		for key, v := range parsePricingGroupRatios(nestedValue(payload, "data", "group_ratio")) {
+			result[model.NormalizeSiteGroupKey(key)] = op.GroupMultiplierValue{Value: v, Known: true}
+		}
+	}
 	// New API omits default 1x groups from group_ratio but still lists them in enable_groups.
+	// 修订 5：无条件执行（删除原 211-213 提前返回），补 1x 标 known=false（暂定）。
 	for _, item := range sitePricingItems(payload) {
 		for _, group := range normalizeStringList(item["enable_groups"]) {
 			groupKey := model.NormalizeSiteGroupKey(group)
 			if _, configured := result[groupKey]; !configured {
-				result[groupKey] = 1
+				result[groupKey] = op.GroupMultiplierValue{Value: 1, Known: false}
 			}
 		}
 	}

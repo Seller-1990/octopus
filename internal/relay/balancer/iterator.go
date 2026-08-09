@@ -31,7 +31,14 @@ func NewIterator(group model.Group, apiKeyID int, requestModel string) *Iterator
 // preferred 非空时，会优先把指定通道提前到候选列表最前面。
 func NewIteratorWithPreference(group model.Group, apiKeyID int, requestModel string, preferred *SessionEntry) *Iterator {
 	b := GetBalancer(group.Mode)
-	candidates := b.Candidates(group.Items)
+	eligibleItems := make([]model.GroupItem, 0, len(group.Items))
+	for _, item := range group.Items {
+		if item.PolicyStatus == "blocked" {
+			continue
+		}
+		eligibleItems = append(eligibleItems, item)
+	}
+	candidates := b.Candidates(eligibleItems)
 
 	stickyIdx := -1
 	stickyKeyID := 0

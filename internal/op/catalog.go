@@ -1090,6 +1090,7 @@ func CatalogPlanGroup(
 	group model.Group,
 ) (model.Group, model.RoutePreview, *model.CanonicalModel, error) {
 	requirements.Features = normalizeProtocolFeatures(requirements.Features)
+	group.Items = applyGroupItemMultiplierPolicies(ctx, group.Items)
 	preview := model.RoutePreview{
 		RequestedModel:  requestedModel,
 		CanonicalModel:  group.Name,
@@ -1157,8 +1158,21 @@ func CatalogPlanGroup(
 	included := make([]scoredItem, 0, len(group.Items))
 	for _, item := range group.Items {
 		decision := model.RouteDecisionReason{
-			ChannelID:     item.ChannelID,
-			UpstreamModel: item.ModelName,
+			ChannelID:           item.ChannelID,
+			UpstreamModel:       item.ModelName,
+			Multiplier:          item.Multiplier,
+			GroupMultiplier:     item.GroupMultiplier,
+			EffectiveMultiplier: item.EffectiveMultiplier,
+			MultiplierSource:    item.MultiplierSource,
+			MultiplierCap:       item.MultiplierCap,
+			MultiplierKnown:     item.MultiplierKnown,
+			PolicyStatus:        item.PolicyStatus,
+			PolicyReason:        item.PolicyReason,
+		}
+		if item.PolicyStatus == MultiplierPolicyStatusBlocked {
+			decision.Reason = item.PolicyReason
+			preview.Decisions = append(preview.Decisions, decision)
+			continue
 		}
 		candidate, exists := candidateByKey[routeCandidateKey(item.ChannelID, item.ModelName)]
 		if exists {

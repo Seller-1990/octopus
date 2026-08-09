@@ -3,9 +3,8 @@ package op
 import (
 	"context"
 	"fmt"
-	"math"
 	"sort"
-	"strconv"
+	"time"
 
 	"github.com/bestruirui/octopus/internal/db"
 	"github.com/bestruirui/octopus/internal/model"
@@ -15,7 +14,9 @@ import (
 type ApplyGroupDefaultsResult struct {
 	GroupsUpdated   int64 `json:"groups_updated"`
 	GroupsSuspended int64 `json:"groups_suspended"`
+	GroupsRecovered int64 `json:"groups_recovered"`
 	ItemsRemoved    int64 `json:"items_removed"`
+	ItemsBlocked    int64 `json:"items_blocked"`
 	ItemsSorted     int64 `json:"items_sorted"`
 }
 
@@ -37,9 +38,9 @@ type enrichedItem struct {
 // ApplyGroupDefaults reads default_group_load_balance, default_group_sort_strategy,
 // and default_multiplier_cap from settings, then:
 //  1. Applies the load balance mode to all groups
-//  2. Removes group items whose multiplier exceeds the configured cap
+//  2. Recomputes multiplier policy without deleting group items
 //  3. Re-sorts each group's items according to the sort strategy and persists new priorities
-//  4. Suspends site user groups exceeding the multiplier cap
+//  4. Marks site user groups exceeding the multiplier cap as policy-blocked
 func ApplyGroupDefaults(ctx context.Context) (*ApplyGroupDefaultsResult, error) {
 	result := &ApplyGroupDefaultsResult{}
 
@@ -72,9 +73,7 @@ func ApplyGroupDefaults(ctx context.Context) (*ApplyGroupDefaultsResult, error) 
 	}
 
 	// 3 & 4. Enforce multiplier cap on items + apply sort strategy to priorities
-	capStr, _ := SettingGetString(model.SettingKeyDefaultMultiplierCap)
-	capVal, capErr := strconv.ParseFloat(capStr, 64)
-	hasCap := capErr == nil && capVal > 0
+	capVal, hasCap := configuredMultiplierCap()
 
 	// Collect all channel IDs across all group items
 	groups := groupCache.GetAll()
@@ -92,7 +91,6 @@ func ApplyGroupDefaults(ctx context.Context) (*ApplyGroupDefaultsResult, error) 
 	// Load metadata for sorting and filtering
 	bindingMap, _ := SiteChannelBindingMapByChannelIDs(channelIDs, ctx)
 	balanceByAccount := accountBalanceMap(ctx, bindingMap)
-	multiplierByKey := channelCandidateMultiplierMap(ctx, channelIDs)
 	groupMultiplierByChannel := channelGroupMultiplierMap(ctx, bindingMap)
 
 	for _, group := range groups {
@@ -101,7 +99,6 @@ func ApplyGroupDefaults(ctx context.Context) (*ApplyGroupDefaultsResult, error) 
 		}
 
 		items := make([]enrichedItem, 0, len(group.Items))
-		var itemsToDelete []int
 
 		for _, item := range group.Items {
 			isReserve := false
@@ -114,16 +111,16 @@ func ApplyGroupDefaults(ctx context.Context) (*ApplyGroupDefaultsResult, error) 
 				balance = balanceByAccount[binding.SiteAccountID]
 			}
 
-			mul := math.Inf(1)
-			if gm := groupMultiplierByChannel[item.ChannelID]; gm != nil {
-				mul = *gm
-			} else if m := multiplierByKey[routeCandidateKey(item.ChannelID, item.ModelName)]; m != nil {
-				mul = *m
+			// 阶段 2 补充（D2' A' + 修订 11 + N3）：candidate 倍率不再参与排序/计数；
+			// 排序统一「known=true 用真实值，否则按 1x」；ItemsBlocked 只计「known 超限」。
+			mul := 1.0
+			gm, hasGroup := groupMultiplierByChannel[item.ChannelID]
+			if hasGroup && gm.Known {
+				mul = gm.Value
 			}
 
-			if hasCap && !math.IsInf(mul, 1) && mul > capVal {
-				itemsToDelete = append(itemsToDelete, item.ID)
-				continue
+			if hasCap && hasGroup && gm.Known && gm.Value > capVal {
+				result.ItemsBlocked++
 			}
 
 			items = append(items, enrichedItem{
@@ -132,16 +129,6 @@ func ApplyGroupDefaults(ctx context.Context) (*ApplyGroupDefaultsResult, error) 
 				balance:    balance,
 				multiplier: mul,
 			})
-		}
-
-		// Delete items exceeding cap
-		if len(itemsToDelete) > 0 {
-			if err := db.GetDB().WithContext(ctx).
-				Where("id IN ?", itemsToDelete).
-				Delete(&model.GroupItem{}).Error; err != nil {
-				return nil, fmt.Errorf("delete items exceeding cap for group %d: %w", group.ID, err)
-			}
-			result.ItemsRemoved += int64(len(itemsToDelete))
 		}
 
 		// Sort items by strategy
@@ -162,12 +149,16 @@ func ApplyGroupDefaults(ctx context.Context) (*ApplyGroupDefaultsResult, error) 
 		}
 	}
 
-	// 4. Enforce multiplier cap on site user groups (original behavior)
-	suspended, err := EnforceMultiplierCap(ctx)
+	// 4. Update the independent policy-block state. Synchronization state is
+	// intentionally left untouched so a successful sync cannot clear it.
+	blocked, recovered, err := EnforceMultiplierCap(ctx)
 	if err != nil {
 		return nil, err
 	}
-	result.GroupsSuspended = suspended
+	// Keep the legacy response field for client compatibility; it now counts
+	// groups blocked by the multiplier policy rather than sync-suspended rows.
+	result.GroupsSuspended = blocked
+	result.GroupsRecovered = recovered
 
 	// Refresh group cache to reflect all changes
 	_ = groupRefreshCache(ctx)
@@ -243,24 +234,52 @@ func tierVal(isReserve bool) int {
 	return 0
 }
 
-// EnforceMultiplierCap suspends site user groups whose multiplier exceeds
-// the configured default_multiplier_cap. Returns the number of affected rows.
-func EnforceMultiplierCap(ctx context.Context) (int64, error) {
-	capStr, _ := SettingGetString(model.SettingKeyDefaultMultiplierCap)
-	cap, err := strconv.ParseFloat(capStr, 64)
-	if err != nil || cap <= 0 {
-		return 0, nil // no cap configured
+// EnforceMultiplierCap marks site user groups whose multiplier exceeds the
+// configured default_multiplier_cap as policy-blocked and recovers groups when
+// the cap is disabled or the multiplier returns within the limit.
+func EnforceMultiplierCap(ctx context.Context) (int64, int64, error) {
+	cap, capEnabled := configuredMultiplierCap()
+	var groups []model.SiteUserGroup
+	if err := db.GetDB().WithContext(ctx).Find(&groups).Error; err != nil {
+		return 0, 0, fmt.Errorf("load multiplier policy groups: %w", err)
 	}
-
-	res := db.GetDB().WithContext(ctx).
-		Model(&model.SiteUserGroup{}).
-		Where("multiplier > ? AND projection_suspended = ?", cap, false).
-		Updates(map[string]interface{}{
-			"projection_suspended":      true,
-			"projection_suspend_reason": fmt.Sprintf("multiplier exceeds cap (%.2f)", cap),
-		})
-	if res.Error != nil {
-		return 0, fmt.Errorf("enforce multiplier cap: %w", res.Error)
+	var blocked, recovered int64
+	for _, group := range groups {
+		// 两态规则（阶段 2 v2 X3，用户拍板提前落地）：仅 known=true 且超 cap 才拦；
+		// known=false/nil（暂定/未知）一律放行（recover 分支对非 isBlocked 的已拦组解阻）。
+		isBlocked := capEnabled && group.Multiplier != nil && validGroupMultiplier(*group.Multiplier) &&
+			group.MultiplierKnown != nil && *group.MultiplierKnown && *group.Multiplier > cap
+		if isBlocked {
+			reason := fmt.Sprintf("multiplier exceeds cap (%.4g > %.4g)", *group.Multiplier, cap)
+			if group.PolicyBlocked && group.PolicyBlockReason == reason {
+				continue
+			}
+			now := time.Now()
+			if err := db.GetDB().WithContext(ctx).Model(&model.SiteUserGroup{}).
+				Where("id = ?", group.ID).
+				Updates(map[string]any{
+					"policy_blocked":      true,
+					"policy_block_reason": reason,
+					"policy_blocked_at":   &now,
+				}).Error; err != nil {
+				return blocked, recovered, fmt.Errorf("block multiplier policy for group %d: %w", group.ID, err)
+			}
+			blocked++
+			continue
+		}
+		if !group.PolicyBlocked {
+			continue
+		}
+		if err := db.GetDB().WithContext(ctx).Model(&model.SiteUserGroup{}).
+			Where("id = ?", group.ID).
+			Updates(map[string]any{
+				"policy_blocked":      false,
+				"policy_block_reason": "",
+				"policy_blocked_at":   nil,
+			}).Error; err != nil {
+			return blocked, recovered, fmt.Errorf("recover multiplier policy for group %d: %w", group.ID, err)
+		}
+		recovered++
 	}
-	return res.RowsAffected, nil
+	return blocked, recovered, nil
 }

@@ -701,7 +701,18 @@ const SITE_GROUP_FILTER_ALL_VALUE = '__site-group-all__';
 
 const STALE_MODEL_SYNC_STATUSES = ['stale', 'failed', 'unresolved'];
 
+function formatGroupMultiplier(value: number | null | undefined, known?: boolean): string {
+    if (value == null || !Number.isFinite(value)) return '倍率未知';
+    return known ? `${Math.round(value * 100) / 100}x` : `暂定 ${Math.round(value * 100) / 100}x`;
+}
+
 function getGroupStatusBadge(group: SiteChannelGroup): { label: string; className: string } | null {
+    if (group.policy_blocked && group.projection_suspended) {
+        return { label: '暂停 + 倍率阻断', className: 'rounded-full bg-destructive/10 px-1.5 py-0.5 text-[10px] text-destructive' };
+    }
+    if (group.policy_blocked) {
+        return { label: '倍率阻断', className: 'rounded-full bg-destructive/10 px-1.5 py-0.5 text-[10px] text-destructive' };
+    }
     if (group.projection_suspended) {
         return { label: '暂停', className: 'rounded-full bg-destructive/10 px-1.5 py-0.5 text-[10px] text-destructive' };
     }
@@ -713,6 +724,10 @@ function getGroupStatusBadge(group: SiteChannelGroup): { label: string; classNam
     }
     if (group.masked_pending_key_count > 0 && group.enabled_key_count === 0) {
         return { label: '待补全', className: 'rounded-full bg-amber-500/15 px-1.5 py-0.5 text-[10px] text-amber-700 dark:text-amber-300' };
+    }
+    // 阶段 5 v2 Y3：暂定徽标最后（仅已有 key 的组），不遮蔽「待建」运营状态
+    if (group.has_keys && group.multiplier_known !== true) {
+        return { label: '暂定', className: 'rounded-full bg-sky-500/15 px-1.5 py-0.5 text-[10px] text-sky-700 dark:text-sky-300' };
     }
     return null;
 }
@@ -1858,8 +1873,10 @@ function SiteAccountPanel({
         : null;
     const activeGroupLabel = activeGroup ? (activeGroup.group_name || activeGroup.group_key) : '全部分组';
     const activeGroupProjectionSuspended = activeGroup?.projection_suspended === true;
+    const activeGroupPolicyBlocked = activeGroup?.policy_blocked === true;
     const activeGroupProjectionStale = activeGroup && !activeGroupProjectionSuspended && STALE_MODEL_SYNC_STATUSES.includes(activeGroup.model_sync_status);
     const activeGroupSuspensionReason = activeGroup?.projection_suspend_reason || activeGroup?.model_sync_message || '';
+    const activeGroupPolicyReason = activeGroup?.policy_block_reason || '当前分组倍率超过默认上限，策略暂时阻止投影。';
     const activeGroupStaleReason = activeGroup?.model_sync_message || '';
     const activeQuickFilterCount = panelPreferences.quickFilters.length;
     const pendingKeyGroups = useMemo(
@@ -1982,6 +1999,8 @@ function SiteAccountPanel({
                                                 <div className="text-[11px] text-muted-foreground">
                                                     {group.models.length} 模型 · Key {group.enabled_key_count}/{group.key_count}
                                                     {group.projection_disabled ? ' · 不投影' : ''}
+                                                    {` · ${formatGroupMultiplier(group.group_multiplier, group.multiplier_known)}`}
+                                                    {group.policy_blocked ? ' · 倍率阻断' : ''}
                                                     {group.projection_suspended ? ' · 已暂停' : STALE_MODEL_SYNC_STATUSES.includes(group.model_sync_status) ? ' · 沿用历史' : ''}
                                                     {group.masked_pending_key_count > 0 ? ` · 待补全 ${group.masked_pending_key_count}` : ''}
                                                     {group.has_projected_channel ? ` · 投影 ${group.projected_keys.length}` : ''}
@@ -2010,14 +2029,24 @@ function SiteAccountPanel({
                         </div>
                     </div>
 
-                    {activeGroupProjectionSuspended ? (
+                    {activeGroupProjectionSuspended || activeGroupPolicyBlocked ? (
                         <div className="flex items-start gap-2 rounded-2xl border border-destructive/25 bg-destructive/10 px-3 py-2 text-xs text-destructive">
                             <CircleAlert className="mt-0.5 size-4 shrink-0" />
                             <div className="min-w-0">
-                                <div className="font-medium">该分组投影已由系统暂停</div>
-                                <div className="mt-0.5 break-words text-destructive/80">
-                                    {activeGroupSuspensionReason || '该分组缺少可用 Key 或上游当前无可用模型。重新同步成功后会自动恢复投影。'}
-                                </div>
+                                {activeGroupProjectionSuspended && (
+                                    <div>
+                                        <div className="font-medium">该分组投影已由系统暂停</div>
+                                        <div className="mt-0.5 break-words text-destructive/80">
+                                            {activeGroupSuspensionReason || '该分组缺少可用 Key 或上游当前无可用模型。重新同步成功后会自动恢复投影。'}
+                                        </div>
+                                    </div>
+                                )}
+                                {activeGroupPolicyBlocked && (
+                                    <div className={cn(activeGroupProjectionSuspended && 'mt-2')}>
+                                        <div className="font-medium">该分组被倍率策略阻断</div>
+                                        <div className="mt-0.5 break-words text-destructive/80">{activeGroupPolicyReason} · 当前倍率 {formatGroupMultiplier(activeGroup?.group_multiplier, activeGroup?.multiplier_known)}</div>
+                                    </div>
+                                )}
                             </div>
                         </div>
                     ) : activeGroupProjectionStale ? (
@@ -2054,11 +2083,11 @@ function SiteAccountPanel({
                                 activeGroupProjectionSuspended && 'border-destructive/30 bg-destructive/10 text-destructive hover:bg-destructive/15',
                             )}
                             onClick={() => activeGroup && handleToggleGroupProjection(activeGroup)}
-                            disabled={!activeGroup || activeGroupProjectionSuspended || groupProjectionMutation.isPending}
-                            title={!activeGroup ? '请先选择具体分组' : activeGroupProjectionSuspended ? `系统已暂停投影：${activeGroupSuspensionReason || '最近模型同步失败，请重新同步恢复'}` : activeGroup.projection_disabled ? '恢复生成投影渠道并显示到分组编辑' : '停止生成投影渠道并从分组编辑中移除'}
+                            disabled={!activeGroup || activeGroupProjectionSuspended || activeGroupPolicyBlocked || groupProjectionMutation.isPending}
+                            title={!activeGroup ? '请先选择具体分组' : activeGroupProjectionSuspended ? `系统已暂停投影：${activeGroupSuspensionReason || '最近模型同步失败，请重新同步恢复'}` : activeGroupPolicyBlocked ? `倍率策略阻断：${activeGroupPolicyReason}` : activeGroup.projection_disabled ? '恢复生成投影渠道并显示到分组编辑' : '停止生成投影渠道并从分组编辑中移除'}
                         >
-                            {activeGroupProjectionSuspended ? <CirclePause className="size-4" /> : <Waypoints className={cn('size-4', groupProjectionMutation.isPending && 'animate-spin')} />}
-                            {activeGroupProjectionSuspended ? '已暂停' : activeGroup?.projection_disabled ? '不投影' : '投影'}
+                            {activeGroupProjectionSuspended || activeGroupPolicyBlocked ? <CirclePause className="size-4" /> : <Waypoints className={cn('size-4', groupProjectionMutation.isPending && 'animate-spin')} />}
+                            {activeGroupProjectionSuspended ? '已暂停' : activeGroupPolicyBlocked ? '倍率阻断' : activeGroup?.projection_disabled ? '不投影' : '投影'}
                         </Button>
 
                         <Popover>
@@ -2183,6 +2212,7 @@ function SiteAccountPanel({
                                                     disabled={createKeyMutation.isPending}
                                                 >
                                                     {group.group_name || group.group_key}
+                                                    <span className="text-[10px] text-amber-700/80 dark:text-amber-200/80">{formatGroupMultiplier(group.group_multiplier, group.multiplier_known)}</span>
                                                     <span className="text-[10px] text-amber-700/80 dark:text-amber-200/80">
                                                         {createKeyMutation.isPending && creatingGroup?.group_key === group.group_key ? '创建中...' : '快捷创建'}
                                                     </span>
@@ -2230,6 +2260,7 @@ function SiteAccountPanel({
                                                     onClick={() => handleOpenProjectedKeys(group)}
                                                 >
                                                     {group.group_name || group.group_key}
+                                                    <span className="text-[10px] text-muted-foreground">{formatGroupMultiplier(group.group_multiplier, group.multiplier_known)}</span>
                                                     <span className="text-[10px] text-muted-foreground">{group.projected_keys.length} Keys</span>
                                                 </Button>
                                             ))}
@@ -2288,7 +2319,7 @@ function SiteAccountPanel({
                     <DialogHeader>
                         <DialogTitle className="text-lg font-semibold">快捷创建站点 Key</DialogTitle>
                         <DialogDescription>
-                            为分组 {creatingGroup?.group_name || creatingGroup?.group_key || '-'} 在账号 {account.account_name} 下创建新 Key，并在创建后立即同步当前卡片。
+                            为分组 {creatingGroup?.group_name || creatingGroup?.group_key || '-'} 在账号 {account.account_name} 下创建新 Key，并在创建后立即同步当前卡片。当前倍率：{formatGroupMultiplier(creatingGroup?.group_multiplier, creatingGroup?.multiplier_known)}。
                         </DialogDescription>
                     </DialogHeader>
 
@@ -2456,7 +2487,7 @@ function SiteAccountPanel({
                     <DialogHeader className="shrink-0 border-b border-border/60 px-6 py-4">
                         <DialogTitle className="text-lg font-semibold">管理站点 Key</DialogTitle>
                         <DialogDescription>
-                            分组 {editingProjectedGroup?.group_name || editingProjectedGroup?.group_key || '-'} 的站点 Key 真源会在保存后更新，并重新投影到所有托管渠道。
+                            分组 {editingProjectedGroup?.group_name || editingProjectedGroup?.group_key || '-'} 的站点 Key 真源会在保存后更新，并重新投影到所有托管渠道。当前倍率：{formatGroupMultiplier(editingProjectedGroup?.group_multiplier, editingProjectedGroup?.multiplier_known)}。
                         </DialogDescription>
                     </DialogHeader>
 

@@ -220,6 +220,14 @@ export type RouteDecisionReason = {
     compatibility?: 'exact' | 'lossy' | 'unsupported';
     capabilities?: ProtocolFeatureDecision[];
     warnings?: string[];
+    multiplier?: number | null;
+    group_multiplier?: number | null;
+    effective_multiplier?: number | null;
+    multiplier_source?: 'group' | 'candidate' | string;
+    multiplier_cap?: number | null;
+    multiplier_known?: boolean;
+    policy_status?: 'allowed' | 'blocked' | 'unknown' | 'tentative' | string;
+    policy_reason?: string;
     included: boolean;
     reason: string;
     score: number;

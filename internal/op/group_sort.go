@@ -3,7 +3,6 @@ package op
 import (
 	"context"
 	"fmt"
-	"math"
 
 	"github.com/bestruirui/octopus/internal/db"
 	"github.com/bestruirui/octopus/internal/model"
@@ -60,7 +59,6 @@ func SortGroupsByStrategy(groupIDs []int, ctx context.Context) (int64, error) {
 	// Load metadata
 	bindingMap, _ := SiteChannelBindingMapByChannelIDs(channelIDs, ctx)
 	balanceByAccount := accountBalanceMap(ctx, bindingMap)
-	multiplierByKey := channelCandidateMultiplierMap(ctx, channelIDs)
 	groupMultiplierByChannel := channelGroupMultiplierMap(ctx, bindingMap)
 
 	var totalSorted int64
@@ -89,11 +87,10 @@ func SortGroupsByStrategy(groupIDs []int, ctx context.Context) (int64, error) {
 				balance = balanceByAccount[binding.SiteAccountID]
 			}
 
-			mul := math.Inf(1)
-			if gm := groupMultiplierByChannel[item.ChannelID]; gm != nil {
-				mul = *gm
-			} else if m := multiplierByKey[routeCandidateKey(item.ChannelID, item.ModelName)]; m != nil {
-				mul = *m
+			// 阶段 2 补充（D2' A' + 修订 11）：candidate 不再参与排序；排序统一「known=true 用真实值，否则按 1x」
+			mul := 1.0
+			if gm, ok := groupMultiplierByChannel[item.ChannelID]; ok && gm.Known {
+				mul = gm.Value
 			}
 
 			items = append(items, enrichedItem{

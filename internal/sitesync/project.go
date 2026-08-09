@@ -303,7 +303,7 @@ func isSiteGroupProjectionActive(siteRecord *model.Site, account *model.SiteAcco
 	if !hasUsableToken(tokens) {
 		return false
 	}
-	if group.ProjectionDisabled || group.ProjectionSuspended {
+	if group.ProjectionDisabled || group.ProjectionSuspended || group.PolicyBlocked {
 		return false
 	}
 	switch group.ModelSyncStatus {
@@ -323,6 +323,9 @@ func isSiteGroupProjectionSystemPaused(group model.SiteUserGroup) bool {
 		return false
 	}
 	if group.ProjectionSuspended {
+		return true
+	}
+	if group.PolicyBlocked {
 		return true
 	}
 	switch group.ModelSyncStatus {

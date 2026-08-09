@@ -201,20 +201,28 @@ type CatalogSyncResult struct {
 }
 
 type RouteDecisionReason struct {
-	RouteCandidateID int                       `json:"route_candidate_id"`
-	ChannelID        int                       `json:"channel_id"`
-	UpstreamModel    string                    `json:"upstream_model"`
-	Status           RouteCandidateStatus      `json:"status"`
-	OutboundProtocol ProtocolName              `json:"outbound_protocol"`
-	ProtocolMode     ProtocolExecutionMode     `json:"protocol_mode,omitempty"`
-	ProtocolPolicy   ProtocolPolicy            `json:"protocol_policy,omitempty"`
-	AllowLossy       bool                      `json:"allow_lossy"`
-	Compatibility    ProtocolCompatibility     `json:"compatibility,omitempty"`
-	Capabilities     []ProtocolFeatureDecision `json:"capabilities,omitempty"`
-	Warnings         []string                  `json:"warnings,omitempty"`
-	Included         bool                      `json:"included"`
-	Reason           string                    `json:"reason"`
-	Score            float64                   `json:"score"`
+	RouteCandidateID    int                       `json:"route_candidate_id"`
+	ChannelID           int                       `json:"channel_id"`
+	UpstreamModel       string                    `json:"upstream_model"`
+	Status              RouteCandidateStatus      `json:"status"`
+	OutboundProtocol    ProtocolName              `json:"outbound_protocol"`
+	ProtocolMode        ProtocolExecutionMode     `json:"protocol_mode,omitempty"`
+	ProtocolPolicy      ProtocolPolicy            `json:"protocol_policy,omitempty"`
+	AllowLossy          bool                      `json:"allow_lossy"`
+	Compatibility       ProtocolCompatibility     `json:"compatibility,omitempty"`
+	Capabilities        []ProtocolFeatureDecision `json:"capabilities,omitempty"`
+	Warnings            []string                  `json:"warnings,omitempty"`
+	Multiplier          *float64                  `json:"multiplier,omitempty"`
+	GroupMultiplier     *float64                  `json:"group_multiplier,omitempty"`
+	EffectiveMultiplier *float64                  `json:"effective_multiplier,omitempty"`
+	MultiplierSource    string                    `json:"multiplier_source,omitempty"`
+	MultiplierCap       *float64                  `json:"multiplier_cap,omitempty"`
+	MultiplierKnown     *bool                     `json:"multiplier_known,omitempty"`
+	PolicyStatus        string                    `json:"policy_status,omitempty"`
+	PolicyReason        string                    `json:"policy_reason,omitempty"`
+	Included            bool                      `json:"included"`
+	Reason              string                    `json:"reason"`
+	Score               float64                   `json:"score"`
 }
 
 type RoutePreview struct {

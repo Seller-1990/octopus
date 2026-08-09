@@ -528,6 +528,7 @@ func ChannelLLMList(ctx context.Context) ([]model.LLMChannel, error) {
 			copy := item
 			binding = &copy
 		}
+		gm, gmOK := groupMultiplierByChannel[channel.ID]
 		siteName := ""
 		siteAccountName := ""
 		siteGroupKey := ""
@@ -611,18 +612,32 @@ func ChannelLLMList(ctx context.Context) ([]model.LLMChannel, error) {
 				IsReserve:       channelIsReserve,
 				Balance:         balance,
 				Multiplier:      multiplier,
-				GroupMultiplier: groupMultiplierByChannel[channel.ID],
+				GroupMultiplier: channelGroupMultiplierPointer(gm, gmOK),
 			})
 		}
 	}
 	return models, nil
 }
 
+// SiteUserGroupMultiplierValue 读路径返回的分组倍率与来源可信度。
+type SiteUserGroupMultiplierValue struct {
+	Value float64
+	Known bool
+}
+
+// channelGroupMultiplierPointer 取结构体 Value 的指针（兼容展示层 *float64 消费；未知时返回 nil）。
+func channelGroupMultiplierPointer(v SiteUserGroupMultiplierValue, ok bool) *float64 {
+	if !ok {
+		return nil
+	}
+	return &v.Value
+}
+
 func channelGroupMultiplierMap(
 	ctx context.Context,
 	bindingMap map[int]model.SiteChannelBinding,
-) map[int]*float64 {
-	result := make(map[int]*float64, len(bindingMap))
+) map[int]SiteUserGroupMultiplierValue {
+	result := make(map[int]SiteUserGroupMultiplierValue, len(bindingMap))
 	accountIDs := distinctSiteAccountIDs(bindingMap)
 	if len(accountIDs) == 0 {
 		return result
@@ -632,8 +647,7 @@ func channelGroupMultiplierMap(
 	for channelID, binding := range bindingMap {
 		groupKey, _ := model.ParseSiteChannelBindingKey(binding.GroupKey)
 		if value, ok := values[siteAccountGroupKey(binding.SiteAccountID, groupKey)]; ok {
-			multiplier := value
-			result[channelID] = &multiplier
+			result[channelID] = value
 		}
 	}
 	return result
@@ -655,33 +669,28 @@ func distinctSiteAccountIDs(bindingMap map[int]model.SiteChannelBinding) []int {
 	return result
 }
 
-func persistedSiteGroupMultiplierMap(ctx context.Context, accountIDs []int) map[string]float64 {
-	result := make(map[string]float64)
+func persistedSiteGroupMultiplierMap(ctx context.Context, accountIDs []int) map[string]SiteUserGroupMultiplierValue {
+	result := make(map[string]SiteUserGroupMultiplierValue)
 	var groups []model.SiteUserGroup
 	if err := db.GetDB().WithContext(ctx).
-		Select("site_account_id, group_key, multiplier, raw_payload").
+		Select("site_account_id, group_key, multiplier, multiplier_known").
 		Where("site_account_id IN ? AND multiplier IS NOT NULL", accountIDs).
 		Find(&groups).Error; err != nil {
+		// 阶段 2 补充：查询失败保持「未知→放行」（与两态一致，避免 DB 抖动误拦 503），
+		// 但必须告警让 cap 失效可观测（cap 是成本控制点）。
+		log.Warnf("load site group multipliers failed, treating as unknown (cap inactive): %v", err)
 		return result
 	}
 	for _, group := range groups {
 		if group.Multiplier == nil || !validGroupMultiplier(*group.Multiplier) {
 			continue
 		}
-		result[siteAccountGroupKey(group.SiteAccountID, group.GroupKey)] = *group.Multiplier
-	}
-	var rawGroups []model.SiteUserGroup
-	if err := db.GetDB().WithContext(ctx).
-		Select("site_account_id, group_key, raw_payload").
-		Where("site_account_id IN ? AND multiplier IS NULL AND raw_payload <> ''", accountIDs).
-		Find(&rawGroups).Error; err != nil {
-		return result
-	}
-	for _, group := range rawGroups {
-		if multiplier, ok := storedSiteGroupMultiplier(group.RawPayload, group.GroupKey); ok {
-			result[siteAccountGroupKey(group.SiteAccountID, group.GroupKey)] = multiplier
+		result[siteAccountGroupKey(group.SiteAccountID, group.GroupKey)] = SiteUserGroupMultiplierValue{
+			Value: *group.Multiplier,
+			Known: group.MultiplierKnown != nil && *group.MultiplierKnown,
 		}
 	}
+	// 阶段 2 补充：raw_payload 读时兜底关闭（两态下未知放行，兜底只会掩盖「暂定/未知」标注）。
 	return result
 }
 

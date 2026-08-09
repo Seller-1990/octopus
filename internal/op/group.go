@@ -17,6 +17,7 @@ var groupMap = cache.New[string, model.Group](16)
 func GroupList(ctx context.Context) ([]model.Group, error) {
 	groups := make([]model.Group, 0, groupCache.Len())
 	for _, group := range groupCache.GetAll() {
+		group.Items = applyGroupItemMultiplierPolicies(ctx, group.Items)
 		groups = append(groups, group)
 	}
 	return groups, nil
@@ -56,7 +57,7 @@ func GroupGetEnabledMap(name string, ctx context.Context) (model.Group, error) {
 		}
 		enabledItems = append(enabledItems, item)
 	}
-	group.Items = enabledItems
+	group.Items = applyGroupItemMultiplierPolicies(ctx, enabledItems)
 	return group, nil
 }
 

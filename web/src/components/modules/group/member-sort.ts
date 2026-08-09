@@ -3,6 +3,7 @@ export type SortableGroupMember = {
     balance?: number | null;
     multiplier?: number | null;
     group_multiplier?: number | null;
+    multiplier_known?: boolean | null;
 };
 
 export type GroupSortStrategy =
@@ -15,8 +16,13 @@ function getBalance(m: SortableGroupMember): number {
     return m.balance ?? 0;
 }
 
+// 阶段 5 v2 Y5：与后端修订 11 对齐——仅 known=true 用真实分组倍率；暂定/未知一律按 1x；
+// candidate multiplier（item.multiplier）不再参与排序（D2' A'）。
 function getMultiplier(m: SortableGroupMember): number {
-    return m.group_multiplier ?? m.multiplier ?? Number.POSITIVE_INFINITY;
+    if (m.multiplier_known === true) {
+        return m.group_multiplier ?? 1;
+    }
+    return 1;
 }
 
 function getTier(m: SortableGroupMember): number {

@@ -52,7 +52,7 @@ type SiteModelPriceQuote struct {
 	PerRequest           float64          `json:"per_request"`
 	ModelMultiplier      float64          `json:"model_multiplier" gorm:"not null;default:0"` // 模型倍率(如0.1x/1x)，0 表示未知
 	GroupMultiplier      float64          `json:"group_multiplier" gorm:"not null;default:1"`
-	GroupMultiplierKnown bool             `json:"-" gorm:"-"`
+	GroupMultiplierKnown bool             `json:"group_multiplier_known,omitempty"` // 阶段 6：持久化（计费快照需在读取后恢复 known）；json 暴露供备份 roundtrip（Z1）
 	ExchangeRateToUSD    float64          `json:"exchange_rate_to_usd" gorm:"not null"`
 	RawPayload           string           `json:"raw_payload,omitempty" gorm:"type:text"`
 	ObservedAt           time.Time        `json:"observed_at" gorm:"index"`
@@ -96,22 +96,23 @@ type CurrencyRate struct {
 }
 
 type EffectivePrice struct {
-	QuoteID           int              `json:"quote_id,omitempty"`
-	RouteCandidateID  int              `json:"route_candidate_id,omitempty"`
-	Source            PriceQuoteSource `json:"source"`
-	Unit              PriceUnit        `json:"unit"`
-	Currency          string           `json:"currency"`
-	Input             float64          `json:"input"`
-	Output            float64          `json:"output"`
-	CacheRead         float64          `json:"cache_read"`
-	CacheWrite        float64          `json:"cache_write"`
-	PerRequest        float64          `json:"per_request"`
-	GroupMultiplier   float64          `json:"group_multiplier"`
-	ExchangeRateToUSD float64          `json:"exchange_rate_to_usd"`
-	ObservedAt        *time.Time       `json:"observed_at,omitempty"`
-	Stale             bool             `json:"stale"`
-	Convertible       bool             `json:"convertible"`
-	MatchReason       string           `json:"match_reason,omitempty"`
+	QuoteID              int              `json:"quote_id,omitempty"`
+	RouteCandidateID     int              `json:"route_candidate_id,omitempty"`
+	Source               PriceQuoteSource `json:"source"`
+	Unit                 PriceUnit        `json:"unit"`
+	Currency             string           `json:"currency"`
+	Input                float64          `json:"input"`
+	Output               float64          `json:"output"`
+	CacheRead            float64          `json:"cache_read"`
+	CacheWrite           float64          `json:"cache_write"`
+	PerRequest           float64          `json:"per_request"`
+	GroupMultiplier      float64          `json:"group_multiplier"`
+	GroupMultiplierKnown bool             `json:"group_multiplier_known,omitempty"`
+	ExchangeRateToUSD    float64          `json:"exchange_rate_to_usd"`
+	ObservedAt           *time.Time       `json:"observed_at,omitempty"`
+	Stale                bool             `json:"stale"`
+	Convertible          bool             `json:"convertible"`
+	MatchReason          string           `json:"match_reason,omitempty"`
 }
 
 // CatalogPriceSummary is the effective site price used by the model catalog.

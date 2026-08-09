@@ -493,6 +493,11 @@ func (m *RelayMetrics) saveLog(ctx context.Context, outcome model.RequestOutcome
 		relayLog.PricePerRequest = m.EffectivePrice.PerRequest
 		groupMultiplier := m.EffectivePrice.GroupMultiplier
 		relayLog.PriceGroupMultiplier = &groupMultiplier
+		// 阶段 6：仅解析到价格（Source != unknown）时写 known——nil=未解析到价格（Z2 守卫）
+		if m.EffectivePrice.Source != model.PriceQuoteSourceUnknown {
+			known := m.EffectivePrice.GroupMultiplierKnown
+			relayLog.PriceGroupMultiplierKnown = &known
+		}
 		relayLog.PriceExchangeRateUSD = m.EffectivePrice.ExchangeRateToUSD
 		relayLog.PriceObservedAt = m.EffectivePrice.ObservedAt
 		relayLog.PriceStale = m.EffectivePrice.Stale
