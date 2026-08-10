@@ -320,7 +320,11 @@ func bestEffortWarmupUpstreamWS(
 		}
 	}
 
-	group, err := op.GroupGetEnabledMap(requestModel, ctx)
+	toolsOnly := false
+	if apiKey, keyErr := op.APIKeyGet(apiKeyID, ctx); keyErr == nil {
+		toolsOnly = apiKey.ToolsOnly
+	}
+	group, err := op.GroupGetEnabledMapForTools(requestModel, ctx, toolsOnly)
 	if err != nil {
 		return fmt.Errorf("model not found")
 	}
@@ -421,7 +425,11 @@ func newWSRelayRequest(
 		}
 		routingModel = canonical.Name
 	}
-	group, err := op.GroupGetEnabledMap(routingModel, ctx)
+	toolsOnly := false
+	if apiKey, keyErr := op.APIKeyGet(apiKeyID, ctx); keyErr == nil {
+		toolsOnly = apiKey.ToolsOnly
+	}
+	group, err := op.GroupGetEnabledMapForTools(routingModel, ctx, toolsOnly)
 	if err != nil {
 		return nil, nil, errWSModelNotFound
 	}

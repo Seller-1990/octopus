@@ -86,7 +86,11 @@ func HandleResponsesCompact(c *gin.Context) {
 	}
 	apiKeyID := c.GetInt("api_key_id")
 
-	group, err := op.GroupGetEnabledMap(routingModel, c.Request.Context())
+	toolsOnly := false
+	if apiKey, keyErr := op.APIKeyGet(apiKeyID, c.Request.Context()); keyErr == nil {
+		toolsOnly = apiKey.ToolsOnly
+	}
+	group, err := op.GroupGetEnabledMapForTools(routingModel, c.Request.Context(), toolsOnly)
 	if err != nil {
 		resp.ErrorWithCode(c, http.StatusNotFound, CodeRelayModelNotFound, "model not found")
 		return

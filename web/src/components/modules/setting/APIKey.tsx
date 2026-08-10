@@ -96,6 +96,7 @@ function APIKeyForm({ apiKey, isPending, submitLabel, onSubmit, onClose }: APIKe
         max_cost: apiKey?.max_cost,
         max_rpm: apiKey?.max_rpm,
         supported_models: apiKey?.supported_models,
+        tools_only: apiKey?.tools_only ?? false,
         quota_limit: apiKey?.quota_limit ?? 0,
         quota_period: apiKey?.quota_period ?? 'monthly',
         quota_used: apiKey?.quota_used ?? 0,
@@ -445,6 +446,21 @@ function APIKeyForm({ apiKey, isPending, submitLabel, onSubmit, onClose }: APIKe
                 />
             </div>
 
+            <div className="grid gap-1.5 pt-1">
+                <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-1.5">
+                        <span className="text-xs text-muted-foreground">{t('apiKey.form.toolsOnly')}</span>
+                        <Info className="size-3.5 text-muted-foreground/70" />
+                    </div>
+                    <Switch
+                        checked={form.tools_only ?? false}
+                        onCheckedChange={(checked) => updateForm({ tools_only: checked })}
+                        disabled={isPending}
+                    />
+                </div>
+                <div className="text-[11px] text-muted-foreground/80">{t('apiKey.form.toolsOnlyHint')}</div>
+            </div>
+
             <div className="flex gap-2 pt-2 mt-3">
                 <button
                     type="button"
@@ -654,6 +670,11 @@ function APIKeyKeyItem({
                     <Badge variant={apiKey.enabled ? 'default' : 'secondary'} className="shrink-0 text-[10px]">
                         {apiKey.enabled ? t('apiKey.status.enabled') : t('apiKey.status.disabled')}
                     </Badge>
+                    {apiKey.tools_only && (
+                        <Badge variant="outline" className="shrink-0 text-[10px] border-sky-500/40 text-sky-700 dark:text-sky-300">
+                            {t('apiKey.badge.toolsOnly')}
+                        </Badge>
+                    )}
                 </div>
                 <code className="block truncate text-xs text-muted-foreground">
                     {apiKey.api_key.slice(0, 12)}...{apiKey.api_key.slice(-4)}

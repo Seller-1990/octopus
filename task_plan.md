@@ -1060,3 +1060,308 @@ relayLog.PriceGroupMultiplierKnown = &known
 ### 已知未覆盖（人工验证，analysis doc 记录）
 
 同步触发副作用断言、前端徽标谓词（无 test script）、InitCache 重算单测。
+
+---
+
+> ⚠️ **本方案段（v1）已废弃**：过滤方向错误（「勾选=禁用→只走不支持 tools 的」），且触发点挂错函数。以下方 v2 为准。
+
+## 渠道 tools 能力识别 + Key 级 tools 禁用方案（2026-08-10，实施前定稿，待顾问审查）
+
+> 需求（用户拍板）：① 自动探测每个渠道×模型是否支持 tools（添加时 + 定期/手动）；② API Key 加「禁用 tools」勾选开关；③ 勾选后该 key 路由时跳过「支持 tools」的渠道模型（只走纯聊天/识图渠道）。
+> 关键语义：**勾选=禁用 tools → 只使用 supports_tools=false 的渠道模型**（art tutor 场景：不需要 tools，只用识图/聊天渠道）。
+
+### 现状事实（已核实）
+
+- **请求检测**：`transformer/model/model.go:281` `InternalLLMRequest.Tools []Tool`——请求是否带 tools 可检测。
+- **路由链路**：`relay.go:95` GroupGetEnabledMap → `relay.go:100` CatalogPlanGroup → balancer。`apiKeyID := c.GetInt("api_key_id")`（relay.go:87，middleware/auth.go:120 注入）。
+- **路由粒度**：GroupItem{ChannelID, ModelName}（model/group.go:30）是组内最小路由单元——「渠道×模型」粒度正确（用户要求：有的渠道两个模型一个支持一个不支持）。
+- **探测基础设施**：`grouphealth/probe.go` 有完整探测模式（RunCandidate 37 行、buildProbeRequest 107 行、buildProbeInternalRequest 157 行）——发最小请求验证渠道可用性。**可复用做 tools 探测**。
+- **APIKey 模型**（model/apikey.go:3）：无 tools 字段，需加。
+- **GroupItem 是 gorm 表**（db.go:81 在 AutoMigrate 列表）——加列走 AutoMigrate 自动补。
+
+### 改动清单（8 处）
+
+**改动 A：APIKey 加开关（1 文件 + 1 迁移）**
+
+`internal/model/apikey.go` APIKey 加：
+```go
+DisableTools bool `json:"disable_tools,omitempty"` // 勾选=禁用 tools：该 key 路由只走不支持 tools 的渠道模型
+```
+- 加列走主 AutoMigrate（apikey 在 db.go models 列表）。
+
+**改动 B：GroupItem 加能力标记（1 文件 + 迁移）**
+
+`internal/model/group.go` GroupItem 加（gorm 列，非 `-`）：
+```go
+SupportsTools *bool `json:"supports_tools,omitempty"` // 渠道×模型是否支持 tools；nil=未探测
+```
+- `*bool` 三态：nil=未探测、true=支持、false=不支持。
+- 主 AutoMigrate 自动加列（group_items 在 db.go:81）。
+
+**改动 C：tools 探测器（新文件 internal/op/tools_probe.go）**
+
+复用 grouphealth/probe.go 模式，发**带最小 tools 定义的请求**探测：
+```go
+func ProbeChannelModelToolsSupport(ctx context.Context, channel model.Channel, usedKey model.ChannelKey, modelName string) (bool, error)
+```
+- 构造 InternalLLMRequest：单条 "hi" 消息 + 一个最小 function 定义（`get_weather` 无参数）。
+- 发请求（复用 buildProbeRequest 的 HTTP 构造逻辑或抽公共函数）。
+- **判定**：请求成功（2xx）→ supports_tools=true；上游返回「tools/function calling 不支持」类错误（错误体含 `tools not supported` / `function calling not supported` / `unsupported parameter: tools` 等）→ false；其他错误（网络/限流/4xx 认证）→ **不判定**（返回 err，保持 nil 未探测态，避免误标）。
+- 探测请求是**真实计费请求**（一条 "hi" + tools 定义），成本极低但会扣费——**文档明示**。
+
+**改动 D：探测触发点（2 处）**
+
+1. **添加时**：`GroupItemAdd`（op/group.go:287）在创建 item 后异步触发 `ProbeChannelModelToolsSupport`，回填 `item.SupportsTools`。用 goroutine + ctx 超时（不阻塞主流程）。
+2. **定期/手动**：新增 handler `POST /api/v1/tools-probe/reprobe`（body: channel_id + model_name 或 group_id），手动触发；或同步/定时任务周期重探。**最小实现**：手动接口 + 随 grouphealth 周期（如有定时）复用。
+
+**改动 E：路由过滤（核心，relay 链路）**
+
+- relay.go:87 拿到 apiKeyID 后加载 key：`key, _ := op.APIKeyGet(apiKeyID, ctx)`，取 `key.DisableTools`。
+- **GroupGetEnabledMap 过滤点**（relay.go:95 前）或 CatalogPlanGroup 内：
+  - `key.DisableTools == true` → 过滤 `group.Items`，跳过 `SupportsTools != nil && *SupportsTools`（支持 tools 的条目）。
+  - 语义确认：勾选后「只走不支持 tools 的」——过滤掉支持 tools 的 item。
+  - **未探测（SupportsTools==nil）条目**：默认放行（保持现状），因为未探测不代表支持 tools——文档明示「勾选后未探测条目仍会参与，可能命中支持 tools 渠道；建议先探测」。
+
+**改动 F：前端（2 文件）**
+
+1. `web/src/api/endpoints/key.ts`（或 apikey 端点）：APIKey 类型加 `disable_tools?: boolean`。
+2. Key 管理页（web/src/components/modules/key/ 或对应页）：加「禁用 tools」勾选，tooltip 说明「勾选后该 Key 的请求只使用不支持 tools 的渠道模型（适合纯聊天/识图场景）」。
+3. （可选）分组页 item 行显示 `supports_tools` 标记（探测结果）。
+
+**改动 G：重探接口（1 文件）**
+
+`internal/server/handlers/tools_probe.go`：`POST /api/v1/tools-probe/reprobe`——按 channel_id+model_name 或 group_id 重新探测并回填。
+
+**改动 H：测试（3 处）**
+
+1. tools_probe 判定逻辑单测（成功→true、tools 不支持错误→false、其他错误→不判定 nil）。
+2. 路由过滤单测（key.DisableTools=true 时支持 tools 条目被过滤）。
+3. GroupItemAdd 异步探测触发（mock 探测函数，验证回填）。
+
+### 验收标准
+
+1. `go build ./...` + `go test ./...` 全绿；前端 tsc/lint/build 通过。
+2. Key 页勾选「禁用 tools」后，该 key 请求只走不支持 tools 的渠道模型（支持 tools 的被过滤）。
+3. 添加 GroupItem 后自动探测并回填 supports_tools；手动重探接口可用。
+4. 未探测条目默认放行（不影响现有行为）。
+
+### 已知边界 / 决策点
+
+- **探测计费**：真实请求会扣费（极小），文档明示；可后续加「探测开关」。
+- **未探测语义**：默认放行；勾选 key 可能命中未探测的支持 tools 渠道——建议先探测再勾选。
+- **判定阈值**：仅「明确 tools 不支持」错误判定 false；其他错误不判定（防误标）。
+- **异步探测失败**：保持 nil，下次重探。
+
+---
+
+## 渠道 tools 能力识别方案 v2（2026-08-10，吸收 3 顾问审查 + 用户拍板，实施以此为准）
+
+> 3 顾问审查（后端/逻辑/本质追问者）发现 1 方案级错误 + 3 结构性缺口；用户拍板过滤方向与识图范围。v2 覆盖原方案 A-H，实施以 v2 为准。
+
+### 用户拍板（最终语义）
+
+- **过滤方向**：勾选「仅 tools」→ 该 key 路由时**只走支持 tools 的渠道模型，跳过不支持 tools 的（supports_tools=false）**；未探测（nil）默认放行。
+- **识图范围**：本次**只做 tools 维度**，识图能力不在保证范围（文档/UI 声明：勾选只保证 tools 维度，识图由管理员自选渠道）。
+
+### v2 修正对照
+
+| # | 原方案 | 问题（顾问） | v2 修正 |
+|---|---|---|---|
+| T1 | D: 探测挂 GroupItemAdd | **GroupItemAdd 生产零调用**（真实路径是 GroupUpdate/GroupItemBatchAdd/preset 激活）→ 探测永不触发（后端对抗者，方案级错误） | **触发点改 3 处**：GroupUpdate ItemsToAdd 后、GroupItemBatchAdd 后、preset 激活/镜像后；抽公共 `probeToolsForNewItems(ctx, items)` |
+| T2 | D: 异步回填无缓存刷新 | **回填 DB 后无 groupRefreshCacheByID → 路由读缓存永远 nil**（三顾问一致，结构性缺口） | **回填闭环**：`Model(&GroupItem{}).Update("supports_tools", v)` → `groupRefreshCacheByID` → `resetBalancerStateForChannel`；重探翻转同样触发 |
+| T3 | E: 过滤点 relay.go 或 CatalogPlanGroup | **只改 relay.go 漏 compact/images/ws 三入口**；images 不调 CatalogPlanGroup（逻辑对抗者） | **新增 `GroupGetEnabledMapForTools(name, ctx, disableTools)`**（内部调 GroupGetEnabledMap 后过滤 `SupportsTools!=nil && *SupportsTools==false` 的条目）；relay/compact/ws_client 三个 chat 入口改用；**images 入口不应用**（images 请求无 tools 概念） |
+| T4 | C: 判定 2xx→true | 静默剥参网关 2xx 判 true（伪正，本质追问者 H1）；探测 key（最低 cost）≠ 路由 key（带偏好）（H2） | **true 语义精确定义为「接受 tools 参数」**（非完整工具调用，文档明示）；false 判定要求 **≥2 次同文案错误或跨 key 重试**；白名单覆盖 OpenAI/Anthropic/Gemini/中文网关错误特征 |
+| T5 | E: 未探测 nil 放行 | 逻辑对抗者：nil 放行=不安全侧 | **用户拍板：nil 放行**（默认什么都走）；勾选后只跳过明确 false。文档明示「未探测条目可能实际支持 tools，建议先探测」 |
+| T6 | 缺：过滤后空集 | 勾选 key + 组内全支持 tools → 过滤后空 → 裸 503（逻辑对抗者反例1） | **空集返回明确错误**：「该 key 禁用了 tools 且无可选渠道」（distinct message，非通用 503） |
+| T7 | C: 复用 buildProbeInternalRequest | 该函数无 Tools 字段，需新写（后端对抗者 #5）；embedding 渠道探测无意义 | **新写 `buildToolsProbeInternalRequest`**；`outbound.IsChatChannelType` 跳过 embedding；探测 key 固定选 Enabled 第一个（非 GetChannelKey 最低 cost，避免漂移） |
+| T8 | 迁移描述 | 方案写「+迁移文件」多余（后端对抗者 #7） | **不加迁移文件**，只改 model 结构体（AutoMigrate 自动加列）；回填用 map 路径 Update 避免 *bool 指针零值歧义 |
+
+### v2 改动清单（实施顺序）
+
+1. `model/apikey.go`：APIKey 加 `ToolsOnly bool json:"tools_only,omitempty"`（AutoMigrate 自动加列）
+2. `model/group.go`：GroupItem 加 `SupportsTools *bool json:"supports_tools,omitempty"`（AutoMigrate 自动加列）
+3. `op/tools_probe.go`（新）：`ProbeChannelModelToolsSupport` + `buildToolsProbeInternalRequest` + 错误白名单（多协议）+ false 需 ≥2 次
+4. `op/group.go`：`probeToolsForNewItems` + 回填闭环（Update + groupRefreshCacheByID + resetBalancerStateForChannel）；`GroupGetEnabledMapForTools` 新函数
+5. 触发接线：GroupUpdate（ItemsToAdd 后）、GroupItemBatchAdd 后、group_preset 激活后（safe.Go + Background ctx + 全局信号量 4 + in-flight 去重）
+6. `relay.go`/`compact.go`/`ws_client.go`：chat 入口改用 GroupGetEnabledMapForTools（apiKeyID 取 ToolsOnly）；空集 distinct error
+7. `server/handlers/tools_probe.go`（新）：`POST /api/v1/tools-probe/reprobe`（channel_id+model_name 或 group_id 手动重探）
+8. 前端：key 页加「仅 tools」勾选（tooltip 声明「只保证 tools 维度，识图自选渠道」）；key.ts 类型加 tools_only
+9. 测试：探测判定（成功/false≥2/其他不判定/embedding 跳过）、过滤方向（toolsOnly 过滤 supports_tools=false 保留 true+nil）、回填缓存刷新、空集错误
+
+### v2 验收标准
+
+1. `go build ./...` + `go test ./...` 全绿；前端 tsc/lint/build。
+2. 勾选「仅 tools」→ 该 key 路由只走 supports_tools=true 的渠道（false 被过滤，nil 放行）；未勾选不过滤。
+3. 添加（GroupUpdate/批量/预设）后自动探测回填 + 缓存刷新；手动重探接口可用。
+4. 空集返回明确错误。
+5. images 入口不应用过滤（图片请求不受影响）。
+
+### v2 已知边界（发布说明）
+
+- **true=「接受 tools 参数」**非完整工具调用（静默剥参网关会误判，无法根治，文档明示）。
+- **探测结果可能 stale**（无 TTL/自动重探，手动重探是唯一更新路径；上游能力变化后需手动重探）。
+- **识图不在保证范围**（只做 tools 维度）。
+- **未探测 nil 放行**（勾选后可能命中未探测的支持 tools 渠道）。
+- **探测计费**（真实请求，极小，文档明示）。
+
+
+---
+
+## 外部项目借鉴与需求清单（2026-08-10）
+
+> 来源：对比 my-ai-gateway（独立 Java 实现）与 octopus-customization（同源 fork，领先上游 53 commits）。定位：内网自用。
+> 用户确认排除：直连渠道、分享链接、模型继承。
+
+### 3 条可借鉴（同源或独立，按优先级）
+
+| # | 功能 | 来源 | 说明 | 工作量 |
+|---|---|---|---|---|
+| 1 | **熔断管理面** | octopus-customization | 熔断状态列表（/api/v1/circuit/status）+ 手动重置（/reset）+ 前端 CircuitBreaker.tsx——我们熔断核心已有但无管理面 | 0.5 天 |
+| 2 | **分组/渠道级参数覆盖**（param_override） | octopus-customization | 对特定分组/渠道注入请求参数覆盖（JSON object 校验 + 前端校验 + i18n），解决「某渠道需要特殊参数」 | 1 天 |
+| 3 | **稳定性修补** | octopus-customization | 高并发日志刷写 makeslice panic、弹窗按钮遮挡、测试失败弹窗提示——直接 cherry-pick | 0.5 天 |
+
+### 2 条新需求
+
+| # | 功能 | 状态 |
+|---|---|---|
+| 1 | **渠道 tools 能力识别 + Key 级「仅 tools」开关**（本次方案 v2） | 进行中（方案已落版，待实施） |
+| 2 | **多模态入口模型能力标记**（模型名规律：5v/vision 后缀） | 已认可「入口标识」简单方案（用户拍板：模型名能体现，无需渠道级规则）；未排期 |
+
+### 已排除
+
+- 直连渠道（channel/model 语法）、分享链接、模型继承——用户确认不做。
+
+---
+
+## tools 方案确认轮结论（2026-08-10，多来源调研 + 2 顾问确认后，v2 增补 T9）
+
+> 多来源调研（smart-search：LiteLLM/new-api 靠转换层不做模型级探测；llm-probe 验证 tool_calls 产出）+ 2 顾问确认（本质追问者/反驳者）结论一致：
+> **① 不采纳 tool_calls 验证作为主判定**——伪负>伪正（模型不遵循 tool_choice=required、MaxTokens=16 截断、三协议 required 语义不等价），且探测是内嵌在线判定 vs llm-probe 离线审计，语境不同。
+> **② 必须补「失败反馈学习」闭环（P0）**——2xx→true 对静默剥参网关伪正是用户核心场景失效，方案自认「无法根治」且无缓解；失败反馈学习零成本起步、方向保守，是唯一值得借鉴的实质动作。
+
+### T9 增补（v2 必改项）
+
+**失败反馈学习闭环**（反驳者 P0 / 本质追问者「真实调用证据」）：
+- relay 链路检测：真实请求 `InternalLLMRequest.Tools` 非空（model.go:281 可检测）+ 上游返回「tools 不支持」类错误（复用 T4 已建错误白名单）→ **反向回写该 GroupItem 的 `supports_tools=false`**（复用 ≥2 次规则防瞬态）+ 告警日志。
+- 触发点：relay 各入口错误处理处（chat/compact/ws），识别到 tools 不支持错误时按 `(channelID, modelName)` 回写。
+- 效果：静默剥参网关被真实请求「抓到」后自动降级，弥补 2xx 判定伪正；人工重探可翻转回来。
+
+### 确认后维持（不改）
+
+- **T4 主判定保持 2xx→true**（伪负>伪正；工具调用探测成本高、不稳定）。
+- **用户拍板硬过滤**（勾选=仅 tools→跳过 supports_tools=false；nil 放行）——反驳者建议「降级为排序权重」，**不采纳**（用户明确「直接自动屏蔽/跳过」，语义是硬过滤）；文档明示 best-effort（伪正/伪负边界）。
+- T1/T2/T3/T5/T6/T7/T8 全部维持。
+
+### 确认轮新增已知边界（记录）
+
+- **探测 key≠路由 key**（T7 固定第一个 enabled key vs 路由最低 cost key）：supports_tools 是「渠道整体能力」提示，不代表具体 key；多 key 渠道文档提示。
+- **探测非流式 vs 真实流式**：流式 tools 需额外 beta 头（Anthropic），探测结果可能不覆盖流式形态。
+- **批量探测节流**：预设激活/批量添加时探测队列限速，避免一次几十个真实扣费请求。
+- **无 TTL stale**：手动重探唯一更新路径 + T9 失败反馈自动降级（可部分缓解）。
+
+### 实施清单（v2 最终，含 T9）
+
+1. model/apikey.go：ToolsOnly bool（AutoMigrate 加列）
+2. model/group.go：GroupItem.SupportsTools *bool（AutoMigrate 加列）
+3. op/tools_probe.go（新）：2xx→true 主判定 + 错误白名单（≥2 次 false）+ buildToolsProbeInternalRequest（跳过 embedding）
+4. T9：relay 错误处理检测 tools 不支持 → 回写 false + 告警
+5. 触发：GroupUpdate/GroupItemBatchAdd/preset 激活后异步探测 + 回填闭环（Update+groupRefreshCacheByID+resetBalancerStateForChannel）+ 信号量 4 + in-flight 去重 + 节流
+6. 路由：GroupGetEnabledMapForTools（新增包装不改原签名，images 不应用）+ relay/compact/ws 三 chat 入口改用 + 空集 distinct error
+7. 重探 handler：POST /api/v1/tools-probe/reprobe
+8. 前端：key 页「仅 tools」勾选 + key.ts 类型
+9. 测试：探测判定/过滤方向/回填缓存/T9 失败反馈/空集错误
+
+---
+
+## tools 方案 v3 修正（2026-08-10，正式审查 3 顾问 + 用户拍板后，实施以此为准）
+
+> 正式审查（后端/数据/逻辑对抗者）发现 3 致命 + 多个重伤；用户拍板 2 项。v3 覆盖 v2+T9，实施以 v3 为准。
+
+### 用户拍板（v3 定稿）
+
+1. **过滤粒度：Key 级全部请求过滤**（不采纳逻辑对抗者「请求级带 tools 才过滤」建议）——接受「纯聊天流量也被收窄到支持 tools 渠道」的 trade-off，文档明示。
+2. **功能定位重写**：本功能服务**「需要 function calling 的应用」**（保证带 tools 请求不落到不支持渠道）；art tutor 类「不需要 tools 的应用**无需勾选**」（勾选反而收窄可用渠道），文档/UI 明示，避免反向使用。
+
+### v3 修正对照（3 顾问发现）
+
+| # | 问题（顾问） | 严重级 | v3 修正 |
+|---|---|---|---|
+| U1 | T9 检测点错层：流式 passthrough（Responses HTTP/WS）错误消息在 relay 错误路径不可见（后端对抗者） | 致命 | **T9 检测点下移**：① OpenAI chat transform 流 → `handleStreamResponseV2` error 链；② Responses HTTP passthrough → `handleStreamResponsePassthroughV2` OnFinish/rawBuffer 解析 error 事件；③ WS → `ws_passthrough.go:390` wsUpstreamEventError 处挂白名单；④ 非流式 → relay.go:1233 错误体。白名单抽公共函数（探测 + T9 共用） |
+| U2 | op import grouphealth 循环依赖（后端对抗者） | 致命 | **op 内独立实现** `buildToolsProbeInternalRequest` + 探测发送逻辑（复制 grouphealth 的 HTTP 构造模式，不 import）；删除「复用 buildProbeRequest」措辞 |
+| U3 | 漏 GroupPresetUpdate 第 4 条创建路径（后端对抗者） | 重伤 | 触发点补 **GroupPresetUpdate 镜像重建**（group_preset.go:334 mirror）；触发点从行号改为函数语义：GroupUpdate 提交后 / GroupItemBatchAdd 提交后 / GroupPresetActivate 后 / GroupPresetUpdate mirror 后 |
+| U4 | ≥2 计数无载体（后端/数据对抗者） | 重伤 | **进程内 map**：key=(channelID,modelName)，val={errorHash, count, timestamp}，TTL 10 分钟过期；探测侧与 T9 侧共用同一 registry；重启即清（文档明示） |
+| U5 | preset 激活抹除探测结果（数据对抗者） | 致命 | **preset 重建时按 (channel, model) 匹配旧行继承 SupportsTools**（group_preset.go:421 Delete 前先读旧 map，重建时搬值）——避免每次切换全量重探 + 付费振荡 + true/false→nil 丢失 |
+| U6 | T9 写回跨组单行歧义（数据对抗者） | 重伤 | **T9 写回按 (channel_id, model_name) 全量 UPDATE 所有组行** + `GroupRefreshCacheByIDs` 刷新所有受影响分组；新增导出 op 函数 `ReportToolsUnsupported(ctx, channelID, modelName)` |
+| U7 | false→true 死锁（数据对抗者/逻辑对抗者） | 重伤 | **轻量反向反馈**：真实 tools 请求**成功**且当前标记 false → 回写 nil（待重探）——成本≈0，打破单向退化；false 永不自动回 true 但仍可经成功请求降级为 nil 再重探 |
+| U8 | 标记无来源列（数据对抗者） | 重伤 | GroupItem 加 `SupportsToolsProbeKeyID *int` + `SupportsToolsProbedAt *time.Time` + `SupportsToolsSource string`（probe/manual/t9）——多 key 失真可审计 |
+| U9 | 空集判断位置（数据对抗者） | 可修复 | T6 distinct error 在 **CatalogPlanGroup 之后**判断（区分「ToolsOnly 过滤空」与「协议不兼容空」）；三入口一致 |
+| U10 | 语义矛盾（逻辑对抗者 L1/L2） | 致命 | **已由用户拍板解决**：重新定位为服务需要 tools 的应用，art tutor 无需勾选；文档/UI tooltip 重写 |
+| U11 | 状态机单调退化（逻辑对抗者 L5） | 重伤 | U7 反向反馈 + 手动重探；文档明示「可用集可能随时间收缩，建议定期重探」 |
+| U12 | 循环依赖（数据对抗者 #2） | 已修 | U2 覆盖 |
+| U13 | 多 key 失真 | 记录 | U8 来源列可审计；文档明示「supports_tools 是渠道整体能力提示，不代表具体 key」 |
+
+### v3 实施清单（最终）
+
+1. model/apikey.go：ToolsOnly bool
+2. model/group.go：SupportsTools *bool + SupportsToolsProbeKeyID *int + SupportsToolsProbedAt *time.Time + SupportsToolsSource string（全部 gorm 列，AutoMigrate 加）
+3. op/tools_probe.go（新）：独立 buildToolsProbeInternalRequest（不 import grouphealth）+ 2xx→true 主判定 + 白名单公共函数 + ≥2 registry（内存 map TTL）
+4. op/group.go：probeToolsForNewItems + 回填闭环（Update+GroupRefreshCacheByIDs+resetBalancer）+ GroupGetEnabledMapForTools（新包装不改原签名）+ ReportToolsUnsupported 导出
+5. 触发：GroupUpdate / GroupItemBatchAdd / GroupPresetActivate / GroupPresetUpdate mirror 四函数语义点，异步探测（safe.Go+Background ctx+信号量 4+in-flight 去重+节流）
+6. group_preset.go：重建时继承旧 SupportsTools（U5）
+7. T9 检测点下移：4 个流层错误点挂白名单 → ReportToolsUnsupported（U1）；成功请求反向反馈（U7）
+8. relay/compact/ws chat 入口：改用 GroupGetEnabledMapForTools + 空集 distinct error（CatalogPlanGroup 后判断）
+9. 重探 handler：POST /api/v1/tools-probe/reprobe
+10. 前端：key 页「仅 tools」勾选 + tooltip 重写（服务需要 tools 的应用，art tutor 无需勾选）+ key.ts 类型
+11. 测试：探测判定 / 过滤方向 / preset 继承 / T9 检测各流层 / 反向反馈 / 空集错误 / ≥2 registry
+
+### v3 已知边界（发布说明）
+
+- Key 级过滤 trade-off：纯聊天流量也被收窄到支持 tools 渠道（用户拍板接受）
+- 功能定位：服务需要 function calling 的应用；不需要 tools 的应用无需勾选
+- 静默剥参网关 2xx→true 伪正：T9 无法纠正（无错误响应），仅靠手动重探 + 文档明示
+- 探测 key≠路由 key：来源列可审计
+- ≥2 registry 重启即清：重启后需重新积累
+- 无 TTL：手动重探 + U7 反向反馈 + preset 继承
+
+---
+
+## tools 方案完成记录（2026-08-10）
+
+> 「渠道 tools 能力识别 + Key 级仅 tools 开关」完成。全流程：多来源调研（smart-search）→ 2 顾问确认轮 → 3 顾问正式审查 → 实施 → 3 顾问实施后审查 → 修复闭环。全量测试 29 包 EXIT=0，前端 tsc/lint/build 全绿。
+
+### 最终语义（用户拍板）
+
+- **勾选「仅 tools」** → 该 key 全部请求路由时只走 `supports_tools=true` 的渠道模型（跳过 false；nil 未探测放行）；不勾选不过滤。
+- **功能定位**：服务「需要 function calling 的应用」；不需要 tools 的应用请勿勾选（会收窄可用渠道且不保证识图）。
+- **识图不在保证范围**（只做 tools 维度）。
+
+### 实施清单（最终）
+
+- 模型：APIKey.ToolsOnly；GroupItem.SupportsTools + ProbeKeyID + ProbedAt + Source（AutoMigrate 加列）
+- 探测：internal/toolsprobe 独立包（2xx→true + 白名单 ≥2 false + 信号量 4 + 12s 超时 + MaxTokens=128）；op 经 ToolsProbeFn hook 注入（避开循环依赖）
+- 触发：GroupUpdate / GroupItemBatchAdd / preset 激活+镜像 4 函数点异步探测 + 冷却期 6h 跳过已探测条目
+- preset 继承：重建时按 (channel,model) 搬全字段（值+血缘）
+- 路由过滤：GroupGetEnabledMapForTools 新包装（relay/compact/ws chat 入口；images 不应用）；空集 distinct error
+- T9 失败反馈：非流式 passthrough + transform 标准路径均挂（键=internalRequest.Model 即 item.ModelName）+ ≥2 次确认
+- U7 成功反向反馈：≥2 次独立成功才回写 nil（Source=u7）+ 打破 false→true 死锁
+- 重探 handler：POST /api/v1/tools-probe/reprobe
+- 前端：key 页「仅 tools」勾选 + 徽标 + 三语 locale（hint 明示「不需要工具的应用请勿勾选」）
+- 测试：白名单匹配 + 过滤方向（tools_policy_test.go）
+
+### 实施后审查修复（3 顾问发现 7 项）
+
+- FIX-A：T9/U7 键 requestModel→internalRequest.Model（模型映射场景命中 0 行问题）
+- FIX-B：T9 补挂 transform 标准路径（此前只挂 passthrough，覆盖不对称）
+- FIX-C：U7 加 ≥2 成功门槛 + 元数据一致（Source=u7）
+- FIX-D：探测白名单 ≥2 false 落地（此前命中白名单只返回 error 不回填，是死代码）
+- FIX-E：探测冷却期 6h（避免每日全量重探风暴 + 翻转继承值）
+- FIX-F：op 导出 ConfirmToolsUnsupportedOnce 供探测侧确认
+- FIX-G：preset 继承搬全字段（值+血缘，防 Source 丢失）
+
+### 已知边界（发布说明）
+
+- 静默剥参网关 2xx→true 伪正：T9 无法纠正（无错误响应），手动重探唯一纠正
+- ≥2 registry 进程内 + TTL 10min：重启清零、多实例不共享、不同错误文本不累计
+- 探测真实计费（冷却期缓解，但初次/重探会扣费）
+- U7 恢复依赖非 toolsOnly key 的带 tools 真实请求成功（纯 toolsOnly 部署下 false 需手动 reprobe）
+- 流式 passthrough/WS 错误点未挂 T9（SSE 200+error event，记录为边界）

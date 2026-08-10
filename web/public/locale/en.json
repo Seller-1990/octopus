@@ -395,7 +395,9 @@
         "cancel": "Cancel",
         "create": "Create",
         "save": "Save",
-        "confirm": "Confirm"
+        "confirm": "Confirm",
+        "toolsOnly": "Tools only",
+        "toolsOnlyHint": "When enabled, all requests for this key only use channel models that support tool/function calling. Apps that do not need tools should leave this off (it narrows available channels and does not guarantee vision)."
       },
       "stats": {
         "noData": "No statistics available",
@@ -417,6 +419,9 @@
         "updateError": "Failed to update API key",
         "deleteSuccess": "API key deleted",
         "deleteError": "Failed to delete API key"
+      },
+      "badge": {
+        "toolsOnly": "Tools only"
       }
     },
     "account": {

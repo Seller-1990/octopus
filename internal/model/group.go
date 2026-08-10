@@ -35,6 +35,13 @@ type GroupItem struct {
 	Priority  int    `json:"priority"`
 	Weight    int    `json:"weight"`
 
+	// Tools capability detection (渠道×模型是否支持 tools 调用)。
+	// nil=未探测、true=探测支持（接受 tools 参数）、false=确认不支持（探测或 T9 失败反馈）。
+	SupportsTools           *bool      `json:"supports_tools,omitempty"`
+	SupportsToolsProbeKeyID *int       `json:"supports_tools_probe_key_id,omitempty"` // 探测使用的 key（多 key 渠道审计用）
+	SupportsToolsProbedAt   *time.Time `json:"supports_tools_probed_at,omitempty"`    // 最近探测/反馈时间
+	SupportsToolsSource     string     `json:"supports_tools_source,omitempty"`       // probe/manual/t9
+
 	// Multiplier policy metadata is computed at the API/routing boundary and
 	// is intentionally not persisted with the group membership row.
 	Multiplier          *float64 `json:"multiplier,omitempty" gorm:"-"`

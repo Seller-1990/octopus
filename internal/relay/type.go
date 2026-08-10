@@ -154,3 +154,11 @@ type attemptResult struct {
 	Attribution          dbmodel.AttemptAttribution
 	ProtocolFailureStage dbmodel.ProtocolFailureStage
 }
+
+// hasToolsRequest 判断本次请求是否携带 tools 参数（T9 失败反馈只在带 tools 的真实请求上触发）。
+func (ra *relayAttempt) hasToolsRequest() bool {
+	if ra.internalRequest == nil {
+		return false
+	}
+	return len(ra.internalRequest.Tools) > 0 || ra.internalRequest.ToolChoice != nil
+}

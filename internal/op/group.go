@@ -208,6 +208,14 @@ func GroupUpdate(req *model.GroupUpdateRequest, ctx context.Context) (*model.Gro
 		groupMap.Del(oldName)
 	}
 	resetBalancerStateForChannels(affectedChannelIDs...)
+	// tools 能力探测（v3）：对本次新增的 items 异步探测并回填（含缓存刷新闭环）
+	if len(req.ItemsToAdd) > 0 {
+		probeItems := make([]model.GroupItem, 0, len(req.ItemsToAdd))
+		for _, it := range req.ItemsToAdd {
+			probeItems = append(probeItems, model.GroupItem{ChannelID: it.ChannelID, ModelName: it.ModelName})
+		}
+		probeToolsForNewItems(ctx, probeItems)
+	}
 	return &group, nil
 }
 
@@ -373,6 +381,8 @@ func GroupItemBatchAdd(groupID int, items []model.GroupIDAndLLMName, ctx context
 		channelIDs = append(channelIDs, item.ChannelID)
 	}
 	resetBalancerStateForChannels(channelIDs...)
+	// tools 能力探测（v3）：对批量新增的 items 异步探测并回填
+	probeToolsForNewItems(ctx, newItems)
 	return nil
 }
 

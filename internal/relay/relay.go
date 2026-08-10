@@ -91,8 +91,12 @@ func Handler(inboundType inbound.InboundType, c *gin.Context) {
 		protocolRequirements.InboundProtocol = inboundProtocol
 	}
 
-	// 获取通道分组
-	group, err := op.GroupGetEnabledMap(routingModel, c.Request.Context())
+	// 获取通道分组（toolsOnly key 过滤不支持 tools 的渠道模型，v3）
+	toolsOnly := false
+	if apiKey, keyErr := op.APIKeyGet(apiKeyID, c.Request.Context()); keyErr == nil {
+		toolsOnly = apiKey.ToolsOnly
+	}
+	group, err := op.GroupGetEnabledMapForTools(routingModel, c.Request.Context(), toolsOnly)
 	if err != nil {
 		resp.ErrorWithCode(c, http.StatusNotFound, CodeRelayModelNotFound, "model not found")
 		return
@@ -113,6 +117,9 @@ func Handler(inboundType inbound.InboundType, c *gin.Context) {
 	responsesPassthroughRequired := internalRequest.HasOpenAIResponsesPassthrough()
 	if len(group.Items) == 0 {
 		routeErr := fmt.Errorf("no protocol-compatible channel")
+		if toolsOnly {
+			routeErr = fmt.Errorf("key is tools-only and no tools-capable channel available")
+		}
 		metrics := NewRelayMetrics(apiKeyID, requestModel, rawBody, internalRequest)
 		if canonicalModel != nil {
 			metrics.SetRouting(*canonicalModel, 0, inboundProtocol, dbmodel.ProtocolUnknown, "")
@@ -507,6 +514,10 @@ func (ra *relayAttempt) attempt() attemptResult {
 
 	if fwdErr == nil {
 		// ====== 成功 ======
+		// U7 反向反馈：带 tools 的真实请求成功且该渠道×模型标记 false → 回写 nil 待重探（打破 false→true 死锁）
+		if ra.hasToolsRequest() {
+			op.ReportToolsSupported(ra.channel.ID, ra.internalRequest.Model)
+		}
 		// Passthrough handlers collect response at stream end via PassthroughConfig.CollectMetrics
 		ra.collectResponse()
 		span.SetUsage(ra.metrics.AttemptUsageSnapshot())
@@ -1144,6 +1155,11 @@ func (ra *relayAttempt) forwardViaHTTPPassthrough(ctx context.Context, pt model.
 		body, _ := io.ReadAll(response.Body)
 		statusCode := normalizeUpstreamStatusCode(response.StatusCode, string(body))
 		log.Warnf("upstream error from channel %s: status=%d, body=%s", ra.channel.Name, response.StatusCode, string(body))
+		// T9 失败反馈：带 tools 的真实请求遇 tools 不支持错误 → 回写 supports_tools=false（≥2 次规则在 op 内）
+		// 键用 internalRequest.Model（迭代后 = item.ModelName），与 group_items 行键一致（FIX-A）
+		if ra.hasToolsRequest() {
+			op.ReportToolsUnsupported(ra.channel.ID, ra.internalRequest.Model, string(body))
+		}
 		return statusCode, fmt.Errorf("upstream error: %d: %s", response.StatusCode, string(body))
 	}
 
@@ -1230,6 +1246,10 @@ func (ra *relayAttempt) forwardViaHTTPStandard(ctx context.Context) (int, error)
 		}
 		statusCode := normalizeUpstreamStatusCode(response.StatusCode, string(body))
 		log.Warnf("upstream error from channel %s: status=%d, body=%s", ra.channel.Name, response.StatusCode, string(body))
+		// FIX-B：transform 标准路径同样挂 T9（此前只挂 passthrough，覆盖不对称）
+		if ra.hasToolsRequest() {
+			op.ReportToolsUnsupported(ra.channel.ID, ra.internalRequest.Model, string(body))
+		}
 		return statusCode, fmt.Errorf("upstream error: %d: %s", response.StatusCode, string(body))
 	}
 

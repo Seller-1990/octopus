@@ -209,20 +209,40 @@ func mirrorPresetToActiveGroupTx(tx *gorm.DB, preset *model.GroupPreset) (groupI
 		return group.ID, ids, fmt.Errorf("failed to mirror preset to group: %w", err)
 	}
 
-	// 替换 items：清空再插入
+	// 替换 items：清空再插入。U5：重建前读旧 supports_tools，按 (channel,model) 继承，
+	// 避免每次 preset 切换全量抹除探测结果（true/false→nil 丢失 + 付费重探振荡）。
+	oldTools := make(map[string]model.GroupItem)
+	{
+		var oldItems []model.GroupItem
+		if err := tx.Where("group_id = ?", group.ID).Find(&oldItems).Error; err == nil {
+			for _, it := range oldItems {
+				if it.SupportsTools != nil {
+					oldTools[fmt.Sprintf("%d|%s", it.ChannelID, it.ModelName)] = it
+				}
+			}
+		}
+	}
 	if err = tx.Where("group_id = ?", group.ID).Delete(&model.GroupItem{}).Error; err != nil {
 		return group.ID, ids, fmt.Errorf("failed to clear old items: %w", err)
 	}
 	if len(preset.Items) > 0 {
 		newItems := make([]model.GroupItem, 0, len(preset.Items))
 		for _, it := range preset.Items {
-			newItems = append(newItems, model.GroupItem{
+			row := model.GroupItem{
 				GroupID:   group.ID,
 				ChannelID: it.ChannelID,
 				ModelName: it.ModelName,
 				Priority:  it.Priority,
 				Weight:    it.Weight,
-			})
+			}
+			if old, ok := oldTools[fmt.Sprintf("%d|%s", it.ChannelID, it.ModelName)]; ok {
+				// FIX-G：继承全字段（值 + 血缘），保留探测证据
+				row.SupportsTools = old.SupportsTools
+				row.SupportsToolsProbeKeyID = old.SupportsToolsProbeKeyID
+				row.SupportsToolsProbedAt = old.SupportsToolsProbedAt
+				row.SupportsToolsSource = old.SupportsToolsSource
+			}
+			newItems = append(newItems, row)
 		}
 		if err = tx.Create(&newItems).Error; err != nil {
 			return group.ID, ids, fmt.Errorf("failed to insert new items: %w", err)
@@ -348,6 +368,14 @@ func GroupPresetUpdate(presetID int, req *model.GroupPresetUpdateRequest, ctx co
 			return nil, fmt.Errorf("failed to refresh cache: %w", err)
 		}
 		resetBalancerStateForChannels(affectedChannels...)
+		// tools 能力探测（v3，U3 第 4 触发点）：编辑 active preset 重建 items 后异步探测
+		if len(preset.Items) > 0 {
+			probeItems := make([]model.GroupItem, 0, len(preset.Items))
+			for _, it := range preset.Items {
+				probeItems = append(probeItems, model.GroupItem{ChannelID: it.ChannelID, ModelName: it.ModelName})
+			}
+			probeToolsForNewItems(ctx, probeItems)
+		}
 	}
 	return &preset, nil
 }
@@ -417,7 +445,18 @@ func GroupPresetActivate(presetID int, ctx context.Context) error {
 		}
 	}()
 
-	// 清空旧 items
+	// 清空旧 items（U5：先读旧 supports_tools 供继承）
+	oldTools := make(map[string]model.GroupItem)
+	{
+		var oldItems []model.GroupItem
+		if err := tx.Where("group_id = ?", preset.GroupID).Find(&oldItems).Error; err == nil {
+			for _, it := range oldItems {
+				if it.SupportsTools != nil {
+					oldTools[fmt.Sprintf("%d|%s", it.ChannelID, it.ModelName)] = it
+				}
+			}
+		}
+	}
 	if err := tx.Where("group_id = ?", preset.GroupID).Delete(&model.GroupItem{}).Error; err != nil {
 		tx.Rollback()
 		return fmt.Errorf("failed to clear old items: %w", err)
@@ -427,13 +466,21 @@ func GroupPresetActivate(presetID int, ctx context.Context) error {
 	if len(preset.Items) > 0 {
 		newItems := make([]model.GroupItem, 0, len(preset.Items))
 		for _, it := range preset.Items {
-			newItems = append(newItems, model.GroupItem{
+			row := model.GroupItem{
 				GroupID:   preset.GroupID,
 				ChannelID: it.ChannelID,
 				ModelName: it.ModelName,
 				Priority:  it.Priority,
 				Weight:    it.Weight,
-			})
+			}
+			if old, ok := oldTools[fmt.Sprintf("%d|%s", it.ChannelID, it.ModelName)]; ok {
+				// FIX-G：继承全字段（值 + 血缘），保留探测证据
+				row.SupportsTools = old.SupportsTools
+				row.SupportsToolsProbeKeyID = old.SupportsToolsProbeKeyID
+				row.SupportsToolsProbedAt = old.SupportsToolsProbedAt
+				row.SupportsToolsSource = old.SupportsToolsSource
+			}
+			newItems = append(newItems, row)
 		}
 		if err := tx.Create(&newItems).Error; err != nil {
 			tx.Rollback()
@@ -470,6 +517,14 @@ func GroupPresetActivate(presetID int, ctx context.Context) error {
 		return fmt.Errorf("failed to refresh cache: %w", err)
 	}
 	resetBalancerStateForChannels(channelIDs...)
+	// tools 能力探测（v3）：激活后对 preset items 异步探测（继承的旧值不重探）
+	if len(preset.Items) > 0 {
+		probeItems := make([]model.GroupItem, 0, len(preset.Items))
+		for _, it := range preset.Items {
+			probeItems = append(probeItems, model.GroupItem{ChannelID: it.ChannelID, ModelName: it.ModelName})
+		}
+		probeToolsForNewItems(ctx, probeItems)
+	}
 	return nil
 }
 

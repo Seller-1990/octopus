@@ -395,7 +395,9 @@
         "cancel": "取消",
         "create": "创建",
         "save": "保存",
-        "confirm": "确认"
+        "confirm": "确认",
+        "toolsOnly": "仅 tools",
+        "toolsOnlyHint": "勾选后该 Key 的全部请求只使用支持工具调用（function calling）的渠道模型；不需要工具的应用请勿勾选（会收窄可用渠道且不保证识图）。"
       },
       "stats": {
         "noData": "暂无统计数据",
@@ -417,6 +419,9 @@
         "updateError": "API 密钥更新失败",
         "deleteSuccess": "API 密钥删除成功",
         "deleteError": "API 密钥删除失败"
+      },
+      "badge": {
+        "toolsOnly": "仅 tools"
       }
     },
     "account": {
