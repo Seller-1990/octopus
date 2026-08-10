@@ -65,6 +65,17 @@ func SyncAccount(ctx context.Context, accountID int) (*model.SiteSyncResult, err
 
 	channelIDs, err := ProjectAccount(ctx, account.ID)
 	if err != nil {
+		// F08 修复：persistSyncSnapshot 已写 last_sync_status=snapshot.status（可能 success），
+		// 但 managed channel 投影失败——若继续返回，UI/调度会误以为「同步成功」而路由仍是旧值。
+		// 这里显式把状态纠正为 failed + 标记投影 stale（复用 fetch 失败路径的同一机制）。
+		// 前缀不带「同步成功」断言（snapshot.status 本身可能是 failed，P2 修正避免误导）。
+		projectionMessage := sanitizeSiteStatusText("站点快照已保存但渠道投影失败：" + sanitizeSiteStatusMessage(err))
+		if updateErr := updateAccountSyncState(ctx, account.ID, snapshot.credentialRevision, model.SiteExecutionStatusFailed, projectionMessage); updateErr != nil {
+			log.Warnf("failed to persist projection failure state (account=%d): %v", account.ID, updateErr)
+		}
+		if staleErr := MarkAccountProjectionStale(ctx, account.ID, projectionMessage); staleErr != nil {
+			log.Warnf("failed to mark account projection stale (account=%d): %v", account.ID, staleErr)
+		}
 		return nil, sanitizeSiteError(err)
 	}
 	_, catalogErr := op.CatalogSync(ctx)

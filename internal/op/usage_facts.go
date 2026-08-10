@@ -351,6 +351,20 @@ func UsageFactsPendingLen() int {
 	return len(usagePending)
 }
 
+// DiscardUsageFactsPending 丢弃 restore 前遗留的 usage facts pending（F07，与
+// DiscardRelayLogPending 配对）。restore 用备份覆盖数据库后，旧 pending flush 会
+// 以新库 ID 回灌备份时点之后的用量——丢弃是安全的（这些请求发生在备份快照之后）。
+// P1 修复（并发栅栏）：先取 usageFlushLock 与在途 flush 批次互斥，杜绝 restore
+// commit 之后旧批次才提交的窗口。
+func DiscardUsageFactsPending() {
+	usageFlushLock.Lock()
+	defer usageFlushLock.Unlock()
+
+	usagePendingLock.Lock()
+	usagePending = make([]usagePendingRecord, 0, usageFactBatchSize)
+	usagePendingLock.Unlock()
+}
+
 func usageFactsDrainPending(ctx context.Context, maxBatches int) error {
 	if maxBatches <= 0 {
 		maxBatches = 1

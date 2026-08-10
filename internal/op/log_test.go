@@ -273,3 +273,39 @@ func TestRelayLogAndUsageFactsCommitAtomically(t *testing.T) {
 		t.Fatalf("retry atomic flush: %v", err)
 	}
 }
+
+// TestDiscardTransientStateClearsPending F07 回归：restore 前丢弃进程内 transient 状态，
+// 防止旧 pending 在备份覆盖后以新库 ID 回灌备份时点之后的事件。
+func TestDiscardTransientStateClearsPending(t *testing.T) {
+	ctx := setupCatalogProvisionTest(t)
+
+	// 向队列塞入一条 relay log（模拟 restore 前遗留的旧请求）
+	relayLog := model.RelayLog{
+		RequestAPIKeyID:  999,
+		RequestModelName: "restore-stale-model",
+		Outcome:          model.RequestOutcomeFailed,
+	}
+	usage := usagePendingRecord{}
+	if err := enqueueRelayLogPending(ctx, relayLog, usage); err != nil {
+		t.Fatalf("enqueue relay log: %v", err)
+	}
+	if RelayLogPendingLen() == 0 {
+		t.Fatal("expected relay log pending before discard")
+	}
+	// usage facts 也入队
+	usagePendingLock.Lock()
+	usagePending = append(usagePending, usage)
+	usagePendingLock.Unlock()
+	if UsageFactsPendingLen() == 0 {
+		t.Fatal("expected usage facts pending before discard")
+	}
+
+	DiscardTransientState()
+
+	if RelayLogPendingLen() != 0 {
+		t.Fatalf("relay log pending must be cleared after discard, got %d", RelayLogPendingLen())
+	}
+	if UsageFactsPendingLen() != 0 {
+		t.Fatalf("usage facts pending must be cleared after discard, got %d", UsageFactsPendingLen())
+	}
+}

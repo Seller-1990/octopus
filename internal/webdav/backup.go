@@ -170,8 +170,12 @@ func RestoreFromBackup(ctx context.Context, filename string) (*model.DBImportRes
 		return nil, fmt.Errorf("failed to rewind restore file: %w", err)
 	}
 
+	// F07：restore 真正 import 前丢弃进程内 transient 状态（relay log / usage facts pending）——
+	// 否则旧队列会在备份覆盖后以新库 ID 回灌备份时点之后的事件。
+	// 注意：JSON 路径先解码校验成功后再丢弃（P0 修正：解码失败不白丢 pending）。
 	var result *model.DBImportResult
 	if strings.HasSuffix(filename, backupZipSuffix) {
+		op.DiscardTransientState()
 		result, err = op.DBImportZip(ctx, temp, written)
 	} else {
 		var dump model.DBDump
@@ -186,6 +190,7 @@ func RestoreFromBackup(ctx context.Context, filename string) (*model.DBImportRes
 			}
 			return nil, fmt.Errorf("failed to parse backup: %w", err)
 		}
+		op.DiscardTransientState()
 		result, err = op.DBImportIncremental(ctx, &dump)
 	}
 	if err != nil {
@@ -195,6 +200,8 @@ func RestoreFromBackup(ctx context.Context, filename string) (*model.DBImportRes
 	if err := op.InitCache(); err != nil {
 		log.Warnf("cache refresh after webdav restore failed: %v", err)
 	}
+	// scheduler 间隔刷新由调用方 handler（restoreWebDAVBackup）负责——webdav 包
+	// 不 import task（task → webdav 存在依赖，反向会造成 import cycle）。
 
 	return result, nil
 }

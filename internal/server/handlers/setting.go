@@ -175,6 +175,14 @@ func importDB(c *gin.Context) {
 	var result *model.DBImportResult
 	var importErr error
 
+	// F07：restore 真正执行 import 前丢弃进程内 transient 状态（relay log / usage facts pending）——
+	// 否则旧队列会在备份覆盖后以新库 ID 回灌备份时点之后的事件。
+	// 注意：丢弃须在「解析/校验成功、确认要写库」之后，解码失败/格式非法不应白丢 pending
+	// （P0 修正：原实现在 handler 顶部无条件丢弃，损坏备份返回 400 时 pending 已丢失）。
+	discardBeforeImport := func() {
+		op.DiscardTransientState()
+	}
+
 	contentType := c.GetHeader("Content-Type")
 	if strings.Contains(contentType, "multipart/form-data") {
 		if c.Request.ContentLength > maxDBImportUploadBytes+maxDBImportMultipartOverhead {
@@ -211,6 +219,7 @@ func importDB(c *gin.Context) {
 			fh.Header.Get("Content-Type"),
 			f,
 		) {
+			discardBeforeImport()
 			result, importErr = op.DBImportZip(c.Request.Context(), f, fh.Size)
 		} else {
 			body, err := readLimitedBackup(f, maxDBImportUploadBytes)
@@ -244,6 +253,7 @@ func importDB(c *gin.Context) {
 				resp.Error(c, http.StatusRequestEntityTooLarge, "backup file exceeds upload limit")
 				return
 			}
+			discardBeforeImport()
 			result, importErr = op.DBImportZip(c.Request.Context(), temp, written)
 		} else {
 			body, err := readLimitedBackup(c.Request.Body, maxDBImportUploadBytes)
@@ -264,6 +274,7 @@ func importDB(c *gin.Context) {
 		return
 	}
 	if result == nil {
+		discardBeforeImport()
 		result, importErr = op.DBImportIncremental(c.Request.Context(), &dump)
 		if importErr != nil {
 			resp.Error(c, http.StatusBadRequest, importErr.Error())

@@ -194,6 +194,28 @@ func RelayLogPendingLen() int {
 	return len(relayLogPending)
 }
 
+// DiscardRelayLogPending 丢弃 restore 前进程内遗留的 relay log + usage pending（F07）。
+// restore 用备份覆盖数据库后，旧请求的 pending 队列若继续 flush 会以「新库的关联 ID」
+// 回灌旧日志/用量——审计与统计不再对应备份时点。丢弃是安全的：这些请求发生在备份
+// 快照之后，恢复后本就不应保留。restore 后新的真实请求会重新入队。
+// P1 修复（并发栅栏）：先取 relayLogFlushLock 与在途 flush 批次互斥——若 flush 已复制
+// 批次并开始 DB 写，discard 等待其完成（该批次写的是旧库，merge 语义下保留）；此后
+// 清空 pending，杜绝「restore commit 之后旧批次才提交」的窗口。
+func DiscardRelayLogPending() {
+	relayLogFlushLock.Lock()
+	defer relayLogFlushLock.Unlock()
+
+	relayLogPendingLock.Lock()
+	relayLogPending = make([]model.RelayLog, 0, relayLogBatchSize)
+	relayLogUsagePending = make(map[int64]usagePendingRecord)
+	relayLogPendingBytes = 0
+	relayLogPendingLock.Unlock()
+	// 清空 recent 环形缓冲（同样是对应旧库的展示数据）
+	relayLogRecentLock.Lock()
+	relayLogRecent = relayLogRecent[:0]
+	relayLogRecentLock.Unlock()
+}
+
 func RelayLogDroppedTotal() uint64 {
 	return 0
 }
@@ -1273,4 +1295,13 @@ func RelayLogClear(ctx context.Context) error {
 		log.Debugw("relay_log.clear", "deleted_rows", deletedRows, "batch_count", batchCount, "duration", time.Since(start).String())
 	}
 	return nil
+}
+
+// DiscardTransientState restore 前丢弃进程内 transient 状态（F07）。
+// restore 用备份覆盖数据库后，旧 pending/内存桶 flush 会以新库 ID 回灌备份时点
+// 之后的事件——统一丢弃 relay log + usage facts pending。stats 内存桶（total/daily/hourly
+// cache）由 restore 后的 InitCache 从新库重建，不在此清空（展示层自愈）。
+func DiscardTransientState() {
+	DiscardRelayLogPending()
+	DiscardUsageFactsPending()
 }
