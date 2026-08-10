@@ -21,8 +21,32 @@ const llmPriceUrl = "https://models.dev/api.json"
 
 // registryModel 是 models.dev 中单个模型条目，只取本项目用得到的字段。
 type registryModel struct {
-	ID   string         `json:"id"`
-	Cost model.LLMPrice `json:"cost"`
+	ID         string          `json:"id"`
+	Cost       model.LLMPrice  `json:"cost"`
+	Modalities json.RawMessage `json:"modalities"`
+}
+
+// registryHasVision 判定 models.dev 条目的视觉输入能力：modalities.input 含 image 或 video。
+// 宽松容错：modalities 缺失/结构异常 → 未知（false, 不写列）。
+// P1 修复：不直接依赖顶层 Unmarshal（单条 modalities 结构异常会炸掉整个价格更新）——
+// 这里用 RawMessage 单独防御解析，异常降级为 false 而非整包失败。
+func registryHasVision(raw json.RawMessage) bool {
+	if len(raw) == 0 || string(raw) == "null" {
+		return false
+	}
+	var m struct {
+		Input []string `json:"input"`
+	}
+	if err := json.Unmarshal(raw, &m); err != nil {
+		return false // 结构异常 → 未知，不判定
+	}
+	for _, in := range m.Input {
+		switch strings.ToLower(strings.TrimSpace(in)) {
+		case "image", "video":
+			return true
+		}
+	}
+	return false
 }
 
 type registryProvider struct {
@@ -50,6 +74,13 @@ func UpdateLLMPrice(ctx context.Context) error {
 	defer func() {
 		log.Debugf("update LLM price task finished, update time: %s", time.Since(startTime))
 	}()
+	// 方案 C（稳定性自查）：ctx 无 deadline 时（任务 goroutine 用 context.Background 调用）
+	// HTTP 请求无超时——models.dev 挂起会让任务永不返回，task 的 running 标志永久阻塞后续所有价格更新。
+	if _, hasDeadline := ctx.Deadline(); !hasDeadline {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, 30*time.Second)
+		defer cancel()
+	}
 	client, err := client.GetHTTPClientSystemProxy(false)
 	if err != nil {
 		return err
@@ -84,8 +115,31 @@ func UpdateLLMPrice(ctx context.Context) error {
 	}
 	globalprice.Replace(prices)
 	modelvendor.ReplaceIndex(vendorIndex(rawPrice))
+	modelvendor.ReplaceVisionIndex(visionIndex(rawPrice))
 	lastUpdateTime = time.Now()
 	return nil
+}
+
+// visionIndex 把 models.dev 的 provider→models 结构翻成「模型名 → 视觉能力」索引。
+// 与 vendorIndex 同源：遍历**全部** provider（不套价格白名单——P1 修复：
+// 覆盖 mistral/meta/cohere 等非价格厂商的视觉模型，如 pixtral 旗舰），
+// 托管方（openrouter/groq）由 ReplaceVisionIndex 的 prefixAliases 过滤裁掉。
+// key 与 item.ID 双写（对齐 vendorIndex 口径，P1 修复 vendor/ 前缀模型名可查）。
+func visionIndex(raw map[string]registryProvider) map[string]modelvendor.VisionEntry {
+	index := make(map[string]modelvendor.VisionEntry)
+	for provider, entry := range raw {
+		for key, item := range entry.Models {
+			vision := registryHasVision(item.Modalities)
+			for _, name := range []string{key, item.ID} {
+				name = strings.ToLower(strings.TrimSpace(name))
+				if name == "" {
+					continue
+				}
+				index[name] = modelvendor.VisionEntry{Provider: provider, Vision: vision}
+			}
+		}
+	}
+	return index
 }
 
 // vendorIndex 把 models.dev 的 provider→models 结构翻成「模型名 → provider」索引。

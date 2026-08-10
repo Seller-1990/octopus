@@ -43,6 +43,106 @@ func circuitKey(channelID, keyID int, modelName string) string {
 	return fmt.Sprintf("%d:%d:%s", channelID, keyID, modelName)
 }
 
+// CircuitStatus 熔断状态快照条目（管理面板用，结构化字段避免前端解析拼接 key）。
+type CircuitStatus struct {
+	ChannelID    int          `json:"channel_id"`
+	ChannelKeyID int          `json:"channel_key_id"`
+	ModelName    string       `json:"model_name"`
+	State        CircuitState `json:"state"`
+	// StateLabel 人类可读状态（closed/open/half_open），避免前端依赖 int 枚举。
+	StateLabel          string    `json:"state_label"`
+	ConsecutiveFailures int64     `json:"consecutive_failures"`
+	TripCount           int       `json:"trip_count"`
+	LastFailureTime     time.Time `json:"last_failure_time"`
+	// CooldownUntil 冷却结束绝对时间戳（前端本地倒计时，避免高频轮询）。
+	CooldownUntil time.Time `json:"cooldown_until,omitempty"`
+}
+
+// Snapshot 导出全部熔断条目（管理面）。
+// 逐个 entry 持 mu 锁读（circuitEntry 是 Mutex 非 RWMutex——P1 修复：
+// 不持锁直接读字段会读到跨写不一致的撕裂状态；锁序与热路径一致，无死锁）。
+// 顺带惰性清理 Closed 且长时间无失败的纯噪音条目（P1 修复：closed 单调膨胀）。
+func Snapshot() []CircuitStatus {
+	out := make([]CircuitStatus, 0, 8)
+	now := time.Now()
+	globalBreaker.Range(func(key, value any) bool {
+		k, ok := key.(string)
+		if !ok {
+			return true
+		}
+		entry := value.(*circuitEntry)
+
+		entry.mu.Lock()
+		defer entry.mu.Unlock()
+
+		status := CircuitStatus{
+			State:               entry.State,
+			ConsecutiveFailures: entry.ConsecutiveFailures,
+			TripCount:           entry.TripCount,
+			LastFailureTime:     entry.LastFailureTime,
+		}
+		switch entry.State {
+		case StateOpen:
+			status.StateLabel = "open"
+			cooldown := GetCooldown(entry.TripCount)
+			status.CooldownUntil = entry.LastFailureTime.Add(cooldown)
+		case StateHalfOpen:
+			status.StateLabel = "half_open"
+		default:
+			status.StateLabel = "closed"
+		}
+		parseCircuitKey(k, &status)
+
+		// 惰性清理（P1 修复）：仅当「完全健康（失败计数 0）且长时间无活动」才删。
+		// 原条件 `Closed && >10min` 会把「低频故障节律」的失败计数抹掉（每次 Snapshot 后
+		// ConsecutiveFailures 归零 → 永远到不了阈值，熔断对该渠道免疫）；且不能在管理面
+		// 只读操作里改写还在累计失败的状态机。RecordSuccess 后计数为 0 的条目删除安全。
+		if entry.State == StateClosed && entry.ConsecutiveFailures == 0 &&
+			!entry.LastFailureTime.IsZero() && now.Sub(entry.LastFailureTime) > 10*time.Minute {
+			globalBreaker.Delete(k)
+			return true
+		}
+		out = append(out, status)
+		return true
+	})
+	return out
+}
+
+// parseCircuitKey 把 "channelID:keyID:modelName" 拆回结构化字段。
+// 模型名可能含冒号（罕见），故只从左侧切两段，余下全部归 modelName。
+func parseCircuitKey(key string, status *CircuitStatus) {
+	parts := strings.SplitN(key, ":", 3)
+	if len(parts) < 3 {
+		return
+	}
+	var cid, kid int
+	fmt.Sscanf(parts[0], "%d", &cid)
+	fmt.Sscanf(parts[1], "%d", &kid)
+	status.ChannelID = cid
+	status.ChannelKeyID = kid
+	status.ModelName = parts[2]
+}
+
+// ResetCircuit 手动重置熔断状态（管理面）。
+// scope=all 全量重置；否则按 (channelID, keyID, modelName) 精确重置——
+// keyID=0/modelName="" 表示按渠道前缀重置（对齐 resetCircuitBreakerByChannel 先例）。
+func ResetCircuit(scope string, channelID, keyID int, modelName string) {
+	if scope == "all" {
+		globalBreaker.Range(func(key, _ any) bool {
+			globalBreaker.Delete(key)
+			return true
+		})
+		return
+	}
+	if channelID > 0 && keyID > 0 && modelName != "" {
+		globalBreaker.Delete(circuitKey(channelID, keyID, modelName))
+		return
+	}
+	if channelID > 0 {
+		resetCircuitBreakerByChannel(channelID)
+	}
+}
+
 func resetCircuitBreakerByChannel(channelID int) {
 	prefix := fmt.Sprintf("%d:", channelID)
 	globalBreaker.Range(func(key, _ any) bool {

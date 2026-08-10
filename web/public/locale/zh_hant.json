@@ -56,7 +56,8 @@
     "model": "模型",
     "log": "日誌",
     "apikey": "金鑰",
-    "setting": "設定"
+    "setting": "設定",
+    "circuit": "熔斷"
   },
   "toolbar": {
     "search": {
@@ -1044,7 +1045,8 @@
         "anthropic_server_tools": "Anthropic 服務端工具",
         "gemini_extensions": "Gemini 擴展",
         "websocket": "WebSocket"
-      }
+      },
+      "visionCapable": "多模態（支援圖像/視訊輸入，來源 models.dev）"
     },
     "pricing": {
       "title": "有效價格",
@@ -2066,5 +2068,40 @@
       "revokeConfirmTitle": "撤銷驗證會話？",
       "revokeConfirmDescription": "該會話及其活動任務將立即失效。"
     }
+  },
+  "circuit": {
+    "title": "熔斷管理",
+    "tripped": "{count} 個熔斷中",
+    "loading": "載入中...",
+    "empty": "暫無熔斷條目",
+    "memoryHint": "進程內狀態，重啟後清空。",
+    "filter": {
+      "trippedOnly": "僅看熔斷中",
+      "all": "全部",
+      "allChannels": "全部管道"
+    },
+    "resetAll": "全部重設",
+    "resetAllConfirm": "確認全部重設？",
+    "resetItem": "重設",
+    "resetChannel": "重設管道",
+    "resetDone": "熔斷狀態已重設",
+    "resetFailed": "熔斷重設失敗",
+    "col": {
+      "channel": "管道",
+      "key": "Key",
+      "model": "模型",
+      "state": "狀態",
+      "failures": "連續失敗",
+      "trips": "熔斷次數",
+      "cooldown": "剩餘冷卻",
+      "actions": "操作"
+    },
+    "state": {
+      "closed": "正常",
+      "open": "熔斷中",
+      "half_open": "半開",
+      "unknown": "未知"
+    },
+    "channel": "管道"
   }
 }

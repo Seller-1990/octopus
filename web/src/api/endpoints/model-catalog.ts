@@ -76,6 +76,7 @@ export type CanonicalModel = {
     normalized_name: string;
     vendor: string;
     vendor_manual: boolean;
+    vision_capable?: boolean | null;
     routing_strategy: RoutingStrategy;
     protocol_policy: Exclude<ProtocolPolicy, 'inherit'>;
     allow_lossy: boolean;

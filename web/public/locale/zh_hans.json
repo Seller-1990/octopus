@@ -56,7 +56,8 @@
     "model": "模型",
     "log": "日志",
     "apikey": "密钥",
-    "setting": "设置"
+    "setting": "设置",
+    "circuit": "熔断"
   },
   "toolbar": {
     "search": {
@@ -1044,7 +1045,8 @@
         "anthropic_server_tools": "Anthropic 服务端工具",
         "gemini_extensions": "Gemini 扩展",
         "websocket": "WebSocket"
-      }
+      },
+      "visionCapable": "多模态（支持图像/视频输入，来源 models.dev）"
     },
     "pricing": {
       "title": "有效价格",
@@ -2066,5 +2068,40 @@
       "revokeConfirmTitle": "撤销验证会话？",
       "revokeConfirmDescription": "该会话及其活动任务将立即失效。"
     }
+  },
+  "circuit": {
+    "title": "熔断管理",
+    "tripped": "{count} 个熔断中",
+    "loading": "加载中...",
+    "empty": "暂无熔断条目",
+    "memoryHint": "进程内状态，重启后清空。",
+    "filter": {
+      "trippedOnly": "仅看熔断中",
+      "all": "全部",
+      "allChannels": "全部渠道"
+    },
+    "resetAll": "全部重置",
+    "resetAllConfirm": "确认全部重置？",
+    "resetItem": "重置",
+    "resetChannel": "重置渠道",
+    "resetDone": "熔断状态已重置",
+    "resetFailed": "熔断重置失败",
+    "col": {
+      "channel": "渠道",
+      "key": "Key",
+      "model": "模型",
+      "state": "状态",
+      "failures": "连续失败",
+      "trips": "熔断次数",
+      "cooldown": "剩余冷却",
+      "actions": "操作"
+    },
+    "state": {
+      "closed": "正常",
+      "open": "熔断中",
+      "half_open": "半开",
+      "unknown": "未知"
+    },
+    "channel": "渠道"
   }
 }

@@ -1,7 +1,7 @@
 import { lazyWithPreload } from './lazy-with-preload';
 import { lazy, ComponentType } from 'react';
 import type { LucideIcon } from 'lucide-react';
-import { Home, Radio, Sparkles, FolderTree, Settings, Logs, Globe2, Key } from 'lucide-react';
+import { Home, Radio, Sparkles, FolderTree, Settings, Logs, Globe2, Key, ShieldAlert } from 'lucide-react';
 
 export type LazyComponent = ReturnType<typeof lazy> & {
     preload: () => Promise<{ default: ComponentType<Record<string, never>> }>
@@ -22,6 +22,7 @@ const Group_Module = lazyWithPreload(() => import('@/components/modules/group').
 const Log_Module = lazyWithPreload(() => import('@/components/modules/log').then(m => ({ default: m.Log })));
 const APIKey_Module = lazyWithPreload(() => import('@/components/modules/apikey').then(m => ({ default: m.APIKeyPage })));
 const Setting_Module = lazyWithPreload(() => import('@/components/modules/setting').then(m => ({ default: m.Setting })));
+const Circuit_Module = lazyWithPreload(() => import('@/components/modules/circuit').then(m => ({ default: m.Circuit })));
 
 export const ROUTES: RouteConfig[] = [
     { id: 'home', label: 'Home', icon: Home, component: Home_Module },
@@ -31,6 +32,7 @@ export const ROUTES: RouteConfig[] = [
     { id: 'model', label: 'Model', icon: Sparkles, component: Model_Module },
     { id: 'log', label: 'Log', icon: Logs, component: Log_Module },
     { id: 'apikey', label: 'API Key', icon: Key, component: APIKey_Module },
+    { id: 'circuit', label: 'Circuit', icon: ShieldAlert, component: Circuit_Module },
     { id: 'setting', label: 'Setting', icon: Settings, component: Setting_Module },
 ];
 

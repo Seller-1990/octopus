@@ -1405,3 +1405,24 @@ func TestCatalogPlanGroupTierFallsBackToSiteReserve(t *testing.T) {
 		t.Fatalf("fallback reserve tier not applied: got %+v", planned.Items)
 	}
 }
+
+// TestResolveVisionCapable models.dev 索引优先 + 模型名后缀兜底 + nil 未知。
+func TestResolveVisionCapable(t *testing.T) {
+	ctx := setupCatalogProvisionTest(t)
+	_ = ctx
+	// 后缀兜底：显式视觉后缀
+	if v := resolveVisionCapable("glm-4.5v"); v == nil || !*v {
+		t.Fatalf("expected glm-4.5v vision=true via suffix, got %v", v)
+	}
+	if v := resolveVisionCapable("qwen2-vl-72b"); v == nil || !*v {
+		t.Fatalf("expected qwen2-vl-72b vision=true via suffix, got %v", v)
+	}
+	// 无后缀且索引未加载 → nil（未知）
+	if v := resolveVisionCapable("gpt-4o"); v != nil {
+		t.Fatalf("expected gpt-4o nil when index empty, got %v", *v)
+	}
+	// 误伤方向检查：纯文本模型无视觉后缀 → nil
+	if v := resolveVisionCapable("deepseek-v4-flash"); v != nil {
+		t.Fatalf("expected deepseek-v4-flash nil (no vision suffix), got %v", *v)
+	}
+}

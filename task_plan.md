@@ -1708,3 +1708,92 @@ func ProbeChannelModelToolsSupport(ctx context.Context, channel model.Channel, u
 - 死代码 UpdateGroupItemToolsSupport 已删净（grep 无引用）
 - go test 30 包 EXIT=0，gofmt 干净；前端本轮零改动
 - 前端 3 项候选（props 膨胀/行级 3 按钮/writeback 镜像守卫）经前两轮评估为「内网自用可接受」，未过度收口
+
+## 剩余计划整体方案（2026-08-09，登记 4 项 → 摸底收窄为 3 项实施）
+
+> 用户拍板：① 参数覆盖**不做分组级**（渠道级已完整实现：helper.ApplyParamOverride + channel.ParamOverride + 前端 Create/site-channel 编辑）；② 稳定性修补**改为本仓库自查**（外部仓库 makeslice bug 基于自研日志，本仓库用 zap 线程安全，不适用）；③ 4 项整体方案一次过。
+
+### 摸底结论
+
+| # | 功能 | 现状 | 实际缺口 |
+|---|---|---|---|
+| 1 | models.dev 能力分类预填 | price.go 拉 models.dev api.json，**只解析 ID+Cost**；modelvendor 仅厂商索引；CanonicalModel 无能力字段 | 能力字段解析 + 索引 + 入口标记 + 前端徽标 |
+| 2 | 熔断管理面 | circuit.go 核心完整（IsTripped/RecordSuccess/RecordFailure/GetCooldown，sync.Map）；设置前端已有 | **状态快照导出 + 手动重置端点 + 前端面板** |
+| 3 | 分组级参数覆盖 | —— | **取消**（渠道级已满足「某渠道特殊参数」需求） |
+| 4 | 稳定性修补 | 日志 zap（线程安全）；MorphingDialog z-50 | **改为自查**：弹窗 z-index 遮挡、测试失败提示 |
+
+### 方案 A：models.dev 能力分类预填（多模态入口模型能力标记）
+
+**目标**：模型入口（CanonicalModel）标注「多模态」能力，models.dev `capabilities` 作默认预填 + 管理员可覆盖（用户拍板于 task_plan 1402 行）。
+
+- 后端：
+  1. `price.go` registryModel 加 `Capabilities` 字段（models.dev 能力字段如 vision/multimodal/reasoning——实施时按 api.json 实际字段解析，宽松容错）
+  2. `modelvendor` 加能力索引 `ReplaceCapabilityIndex(modelName → capabilities)` + `LookupCapability(name)`；与厂商索引同源（price.go UpdateLLMPrice 一并更新）
+  3. `CanonicalModel` 加 `VisionCapable *bool`（`json:"vision_capable,omitempty"`，nil=未知/未预填）+ `VisionManual bool`（管理员覆盖后不再被 models.dev 覆盖，仿 VendorManual 模式）；迁移补列
+  4. `catalog.go` 建 CanonicalModel 时预填：models.dev capabilities → 有值则写，模型名规则（5v/vision 后缀）兜底，两者都没有 → nil
+- 前端：模型管理列表 CanonicalModel 行加「多模态」徽标（vision_capable=true 显示，nil/false 不渲染）+ 手动开关（可覆盖）
+- 边界：models.dev 不可达 → 跳过预填（降级为模型名规则，再 nil）；同名能力被改的中转站靠管理员覆盖
+
+### 方案 B：熔断管理面
+
+**目标**：熔断状态可视化 + 手动重置（外部项目可借鉴项 #1）。
+
+- 后端：
+  1. `circuit.go` 加 `Snapshot() []CircuitStatus` 导出全部条目（key=channelID:keyID:modelName → State/ConsecutiveFailures/TripCount/LastFailureTime/剩余冷却）；`ResetCircuit(channelID int, keyID int, modelName string)` 手动重置（单条或按渠道全清）
+  2. handlers 加 `GET /api/v1/circuit/status` + `POST /api/v1/circuit/reset`（body: channel_id?/model_name?，空=全量重置，需 Auth）
+- 前端：新增 CircuitBreaker 管理面板（状态列表：渠道/模型/状态/连续失败/熔断次数/剩余冷却 + 重置按钮）；入口放设置页 Reliability 或独立菜单（内网自用，可放 Reliability 节内）
+- 边界：进程内状态（重启清空，文档明示）；熔断是同步热路径，Snapshot 用 RLock 浅拷贝
+
+### 方案 C：稳定性自查（替代外部 cherry-pick）
+
+- 日志刷写：zap 线程安全，无 makeslice 类问题 → 无需改动
+- 弹窗遮挡：核对 MorphingDialog（z-50）与 AlertDialog/Dialog 层级冲突；实测多弹窗叠加
+- 测试失败提示：确认 group-health 测试失败是否有 toast（tools 批量/健康检查路径）
+
+### 验收
+
+- 项 A：go test 全绿 + 前端 tsc/lint/build；CanonicalModel 建表后 vision_capable 正确预填（models.dev 可达时）
+- 项 B：熔断状态列表/重置端点 + 前端面板可用；设置阈值/冷却生效
+- 项 C：自查报告（无问题则记录「无此类问题」）
+
+### 待顾问审查项
+
+- 项 A：CanonicalModel 加列的迁移方式（仿 VendorManual）；预填触发时机（建表时 vs 定期）
+- 项 B：ResetCircuit 粒度（单条/渠道/全量）；Snapshot 热路径开销
+- 项 C：自查范围是否覆盖实际风险
+
+## 剩余计划实施完成记录（2026-08-09，A/B/C 三项 + 实施后 3 顾问审查 + 修复）
+
+> 用户拍板：参数覆盖不做分组级（渠道级已完整）；稳定性改为本仓库自查；整体方案一次过。代理 127.0.0.1:7897 拉取 models.dev 成功，字段结构先验真。
+
+### 实施内容
+**A. models.dev 视觉能力预填（只读徽标版）**
+- 先验真：models.dev api.json 无 capabilities 对象，真实结构为 `modalities:{input:[...],output:[...]}`（tool_call/reasoning 为独立 bool，绝不触碰——用户红线）
+- modelvendor：ReplaceVisionIndex（VisionEntry + prefixAliases 过滤防托管方）+ LookupVision
+- price.go：visionIndex 遍历**全部** provider（不套价格白名单，覆盖 pixtral 等非价格厂商）+ registryHasVision 宽松解析（RawMessage，单条异常不炸价格链路）+ key/ID 双写（vendor/ 前缀可查）
+- catalog.go：resolveVisionCapable（索引优先 + 后缀兜底）+ create 预填 + 存量回填（VisionCapable==nil 守卫）
+- 迁移 026：存量后缀回填（迁移时 models.dev 未加载）
+- 前端：CatalogCard 只读「🖼️ 多模态」徽标（vision_capable===true 显示，nil/false 不渲染）
+
+**B. 熔断管理面**
+- circuit.go：Snapshot()（逐 entry 持锁 + 惰性清理）+ ResetCircuit（scope=item/channel/all）
+- handlers：GET /api/v1/circuit/status + POST /api/v1/circuit/reset（Auth，全量需显式 scope=all）
+- 前端：独立 Circuit 菜单（默认只看熔断中 + 渠道筛选 + 三色状态徽标 + useNow 本地倒计时 + 全量重置强确认 3s 超时还原）
+
+**C. UpdateLLMPrice 30s 超时兜底**（models.dev 挂起不再永久阻塞后续价格更新）
+
+### 实施后审查发现并修复
+| # | 级别 | 问题 | 修复 |
+|---|---|---|---|
+| 1 | P1 | 熔断惰性清理抹掉低频故障计数（Closed 且 >10min → 删 → 计数归零 → 熔断免疫） | 清理条件加 `ConsecutiveFailures==0`（仅完全健康才删）+ 回归测试 |
+| 2 | P1 | modalities 解析耦合价格主链路（单条结构异常炸整个价格更新） | registryModel.Modalities 改 RawMessage 防御解析，异常降级 false |
+| 3 | P1 | vision 索引绑死价格白名单（pixtral 旗舰等漏标）+ vendor/ 前缀查不到 | visionIndex 遍历全部 provider + key/ID 双写 |
+| 4 | P1 | 熔断状态未知 fallback「正常绿」→ 管理员误判无熔断 | fallback 改灰色「未知」+ state.unknown locale 键 |
+| 5 | P1 | navbar circuit 键三语缺失 + NavItem 类型未同步 | navbar locale 补 circuit 键 + NavItem/NAV_ORDER 加 'circuit' |
+| 6 | P1 | 全量重置确认无取消/超时（双击即触发全清） | 确认态 3s 超时自动还原 |
+| 7 | P2 | omni 后缀误判（nvidia-nemotron-3-nano-omni 纯文本被标多模态） | 记录已知边界（纯展示，可接受） |
+
+### 验收
+- go test 30 包 EXIT=0（新增：vision 索引过滤/大小写 2、resolveVisionCapable 1、熔断 Snapshot/清理/Reset 5、清理 P1 回归 2）
+- 前端 tsc/lint/build 全绿
+- 已知边界（发布说明）：后缀兜底有误判可能（纯展示）；半开/closed 无倒计时；重置精确匹配大小写敏感

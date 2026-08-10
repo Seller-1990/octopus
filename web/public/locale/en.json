@@ -56,7 +56,8 @@
     "model": "Models",
     "log": "Log",
     "apikey": "API Key",
-    "setting": "Setting"
+    "setting": "Setting",
+    "circuit": "Circuit"
   },
   "toolbar": {
     "search": {
@@ -1044,7 +1045,8 @@
         "anthropic_server_tools": "Anthropic server tools",
         "gemini_extensions": "Gemini extensions",
         "websocket": "WebSocket"
-      }
+      },
+      "visionCapable": "Multimodal (supports image/video input, from models.dev)"
     },
     "pricing": {
       "title": "Effective price",
@@ -2066,5 +2068,40 @@
       "revokeConfirmTitle": "Revoke verification session?",
       "revokeConfirmDescription": "This session and its active task will become invalid immediately."
     }
+  },
+  "circuit": {
+    "title": "Circuit Breaker",
+    "tripped": "{count} tripped",
+    "loading": "Loading...",
+    "empty": "No circuit breaker entries",
+    "memoryHint": "In-memory state, cleared on restart.",
+    "filter": {
+      "trippedOnly": "Tripped only",
+      "all": "Show all",
+      "allChannels": "All channels"
+    },
+    "resetAll": "Reset all",
+    "resetAllConfirm": "Confirm reset all?",
+    "resetItem": "Reset",
+    "resetChannel": "Reset channel",
+    "resetDone": "Circuit state reset",
+    "resetFailed": "Circuit reset failed",
+    "col": {
+      "channel": "Channel",
+      "key": "Key",
+      "model": "Model",
+      "state": "State",
+      "failures": "Failures",
+      "trips": "Trips",
+      "cooldown": "Cooldown",
+      "actions": "Actions"
+    },
+    "state": {
+      "closed": "Closed",
+      "open": "Open",
+      "half_open": "Half-open",
+      "unknown": "Unknown"
+    },
+    "channel": "Ch"
   }
 }

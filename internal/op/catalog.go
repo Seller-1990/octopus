@@ -30,6 +30,28 @@ func NormalizeModelIdentity(value string) string {
 	return strings.ToLower(strings.TrimSpace(value))
 }
 
+// resolveVisionCapable 解析模型的视觉能力（多模态输入）：
+//  1. models.dev 能力索引优先（modelvendor.LookupVision，模态级静态属性可信）
+//  2. 索引未收录时用模型名后缀兜底（5v/vision/vl 等显式后缀）
+//  3. 都没有 → nil（未知，不预填）
+//
+// 只读徽标版：无手动覆盖字段，预填后不参与任何路由判定（纯标识）。
+func resolveVisionCapable(modelName string) *bool {
+	if vision, ok := modelvendor.LookupVision(modelName); ok {
+		return &vision
+	}
+	lower := strings.ToLower(modelName)
+	// 显式视觉后缀兜底（中文厂商命名惯例 + 通用 vision 后缀）。
+	// 注意：5v/vision 子串误伤概率低（纯文本模型少用这些后缀），漏判方向安全（nil=未知）。
+	for _, suffix := range []string{"5v", "vision", "-vl", "-vlx", "omni", "visual"} {
+		if strings.Contains(lower, suffix) {
+			v := true
+			return &v
+		}
+	}
+	return nil
+}
+
 func catalogRefreshCache(ctx context.Context) error {
 	var canonicals []model.CanonicalModel
 	if err := db.GetDB().WithContext(ctx).Find(&canonicals).Error; err != nil {
@@ -255,6 +277,7 @@ func CatalogSync(ctx context.Context) (model.CatalogSyncResult, error) {
 					Name:            displayName,
 					NormalizedName:  normalized,
 					Vendor:          modelvendor.Detect(displayName),
+					VisionCapable:   resolveVisionCapable(displayName),
 					RoutingStrategy: model.RoutingStrategyBalanced,
 					ProtocolPolicy:  model.ProtocolPolicyAuto,
 					Enabled:         true,
@@ -273,6 +296,16 @@ func CatalogSync(ctx context.Context) (model.CatalogSyncResult, error) {
 						return err
 					}
 					canonical.Vendor = vendor
+				}
+			} else if canonical.VisionCapable == nil {
+				// 存量回填（P0 修复：create-only 预填对迁移前存量行永远 nil）：
+				// 仅当从未预填（nil）时按能力索引回填；无手动覆盖字段（只读徽标版）。
+				if vision, ok := modelvendor.LookupVision(canonical.Name); ok {
+					if err := tx.Model(&model.CanonicalModel{}).Where("id = ?", canonical.ID).
+						Update("vision_capable", vision).Error; err != nil {
+						return err
+					}
+					canonical.VisionCapable = &vision
 				}
 			}
 
