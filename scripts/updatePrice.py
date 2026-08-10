@@ -191,10 +191,22 @@ def main():
         model_count += provider_count
     
     # 生成 Go 文件内容
+    # 修复：跨 provider / 别名可能产生重复 model_id（如 glm-5.2），Go map 字面量不允许
+    # 重复 key —— 按 model_id 全局去重（保留首个出现的条目，保序）。
+    seen: set[str] = set()
+    deduped: list[str] = []
+    for entry in entries:
+        # entry 形如 `  "model_id": { ... },`
+        model_key = entry.split(":", 1)[0].strip().strip('"')
+        if model_key in seen:
+            continue
+        seen.add(model_key)
+        deduped.append(entry)
+
     update_time = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
     content = PRESETS_GO_TEMPLATE.format(
         update_time=update_time,
-        entries="\n".join(entries),
+        entries="\n".join(deduped),
     )
     
     # 写入文件
