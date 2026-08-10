@@ -495,12 +495,12 @@ export function GroupEditor({
             if (isNonDeciding) return m; // pending/required_ignored/unknown 不写
             if (isWeakTrue && m.supports_tools === false) return m; // 弱 true 不覆盖任何 false
             if (isStrongTrue && m.supports_tools === false && m.supports_tools_source === 'manual-force') return m; // 不覆盖管理员强制
-            if (isFalse && (m.supports_tools_source === 'manual' || m.supports_tools_source === 'manual-force')) return m; // ≥2 false 不覆盖强 true/强制
-            const isProtectedSource = m.supports_tools_source === 'manual' || m.supports_tools_source === 'manual-force';
+            if (isFalse && m.supports_tools_source === 'manual-force') return m; // R3：≥2 false 可覆盖 manual，仅 manual-force 永久
+            const isProtectedSource = m.supports_tools_source === 'manual-force';
             return {
                 ...m,
                 supports_tools: isFalse ? false : true,
-                // 镜像后端 CASE WHEN：弱 true 不抹掉 manual/manual-force 保护标记（复审 P0）
+                // R3 修订：仅 manual-force 永久保护（manual 是可被真实失败推翻的观测结果）
                 supports_tools_source: isWeakTrue && isProtectedSource ? m.supports_tools_source : (r.source || m.supports_tools_source),
             };
         }));
@@ -517,15 +517,19 @@ export function GroupEditor({
                     writebackToolsResults(task.results);
                 }
             } catch {
+                // R9 修复：轮询失败（服务重启任务 404 / 网络抖动）不再静默停止——明确提示结果未知
                 stopBatchPolling();
                 setBatchRunning(false);
+                toast.error(t('tools.pollFailed'));
             }
         }, 1500);
-    }, [stopBatchPolling, writebackToolsResults]);
+    }, [stopBatchPolling, writebackToolsResults, t]);
 
     // 单条手动测试；未提交新条目（无 item_id）禁用——Update 按 (channel,model) 命中 0 行静默无效（R8）。
     const handleRunToolsTest = useCallback((member?: SelectedMember) => {
-        if (batchRunning) {
+        // R5 修复：batchRunning 在 onSuccess 后才置 true，双击会让两个 POST 都发出（真实扣费双倍）。
+        // toolsTest.isPending 覆盖 mutation 启动→成功窗口，同步挡第二击。
+        if (batchRunning || toolsTest.isPending) {
             toast.error(t('tools.batchInProgress'));
             return;
         }

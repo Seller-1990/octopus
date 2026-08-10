@@ -219,8 +219,10 @@ func TestApplyToolsProbeResultNonDecidingStatesDontWrite(t *testing.T) {
 	}
 }
 
-// TestUnsupportedDoesNotOverrideExecuted P0 回归：≥2 确认 false（unsupported/T9）不得覆盖 executed 强 true。
-func TestUnsupportedDoesNotOverrideExecuted(t *testing.T) {
+// TestUnsupportedOverridesExecuted R3 契约（评审修订）：≥2 确认 false（unsupported/T9）可覆盖
+// executed 强 true——executed 是一次观测结果，渠道 tools 能力被关闭后系统应自愈；
+// 永久保护仅限管理员显式强制的 manual-force。
+func TestUnsupportedOverridesExecuted(t *testing.T) {
 	ctx := setupCatalogProvisionTest(t)
 	chID, itemID := createToolsFixture(t, ctx)
 
@@ -228,21 +230,24 @@ func TestUnsupportedDoesNotOverrideExecuted(t *testing.T) {
 	if err := ApplyToolsProbeResult(chID, "write-model", model.ToolsProbeResult{State: model.ToolsProbeStateExecuted, Supports: true, Source: "manual"}, nil); err != nil {
 		t.Fatalf("apply executed: %v", err)
 	}
-	// unsupported（≥2 探测确认 false）不得覆盖 executed
+	// unsupported（≥2 探测确认 false）可覆盖 executed（R3）
 	if err := ApplyToolsProbeResult(chID, "write-model", model.ToolsProbeResult{State: model.ToolsProbeStateUnsupported, Source: "probe"}, nil); err != nil {
 		t.Fatalf("apply unsupported: %v", err)
 	}
 	row := loadToolsRow(t, ctx, itemID)
-	if row.SupportsTools == nil || !*row.SupportsTools || row.SupportsToolsSource != "manual" {
-		t.Fatalf("unsupported must NOT override executed, got supports=%v source=%s", row.SupportsTools, row.SupportsToolsSource)
+	if row.SupportsTools == nil || *row.SupportsTools {
+		t.Fatalf("unsupported must override executed (R3), got supports=%v source=%s", row.SupportsTools, row.SupportsToolsSource)
 	}
 
-	// T9 反馈（≥2 失败）同样不得覆盖 executed
+	// 重置后重新 executed，验证 T9（≥2 真实失败）同样可覆盖
+	if err := ApplyToolsProbeResult(chID, "write-model", model.ToolsProbeResult{State: model.ToolsProbeStateExecuted, Supports: true, Source: "manual"}, nil); err != nil {
+		t.Fatalf("re-apply executed: %v", err)
+	}
 	ReportToolsUnsupported(chID, "write-model", "upstream error: 400: tools not supported")
 	ReportToolsUnsupported(chID, "write-model", "upstream error: 400: tools not supported")
 	row = loadToolsRow(t, ctx, itemID)
-	if row.SupportsTools == nil || !*row.SupportsTools || row.SupportsToolsSource != "manual" {
-		t.Fatalf("T9 must NOT override executed, got supports=%v source=%s", row.SupportsTools, row.SupportsToolsSource)
+	if row.SupportsTools == nil || *row.SupportsTools {
+		t.Fatalf("T9 must override executed (R3), got supports=%v source=%s", row.SupportsTools, row.SupportsToolsSource)
 	}
 }
 
@@ -275,9 +280,10 @@ func TestUnsupportedDoesNotOverrideManualForce(t *testing.T) {
 	}
 }
 
-// TestAcceptedDoesNotEraseExecutedSource 复审 P0 回归：accepted（弱 true）不得抹掉 executed 的 source=manual
-// 保护标记——否则后续 ≥2 false 可经 source 降级绕过 executed 保护。
-func TestAcceptedDoesNotEraseExecutedSource(t *testing.T) {
+// TestAcceptedOverridesExecutedSource R3 契约：accepted（弱 true）可覆盖 executed 的 source=manual
+// （R3 后 manual 不再受永久保护，血缘降级无实际后果——unsupported 本就可覆盖 manual 行）。
+// 唯一永久保护是 manual-force。
+func TestAcceptedOverridesExecutedSource(t *testing.T) {
 	ctx := setupCatalogProvisionTest(t)
 	chID, itemID := createToolsFixture(t, ctx)
 
@@ -285,21 +291,21 @@ func TestAcceptedDoesNotEraseExecutedSource(t *testing.T) {
 	if err := ApplyToolsProbeResult(chID, "write-model", model.ToolsProbeResult{State: model.ToolsProbeStateExecuted, Supports: true, Source: "manual"}, nil); err != nil {
 		t.Fatalf("apply executed: %v", err)
 	}
-	// 2) accepted（auto 2xx 弱 true）命中 true 行——source 必须保留 manual（CASE WHEN 保护）
+	// 2) accepted（auto 2xx 弱 true）命中 true 行——值保持 true，source 变 probe（R3 允许）
 	if err := ApplyToolsProbeResult(chID, "write-model", model.ToolsProbeResult{State: model.ToolsProbeStateAccepted, Supports: true, Source: "probe"}, nil); err != nil {
 		t.Fatalf("apply accepted: %v", err)
 	}
 	row := loadToolsRow(t, ctx, itemID)
-	if row.SupportsToolsSource != "manual" {
-		t.Fatalf("accepted must NOT erase executed source=manual, got %s", row.SupportsToolsSource)
+	if row.SupportsTools == nil || !*row.SupportsTools {
+		t.Fatalf("accepted must keep true value, got supports=%v", row.SupportsTools)
 	}
-	// 3) 再遇 unsupported（≥2 false）——source 仍是 manual → 保护生效
+	// 3) 再遇 unsupported（≥2 false）——可覆盖（R3 自愈）
 	if err := ApplyToolsProbeResult(chID, "write-model", model.ToolsProbeResult{State: model.ToolsProbeStateUnsupported, Source: "probe"}, nil); err != nil {
 		t.Fatalf("apply unsupported: %v", err)
 	}
 	row = loadToolsRow(t, ctx, itemID)
-	if row.SupportsTools == nil || !*row.SupportsTools || row.SupportsToolsSource != "manual" {
-		t.Fatalf("executed must survive accepted→unsupported chain, got supports=%v source=%s", row.SupportsTools, row.SupportsToolsSource)
+	if row.SupportsTools == nil || *row.SupportsTools {
+		t.Fatalf("unsupported must override after accepted chain (R3), got supports=%v source=%s", row.SupportsTools, row.SupportsToolsSource)
 	}
 }
 
@@ -401,5 +407,36 @@ func TestResetToolsStateClearsFailureRegistry(t *testing.T) {
 	row := loadToolsRow(t, ctx, itemID)
 	if row.SupportsToolsSource != "u7" {
 		t.Fatalf("reset row must be nil/u7, got source=%s", row.SupportsToolsSource)
+	}
+}
+
+// TestNullSourceRowIsUpdatable R1 回归：旧库 AutoMigrate 加列后 supports_tools_source 为 NULL，
+// 守卫用 COALESCE 后 NULL 行也能被探测结果更新（原 `NOT IN`/`NOT (...)` 对 NULL 求值 UNKNOWN 不命中）。
+func TestNullSourceRowIsUpdatable(t *testing.T) {
+	ctx := setupCatalogProvisionTest(t)
+	chID, itemID := createToolsFixture(t, ctx)
+	// 模拟旧库历史行：supports_tools_source 为 NULL
+	if err := dbpkg.GetDB().WithContext(ctx).Model(&model.GroupItem{}).Where("id = ?", itemID).
+		Updates(map[string]any{"supports_tools": nil, "supports_tools_source": nil, "supports_tools_probed_at": nil}).Error; err != nil {
+		t.Fatalf("seed null source: %v", err)
+	}
+	// executed 应能写 true（COALESCE 空值安全）
+	if err := ApplyToolsProbeResult(chID, "write-model", model.ToolsProbeResult{State: model.ToolsProbeStateExecuted, Supports: true, Source: "manual"}, nil); err != nil {
+		t.Fatalf("apply executed: %v", err)
+	}
+	row := loadToolsRow(t, ctx, itemID)
+	if row.SupportsTools == nil || !*row.SupportsTools {
+		t.Fatalf("executed must write true on NULL-source row (R1), got supports=%v", row.SupportsTools)
+	}
+	// 再置 NULL，T9 失败应能写 false
+	if err := dbpkg.GetDB().WithContext(ctx).Model(&model.GroupItem{}).Where("id = ?", itemID).
+		Updates(map[string]any{"supports_tools": nil, "supports_tools_source": nil, "supports_tools_probed_at": nil}).Error; err != nil {
+		t.Fatalf("seed null again: %v", err)
+	}
+	ReportToolsUnsupported(chID, "write-model", "upstream error: 400: tools not supported")
+	ReportToolsUnsupported(chID, "write-model", "upstream error: 400: tools not supported")
+	row = loadToolsRow(t, ctx, itemID)
+	if row.SupportsTools == nil || *row.SupportsTools {
+		t.Fatalf("T9 must write false on NULL-source row (R1), got supports=%v", row.SupportsTools)
 	}
 }

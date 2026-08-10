@@ -274,13 +274,20 @@ func firstEnabledKeyID(channel model.Channel) *int {
 	return nil
 }
 
-// ApplyToolsProbeResult 按证据层级写探测结果（v3.1 R2/R4）。
+// ApplyToolsProbeResult 按证据层级写探测结果（v3.1 R2/R4，R3 修订）。
 // 证据层级：manual-force（管理员强制）> executed（required 执行确认）> t9（真实失败≥2）= unsupported（探测≥2）> accepted/required_unsupported（弱 2xx）。
+// R3（评审修订）：executed 是「一次观测结果」，不是永久配置——达到 ≥2 真实失败确认的
+// unsupported/T9 可覆盖它（系统自愈：渠道 tools 能力被关闭后自动纠正）。仅管理员显式
+// 强制的 manual-force 永久保护。
 // 写规则：
 //   - executed：强 true 证据，覆盖除 manual-force 外的任何行（含 t9 false）。
 //   - accepted / required_unsupported：弱 true 证据，只写「当前 nil 或 true」的行（不覆盖任何 false，含 t9 false）。
-//   - unsupported：≥2 确认 false，不覆盖 manual-force true，覆盖 nil/true/其他 false。
+//   - unsupported：≥2 确认 false，可覆盖 executed/manual（R3），但绝不覆盖 manual-force。
 //   - pending / required_ignored / unknown：不判定，不写列。
+//
+// 空值安全（R1 修订）：守卫用 COALESCE(source,”) 比较——旧库 AutoMigrate 加列后
+// supports_tools_source 为 NULL，`NULL NOT IN`/`NOT (NULL=...)` 求值为 UNKNOWN 不命中，
+// 导致历史行探测结果静默不落库；COALESCE 让 NULL 行也参与判定。
 func ApplyToolsProbeResult(channelID int, modelName string, result model.ToolsProbeResult, keyID *int) error {
 	if channelID <= 0 || modelName == "" {
 		return nil
@@ -295,19 +302,19 @@ func ApplyToolsProbeResult(channelID int, modelName string, result model.ToolsPr
 	switch result.State {
 	case model.ToolsProbeStateExecuted:
 		updates["supports_tools"] = true
-		// 强 true（required 执行确认）：不覆盖管理员强制标不支持（source=manual-force）
-		if err := base.Where("NOT (supports_tools = ? AND supports_tools_source = ?)", false, "manual-force").
+		// 强 true（required 执行确认）：不覆盖管理员强制标不支持（manual-force），其余行（含 NULL）全更新
+		if err := base.Where("COALESCE(supports_tools_source, '') <> ?", "manual-force").
 			Updates(updates).Error; err != nil {
 			return err
 		}
 	case model.ToolsProbeStateAccepted, model.ToolsProbeStateRequiredUnsupported:
 		updates["supports_tools"] = true
 		// 弱 true：只覆盖 nil 或已 true 的行（不覆盖任何 false）。
-		// source 用 CASE 保留 manual/manual-force 保护标记（复审 P0：不抹掉 executed 强 true 的血缘，
-		// 否则后续 ≥2 false 可经 source 降级绕过 executed 保护）；probed_at 照常推进（避免冷却耦合导致探测风暴）。
+		// source 保留 manual-force 保护标记（R3 后 manual 不再永久保护，无需 CASE 保留）；
+		// probed_at 照常推进。
 		updates["supports_tools_source"] = gorm.Expr(
-			"CASE WHEN supports_tools_source IN (?, ?) THEN supports_tools_source ELSE ? END",
-			"manual", "manual-force", result.Source,
+			"CASE WHEN COALESCE(supports_tools_source, '') = ? THEN supports_tools_source ELSE ? END",
+			"manual-force", result.Source,
 		)
 		if err := base.Where("supports_tools IS NULL OR supports_tools = ?", true).
 			Updates(updates).Error; err != nil {
@@ -315,9 +322,8 @@ func ApplyToolsProbeResult(channelID int, modelName string, result model.ToolsPr
 		}
 	case model.ToolsProbeStateUnsupported:
 		updates["supports_tools"] = false
-		// ≥2 确认 false：不覆盖 executed（source=manual 强 true）与管理员强制（source=manual-force）。
-		// source NOT IN 是正确守卫：manual/manual-force 两类行均保持（P0 修复极性 + R2 层级）。
-		if err := base.Where("supports_tools_source NOT IN ?", []string{"manual", "manual-force"}).
+		// ≥2 确认 false：可覆盖 executed/manual（R3），但绝不覆盖管理员强制（manual-force）。
+		if err := base.Where("COALESCE(supports_tools_source, '') <> ?", "manual-force").
 			Updates(updates).Error; err != nil {
 			return err
 		}
@@ -389,10 +395,11 @@ func ReportToolsUnsupported(channelID int, modelName, errText string) {
 		return // 未达 ≥2 次（同 pattern 累计，probe 与 T9 跨路径共用）
 	}
 	now := time.Now()
-	// T9 是强 false 证据，但不得覆盖 executed（source=manual 强 true）与管理员强制（source=manual-force）
+	// T9 是强 false 证据（≥2 真实失败），可覆盖 executed/manual（R3），但绝不覆盖管理员强制（manual-force）。
+	// COALESCE 空值安全（R1）：NULL source 行也参与判定，历史行失败反馈可落库。
 	if err := db.GetDB().
 		Model(&model.GroupItem{}).
-		Where("channel_id = ? AND model_name = ? AND supports_tools_source NOT IN ?", channelID, modelName, []string{"manual", "manual-force"}).
+		Where("channel_id = ? AND model_name = ? AND COALESCE(supports_tools_source, '') <> ?", channelID, modelName, "manual-force").
 		Updates(map[string]any{
 			"supports_tools":           false,
 			"supports_tools_probed_at": &now,

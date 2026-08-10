@@ -231,6 +231,14 @@ func TestResponseHasToolCallByProtocol(t *testing.T) {
 		{"anthropic tool_use", anthropicResp, outbound.OutboundTypeAnthropic, true},
 		{"gemini functionCall", geminiResp, outbound.OutboundTypeGemini, true},
 		{"responses function_call", responsesResp, outbound.OutboundTypeOpenAIResponse, true},
+		// R7 修复回归：pretty JSON（空白变体）与正文关键词误判
+		{"openai chat pretty json", "{\n  \"choices\": [\n    {\n      \"message\": {\n        \"role\": \"assistant\",\n        \"tool_calls\": [\n          { \"id\": \"call_1\", \"type\": \"function\", \"function\": { \"name\": \"get_weather\", \"arguments\": \"{}\" } }\n        ]\n      }\n    }\n  ]\n}", outbound.OutboundTypeOpenAIChat, true},
+		{"anthropic tool_use space", `{"content":[{"type" : "tool_use"}]}`, outbound.OutboundTypeAnthropic, true},
+		{"gemini keyword in text (no call)", `{"candidates":[{"content":{"parts":[{"text":"the word functionCall appears in prose"}]}}]}`, outbound.OutboundTypeGemini, false},
+		{"gemini pretty functionCall", "{\n  \"candidates\": [\n    {\n      \"content\": {\n        \"parts\": [\n          { \"functionCall\": { \"name\": \"get_weather\" } }\n        ]\n      }\n    }\n  ]\n}", outbound.OutboundTypeGemini, true},
+		{"responses pretty function_call", "{\n  \"output\": [\n    { \"type\": \"function_call\", \"name\": \"get_weather\" }\n  ]\n}", outbound.OutboundTypeOpenAIResponse, true},
+		{"openai chat no choices", `{"id":"1"}`, outbound.OutboundTypeOpenAIChat, false},
+		{"invalid json", `not-json{{{`, outbound.OutboundTypeOpenAIChat, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

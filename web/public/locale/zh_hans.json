@@ -842,7 +842,8 @@
       "resetTools": "恢复自动（解除强制标记，回到未探测待重探）",
       "badgeToolsYes": "探测为支持 tools（协议层接受 tools 参数；复杂工具可用性以实际调用为准）",
       "badgeToolsNo": "探测为不支持 tools，「仅 tools」的 Key 会跳过此渠道",
-      "source": "来源"
+      "source": "来源",
+      "pollFailed": "批量任务状态丢失（服务重启或网络异常），结果未知"
     }
   },
   "model": {

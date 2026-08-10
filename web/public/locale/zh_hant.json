@@ -842,7 +842,8 @@
       "resetTools": "恢復自動（解除強制標記，回到未探測待重探）",
       "badgeToolsYes": "探測為支援 tools（協定層接受 tools 參數；複雜工具可用性以實際呼叫為準）",
       "badgeToolsNo": "探測為不支援 tools，「僅 tools」的 Key 會跳過此管道",
-      "source": "來源"
+      "source": "來源",
+      "pollFailed": "批次任務狀態遺失（服務重啟或網路異常），結果未知"
     }
   },
   "model": {

@@ -188,7 +188,7 @@ function MemberItem({
                         )}
                         {/* supports_tools 为 null/undefined（未探测）不渲染，保持布局精简 */}
                         {(onToolsTest || onToolsForce || onToolsReset) && (
-                            <span className="ml-auto inline-flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100 pointer-events-none group-hover:pointer-events-auto focus-within:pointer-events-auto">
+                            <span className="ml-auto inline-flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100 pointer-events-none group-hover:pointer-events-auto focus-within:pointer-events-auto pointer-coarse:opacity-100 pointer-coarse:pointer-events-auto">
                                 {onToolsTest && (
                                     <button
                                         type="button"

@@ -116,6 +116,8 @@ export function Group() {
         return 1;
     }, []);
 
+    // R10 修复：tools 筛选与 applyDefaults 独立渲染，不依赖 allVendors.length——
+    // 否则单 vendor 部署时整个控制区消失（tools 筛选 + 默认策略按钮都看不到）。
     const vendorChips = allVendors.length > 1 ? (
         <div className="flex flex-wrap items-center gap-1.5 px-1 pb-2">
             <button
@@ -146,6 +148,11 @@ export function Group() {
                     {VENDOR_LABELS[vendor] ?? vendor}
                 </button>
             ))}
+        </div>
+    ) : null;
+
+    const filterControls = (
+        <div className="flex flex-wrap items-center gap-1.5 px-1 pb-2">
             <button
                 type="button"
                 onClick={() => setToolsOnly((prev) => !prev)}
@@ -180,7 +187,7 @@ export function Group() {
                 {t('applyDefaults')}
             </button>
         </div>
-    ) : null;
+    );
 
     return (
         <VirtualizedGrid
@@ -189,7 +196,12 @@ export function Group() {
             estimateItemHeight={520}
             getItemKey={(group, index) => group.id ?? `group-${index}`}
             renderItem={(group) => <GroupCard group={group} />}
-            header={vendorChips}
+            header={
+                <>
+                    {vendorChips}
+                    {filterControls}
+                </>
+            }
         />
     );
 }

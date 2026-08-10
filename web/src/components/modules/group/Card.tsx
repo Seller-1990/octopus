@@ -118,11 +118,13 @@ export function GroupCard({ group }: { group: Group }) {
                     queryClient.invalidateQueries({ queryKey: ['groups', 'list'] });
                 }
             } catch {
+                // R9 修复：轮询失败（服务重启任务 404 / 网络抖动）不再静默停止——明确提示结果未知
                 stopBatchPolling();
                 setBatchActive(false);
+                toast.error(t('tools.pollFailed'));
             }
         }, 1500);
-    }, [stopBatchPolling, queryClient]);
+    }, [stopBatchPolling, queryClient, t]);
 
     const [confirmDelete, setConfirmDelete] = useState(false);
     const [isDragging, setIsDragging] = useState(false);

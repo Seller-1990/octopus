@@ -5,6 +5,7 @@ package toolsprobe
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -109,6 +110,11 @@ func runAutoProbe(ctx context.Context, channel *model.Channel, usedKey *model.Ch
 		}
 		return model.ToolsProbeResult{State: model.ToolsProbeStateAccepted, Supports: true, Source: source}
 	}
+	// R4 修复：只有 4xx 才进入白名单累计——5xx/其他是网关故障，即使 body 含白名单词
+	// （如 502 包裹原始错误文本）也不应把故障当模型能力结论写成 false。
+	if statusCode < 400 || statusCode >= 500 {
+		return model.ToolsProbeResult{State: model.ToolsProbeStateUnknown}
+	}
 	message := fmt.Sprintf("upstream error: %d: %s", statusCode, strings.TrimSpace(string(body)))
 	if op.MatchToolsUnsupportedError(message) {
 		// 白名单：≥2 确认才 unsupported；第 1 次 pending
@@ -121,44 +127,94 @@ func runAutoProbe(ctx context.Context, channel *model.Channel, usedKey *model.Ch
 }
 
 // responseHasToolCall 判断 2xx 响应体是否含非 null 的工具调用（required 执行确认启发式）。
-// 按协议分格式检测（逻辑对抗者 P1-2）：OpenAI chat 是 "tool_calls" 数组；Anthropic 是
-// content 块 "type":"tool_use"；Gemini 是 functionCall；OpenAI Responses 是 "type":"function_call"。
-// 仅 OpenAI chat 需要排除 null/[] 变体；其余协议出现即视为已执行工具调用。
+// R7 修复：从字符串扫描改为 encoding/json 结构化解析——原实现用 strings.Contains + 自制 token
+// 判定，合法空白变体（`"type" : "tool_use"`）会漏判、正文含关键词（Gemini functionCall）会误判。
+// 按协议分格式检测：OpenAI chat "tool_calls" 数组；Anthropic content 块 "type":"tool_use"；
+// Gemini functionCall；OpenAI Responses "type":"function_call"。解析失败（结构异常/非 JSON）→ false。
 func responseHasToolCall(body []byte, channelType outbound.OutboundType) bool {
-	s := string(body)
+	if len(body) == 0 {
+		return false
+	}
 	switch channelType {
 	case outbound.OutboundTypeAnthropic:
-		return strings.Contains(s, `"type":"tool_use"`)
-	case outbound.OutboundTypeGemini:
-		return strings.Contains(s, "functionCall")
-	case outbound.OutboundTypeOpenAIResponse:
-		return strings.Contains(s, `"type":"function_call"`)
-	default:
-		if !strings.Contains(s, `"tool_calls"`) {
+		var resp anthropicResponse
+		if err := json.Unmarshal(body, &resp); err != nil {
 			return false
 		}
-		// 跳过空白到冒号，取 value token；null / [] 视为未调用（排除合法 JSON 空白变体）
-		idx := strings.Index(s, `"tool_calls"`)
-		rest := strings.TrimLeft(s[idx+len(`"tool_calls"`):], " \t\r\n")
-		if !strings.HasPrefix(rest, ":") {
-			return true
-		}
-		rest = strings.TrimLeft(rest[1:], " \t\r\n")
-		if strings.HasPrefix(rest, "null") {
-			if len(rest) == 4 || !isJSONIdentByte(rest[4]) {
-				return false
+		for _, block := range resp.Content {
+			if block.Type == "tool_use" {
+				return true
 			}
 		}
-		if strings.HasPrefix(rest, "[]") {
+		return false
+	case outbound.OutboundTypeGemini:
+		var resp geminiResponse
+		if err := json.Unmarshal(body, &resp); err != nil {
 			return false
 		}
-		return true
+		for _, cand := range resp.Candidates {
+			for _, part := range cand.Content.Parts {
+				if part.FunctionCall != nil {
+					return true
+				}
+			}
+		}
+		return false
+	case outbound.OutboundTypeOpenAIResponse:
+		var resp responsesResponse
+		if err := json.Unmarshal(body, &resp); err != nil {
+			return false
+		}
+		for _, item := range resp.Output {
+			if item.Type == "function_call" {
+				return true
+			}
+		}
+		return false
+	default:
+		// OpenAI chat completions：choices[].message.tool_calls 非空数组
+		var resp openAIChatResponse
+		if err := json.Unmarshal(body, &resp); err != nil {
+			return false
+		}
+		for _, choice := range resp.Choices {
+			if choice.Message != nil && len(choice.Message.ToolCalls) > 0 {
+				return true
+			}
+		}
+		return false
 	}
 }
 
-// isJSONIdentByte 判断字节是否属于 JSON 标识符字符（用于区分 null 后是否紧跟其他内容）。
-func isJSONIdentByte(b byte) bool {
-	return b == '_' || (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z') || (b >= '0' && b <= '9')
+// 各协议最小响应结构（R7：只读取协议规定的数组/对象路径，不做字符串扫描）。
+type openAIChatResponse struct {
+	Choices []struct {
+		Message *struct {
+			ToolCalls []json.RawMessage `json:"tool_calls"`
+		} `json:"message"`
+	} `json:"choices"`
+}
+
+type anthropicResponse struct {
+	Content []struct {
+		Type string `json:"type"`
+	} `json:"content"`
+}
+
+type geminiResponse struct {
+	Candidates []struct {
+		Content struct {
+			Parts []struct {
+				FunctionCall *json.RawMessage `json:"functionCall"`
+			} `json:"parts"`
+		} `json:"content"`
+	} `json:"candidates"`
+}
+
+type responsesResponse struct {
+	Output []struct {
+		Type string `json:"type"`
+	} `json:"output"`
 }
 
 // doProbeRequest 发一次探测请求（独立 12s 预算），返回响应、状态码、body。

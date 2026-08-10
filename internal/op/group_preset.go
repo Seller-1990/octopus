@@ -209,16 +209,16 @@ func mirrorPresetToActiveGroupTx(tx *gorm.DB, preset *model.GroupPreset) (groupI
 		return group.ID, ids, fmt.Errorf("failed to mirror preset to group: %w", err)
 	}
 
-	// 替换 items：清空再插入。U5：重建前读旧 supports_tools，按 (channel,model) 继承，
-	// 避免每次 preset 切换全量抹除探测结果（true/false→nil 丢失 + 付费重探振荡）。
+	// 替换 items：清空再插入。U5+R6：重建前读旧 supports_tools，按 (channel,model) 继承四字段
+	// （值 + 血缘 + probed_at + probe_key），避免每次 preset 切换全量抹除探测结果。
+	// R6 修复：不设 `SupportsTools != nil` 条件——reset 写 nil+u7+probed_at 的行也应继承，
+	// 否则管理员刚「恢复自动」即切换 preset，重建后系统视为从未探测并立即发起付费请求，reset 语义失效。
 	oldTools := make(map[string]model.GroupItem)
 	{
 		var oldItems []model.GroupItem
 		if err := tx.Where("group_id = ?", group.ID).Find(&oldItems).Error; err == nil {
 			for _, it := range oldItems {
-				if it.SupportsTools != nil {
-					oldTools[fmt.Sprintf("%d|%s", it.ChannelID, it.ModelName)] = it
-				}
+				oldTools[fmt.Sprintf("%d|%s", it.ChannelID, it.ModelName)] = it
 			}
 		}
 	}
@@ -445,15 +445,13 @@ func GroupPresetActivate(presetID int, ctx context.Context) error {
 		}
 	}()
 
-	// 清空旧 items（U5：先读旧 supports_tools 供继承）
+	// 清空旧 items（U5+R6：先读旧 supports_tools 供继承——无条件继承四字段，含 reset 的 nil+u7+probed_at）
 	oldTools := make(map[string]model.GroupItem)
 	{
 		var oldItems []model.GroupItem
 		if err := tx.Where("group_id = ?", preset.GroupID).Find(&oldItems).Error; err == nil {
 			for _, it := range oldItems {
-				if it.SupportsTools != nil {
-					oldTools[fmt.Sprintf("%d|%s", it.ChannelID, it.ModelName)] = it
-				}
+				oldTools[fmt.Sprintf("%d|%s", it.ChannelID, it.ModelName)] = it
 			}
 		}
 	}

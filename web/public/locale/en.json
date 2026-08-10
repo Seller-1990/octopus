@@ -842,7 +842,8 @@
       "resetTools": "Restore auto (undo forced mark, back to unprobed)",
       "badgeToolsYes": "Probed as tools-capable (protocol accepts tools; complex tool usability depends on actual calls)",
       "badgeToolsNo": "Probed as tools-unsupported; Tools-only Keys skip this channel",
-      "source": "source"
+      "source": "source",
+      "pollFailed": "Batch task status lost (server restart or network error); results unknown"
     }
   },
   "model": {

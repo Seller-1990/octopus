@@ -513,11 +513,7 @@ func (ra *relayAttempt) attempt() attemptResult {
 	ra.usedKey.LastUseTimeStamp = time.Now().Unix()
 
 	if fwdErr == nil {
-		// ====== 成功 ======
-		// U7 反向反馈：带 tools 的真实请求成功且该渠道×模型标记 false → 回写 nil 待重探（打破 false→true 死锁）
-		if ra.hasToolsRequest() {
-			op.ReportToolsSupported(ra.channel.ID, ra.internalRequest.Model)
-		}
+		// ====== HTTP 层成功 ======
 		// Passthrough handlers collect response at stream end via PassthroughConfig.CollectMetrics
 		ra.collectResponse()
 		span.SetUsage(ra.metrics.AttemptUsageSnapshot())
@@ -549,6 +545,13 @@ func (ra *relayAttempt) attempt() attemptResult {
 				CompletionEvidence:   evidence,
 				TerminalEvent:        terminalEvent,
 			}
+		}
+
+		// U7 反向反馈（R2 修复）：仅在 outcome 判定为成功后才计为 tools 成功。
+		// 上游可用 HTTP 200 SSE 返回失败终态（response.failed / Anthropic error 块），
+		// 原实现 fwdErr==nil 即计数会把这类失败误计为 tools 成功，U7 ≥2 次后把 false 重置 nil。
+		if outcome.IsSuccess() && ra.hasToolsRequest() {
+			op.ReportToolsSupported(ra.channel.ID, ra.internalRequest.Model)
 		}
 
 		span.EndDetailed(

@@ -44,6 +44,8 @@ type batchToolsTestRequest struct {
 }
 
 // batchToolsTest 启动批量 tools 探测（202 + task_id，前端轮询 /batch/status/:task_id）。
+// batchToolsTest 启动批量 tools 探测（R11：明确返回 202 Accepted + task_id，对齐 group_health 先例——
+// 此前误用 resp.Success 返回 200，外部调用方无法区分「任务已接受」与「任务已完成」）。
 func batchToolsTest(c *gin.Context) {
 	var req batchToolsTestRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -55,7 +57,11 @@ func batchToolsTest(c *gin.Context) {
 		resp.Error(c, http.StatusBadRequest, err.Error())
 		return
 	}
-	resp.Success(c, task)
+	c.JSON(http.StatusAccepted, resp.ResponseStruct{
+		Code:    http.StatusAccepted,
+		Message: "accepted",
+		Data:    task,
+	})
 }
 
 // batchToolsTestStatus 查询批量任务进度。
