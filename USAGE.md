@@ -107,7 +107,11 @@ If your provider isn't a relay site but gave you a Base URL + Key directly (e.g.
 
 **Docker run:**
 ```bash
-docker run -d --name octopus -v /path/to/data:/app/data -p 8080:8080 ghcr.io/seller-1990/octopus:v0.1.0
+# F01: 容器内绑定 0.0.0.0；首启设置 bootstrap 密码
+docker run -d --name octopus -v /path/to/data:/app/data -p 8080:8080 \
+  -e OCTOPUS_SERVER_HOST=0.0.0.0 \
+  -e OCTOPUS_BOOTSTRAP_PASSWORD='your-strong-password' \
+  ghcr.io/seller-1990/octopus:v0.1.0
 ```
 
 **docker compose:**
@@ -121,10 +125,10 @@ docker compose up -d
 
 ### 4.2 First Login
 
-Open `http://your-IP:8080` in a browser. Default credentials:
+Open `http://your-IP:8080` in a browser.
 
 - Username: `admin`
-- Password: `admin`
+- Password: the `OCTOPUS_BOOTSTRAP_PASSWORD` you set on first boot (no fixed default; change it after login).
 
 > ⚠️ **Login says wrong password?** Most likely you previously installed the upstream version and the `data` directory has leftover data (the old credentials were preserved).
 > Solution: Use the old password if you remember it; otherwise **clear the data directory and redeploy**. See [FAQ Q1](#q1-default-adminadmin-login-fails).
@@ -493,7 +497,11 @@ In Settings you can enable a **Proxy Pool** to centrally manage reusable proxy c
 > Common usage questions collected here.
 
 ### Q1. Default admin/admin login fails?
-Most likely you **previously installed the upstream version and the `data` directory has leftover data** — the old credentials were preserved. Use the old password if you remember it; otherwise **clear the data directory and redeploy**. In a clean environment, admin/admin always works.
+The initial admin password is no longer a fixed `admin/admin` (F01 security fix). On a **clean** first boot you must provide a bootstrap password:
+- Set `OCTOPUS_BOOTSTRAP_PASSWORD` (Docker) or `bootstrap.password` (config `data/config.json`), then start.
+- If you previously installed and the `data` directory has leftover data, the old credentials are preserved — use the old password.
+
+If you forgot the password and have no usable credentials: clear the `data` directory and redeploy with a bootstrap password set. After first login, change the password in the management UI.
 
 ### Q2. Models exist, but creating a Key says no available models?
 Because **you haven't created a group yet**. In Octopus, "group name = available model name". **Go to the Groups page and create a group first**, then you'll be able to select models when creating a Key.

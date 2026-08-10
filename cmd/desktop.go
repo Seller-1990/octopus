@@ -46,6 +46,9 @@ func ensureDesktopConfig(dir string) string {
   },
   "startup": {
     "cache_init_timeout_seconds": 120
+  },
+  "bootstrap": {
+    "password": ""
   }
 }
 `

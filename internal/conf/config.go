@@ -1,6 +1,7 @@
 package conf
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
@@ -45,12 +46,20 @@ type Startup struct {
 	CacheInitTimeoutSeconds int `mapstructure:"cache_init_timeout_seconds"`
 }
 
+// Bootstrap 首次启动初始化配置（F01：取消固定 admin/admin）。
+type Bootstrap struct {
+	// Password 空库首启的管理员初始密码（环境变量 OCTOPUS_BOOTSTRAP_PASSWORD）。
+	// 未设置且库中无用户时拒绝启动，杜绝固定默认凭据。
+	Password string `mapstructure:"password"`
+}
+
 type Config struct {
-	Server   Server   `mapstructure:"server"`
-	Log      Log      `mapstructure:"log"`
-	Database Database `mapstructure:"database"`
-	Client   Client   `mapstructure:"client"`
-	Startup  Startup  `mapstructure:"startup"`
+	Server    Server    `mapstructure:"server"`
+	Log       Log       `mapstructure:"log"`
+	Database  Database  `mapstructure:"database"`
+	Client    Client    `mapstructure:"client"`
+	Startup   Startup   `mapstructure:"startup"`
+	Bootstrap Bootstrap `mapstructure:"bootstrap"`
 }
 
 var AppConfig Config
@@ -79,6 +88,29 @@ func ClientTLSHandshakeTimeout() time.Duration {
 	return time.Duration(seconds) * time.Second
 }
 
+// scrubBootstrapPassword 从已落盘的默认配置中移除 bootstrap.password 键
+// （F01：密码只应存在于环境变量/受保护密钥，绝不随 data 目录/备份明文留存）。
+// 缺失文件/解析失败静默跳过（写盘泄漏防御性清理，不阻断启动）。
+func scrubBootstrapPassword(path string) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return
+	}
+	var cfg map[string]any
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		return
+	}
+	if bootstrap, ok := cfg["bootstrap"].(map[string]any); ok {
+		delete(bootstrap, "password")
+		cfg["bootstrap"] = bootstrap
+	}
+	cleaned, err := json.MarshalIndent(cfg, "", "  ")
+	if err != nil {
+		return
+	}
+	_ = os.WriteFile(path, cleaned, 0644)
+}
+
 func Load(path string) error {
 	if path != "" {
 		viper.SetConfigFile(path)
@@ -104,6 +136,12 @@ func Load(path string) error {
 			}
 			if err := viper.SafeWriteConfigAs("data/config.json"); err != nil {
 				log.Errorf("Failed to create default config: %v", err)
+			} else {
+				// F01 修复：SafeWriteConfigAs 序列化 AllSettings，会把 env 解析出的
+				// bootstrap.password 明文写进默认配置并随数据卷/备份留存——写盘后剥离该键。
+				// 运行进程仍按 env 解析（viper env 优先级高于 config 文件），下次启动
+				// 文件无该键 → 回落默认空值 → 继续从 env 取，无功能影响。
+				scrubBootstrapPassword("data/config.json")
 			}
 		} else {
 			return fmt.Errorf("error reading config file: %w", err)
@@ -117,7 +155,10 @@ func Load(path string) error {
 }
 
 func setDefaults() {
-	viper.SetDefault("server.host", "0.0.0.0")
+	// F01 修复：默认监听 127.0.0.1（裸机安全默认）——公网/容器部署由配置显式开启。
+	// 注意：docker 场景容器内必须 0.0.0.0（绑定回环会使 compose 端口映射失效），
+	// 已在 docker-compose.yml 显式设置；裸机 `server.host` 缺省即本机回环。
+	viper.SetDefault("server.host", "127.0.0.1")
 	viper.SetDefault("server.port", 8080)
 	viper.SetDefault("database.type", "sqlite")
 	viper.SetDefault("database.path", "data/data.db")
@@ -131,4 +172,5 @@ func setDefaults() {
 	viper.SetDefault("startup.cache_init_timeout_seconds", 120)
 	viper.SetDefault("client.dial_timeout_seconds", 5)
 	viper.SetDefault("client.tls_handshake_timeout_seconds", 5)
+	viper.SetDefault("bootstrap.password", "")
 }

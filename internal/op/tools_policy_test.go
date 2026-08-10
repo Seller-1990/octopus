@@ -98,7 +98,15 @@ func toolsBoolPtr(v bool) *bool { return &v }
 // createToolsFixture 创建渠道+分组+条目，返回 (channelID, itemID)。
 func createToolsFixture(t *testing.T, ctx context.Context) (int, int) {
 	t.Helper()
-	ch := model.Channel{Name: "write-policy-channel", Model: "write-model", Enabled: true}
+	return createToolsFixtureWithModel(t, ctx, "write-model")
+}
+
+// createToolsFixtureWithModel 创建渠道+分组+条目，返回 (channelID, itemID)。
+// modelName 可自定义——用于隔离 registry key 的测试（全局 toolsProbeCounts 跨测试共享，
+// 固定 "write-model" 会让计数在测试间串扰，架空「≥2 需两次」断言）。
+func createToolsFixtureWithModel(t *testing.T, ctx context.Context, modelName string) (int, int) {
+	t.Helper()
+	ch := model.Channel{Name: "write-policy-channel", Model: modelName, Enabled: true}
 	if err := ChannelCreate(&ch, ctx); err != nil {
 		t.Fatalf("create channel: %v", err)
 	}
@@ -106,7 +114,7 @@ func createToolsFixture(t *testing.T, ctx context.Context) (int, int) {
 	if err := GroupCreate(&group, ctx); err != nil {
 		t.Fatalf("create group: %v", err)
 	}
-	item := model.GroupItem{GroupID: group.ID, ChannelID: ch.ID, ModelName: "write-model", Priority: 1, Weight: 1}
+	item := model.GroupItem{GroupID: group.ID, ChannelID: ch.ID, ModelName: modelName, Priority: 1, Weight: 1}
 	if err := GroupItemAdd(&item, ctx); err != nil {
 		t.Fatalf("create group item: %v", err)
 	}
@@ -243,8 +251,8 @@ func TestUnsupportedOverridesExecuted(t *testing.T) {
 	if err := ApplyToolsProbeResult(chID, "write-model", model.ToolsProbeResult{State: model.ToolsProbeStateExecuted, Supports: true, Source: "manual"}, nil); err != nil {
 		t.Fatalf("re-apply executed: %v", err)
 	}
-	ReportToolsUnsupported(chID, "write-model", "upstream error: 400: tools not supported")
-	ReportToolsUnsupported(chID, "write-model", "upstream error: 400: tools not supported")
+	ReportToolsUnsupported(chID, "write-model", "upstream error: 400: tools not supported", 400)
+	ReportToolsUnsupported(chID, "write-model", "upstream error: 400: tools not supported", 400)
 	row = loadToolsRow(t, ctx, itemID)
 	if row.SupportsTools == nil || *row.SupportsTools {
 		t.Fatalf("T9 must override executed (R3), got supports=%v source=%s", row.SupportsTools, row.SupportsToolsSource)
@@ -272,8 +280,8 @@ func TestUnsupportedDoesNotOverrideManualForce(t *testing.T) {
 	}
 
 	// T9 分支同样不得降级
-	ReportToolsUnsupported(chID, "write-model", "upstream error: 400: tools not supported")
-	ReportToolsUnsupported(chID, "write-model", "upstream error: 400: tools not supported")
+	ReportToolsUnsupported(chID, "write-model", "upstream error: 400: tools not supported", 400)
+	ReportToolsUnsupported(chID, "write-model", "upstream error: 400: tools not supported", 400)
 	row = loadToolsRow(t, ctx, itemID)
 	if row.SupportsToolsSource != "manual-force" {
 		t.Fatalf("T9 must NOT degrade manual-force, got source=%s", row.SupportsToolsSource)
@@ -433,10 +441,63 @@ func TestNullSourceRowIsUpdatable(t *testing.T) {
 		Updates(map[string]any{"supports_tools": nil, "supports_tools_source": nil, "supports_tools_probed_at": nil}).Error; err != nil {
 		t.Fatalf("seed null again: %v", err)
 	}
-	ReportToolsUnsupported(chID, "write-model", "upstream error: 400: tools not supported")
-	ReportToolsUnsupported(chID, "write-model", "upstream error: 400: tools not supported")
+	ReportToolsUnsupported(chID, "write-model", "upstream error: 400: tools not supported", 400)
+	ReportToolsUnsupported(chID, "write-model", "upstream error: 400: tools not supported", 400)
 	row = loadToolsRow(t, ctx, itemID)
 	if row.SupportsTools == nil || *row.SupportsTools {
 		t.Fatalf("T9 must write false on NULL-source row (R1), got supports=%v", row.SupportsTools)
+	}
+}
+
+// TestT9Ignores5xx 审计报告 P0-1 回归：T9 真实失败反馈仅 4xx 才判定——
+// 5xx 是网关故障，即使 body 回显白名单文本（502 包裹原始错误）也不得累计写 false。
+// 实施后审查修正：
+//   - 用唯一 modelName 隔离 registry key（"write-model" 与其它测试共享全局 toolsProbeCounts，
+//     跨测试计数会架空「4xx 需两次」断言）；
+//   - 补「两次 5xx + 一次 400」判别实验（锁「5xx 不累计」而非仅「不写库」）；
+//   - 补 429 限流排除（429 body 含白名单子串不得误判）。
+func TestT9Ignores5xx(t *testing.T) {
+	ctx := setupCatalogProvisionTest(t)
+	chID, itemID := createToolsFixtureWithModel(t, ctx, "t9-5xx-model") // 唯一 key，避免跨测试 registry 污染
+	const modelName = "t9-5xx-model"
+
+	if err := dbpkg.GetDB().WithContext(ctx).Model(&model.GroupItem{}).Where("id = ?", itemID).
+		Updates(map[string]any{"supports_tools": true, "supports_tools_source": "probe"}).Error; err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	// 1) 两次 5xx + 一次 400：若 5xx 累计过计数，第一次 400 就会翻转——判别「不累计」
+	ReportToolsUnsupported(chID, modelName, `{"error":{"message":"does not support tools"}}`, 502)
+	ReportToolsUnsupported(chID, modelName, `{"error":{"message":"does not support tools"}}`, 502)
+	ReportToolsUnsupported(chID, modelName, `{"error":{"message":"does not support tools"}}`, 400)
+	row := loadToolsRow(t, ctx, itemID)
+	if row.SupportsTools == nil || !*row.SupportsTools {
+		t.Fatalf("5xx must NOT accumulate: single 400 after two 5xx must not flip, got supports=%v", row.SupportsTools)
+	}
+
+	// 2) 同文本第二次 400 → 判定 false（两次独立 4xx 才确认）
+	ReportToolsUnsupported(chID, modelName, `{"error":{"message":"does not support tools"}}`, 400)
+	row = loadToolsRow(t, ctx, itemID)
+	if row.SupportsTools == nil || *row.SupportsTools {
+		t.Fatalf("T9 4xx twice must flip to false, got supports=%v source=%s", row.SupportsTools, row.SupportsToolsSource)
+	}
+}
+
+// TestT9Ignores429 实施后审查 P1：429 限流 body 含白名单子串不得误判 false。
+func TestT9Ignores429(t *testing.T) {
+	ctx := setupCatalogProvisionTest(t)
+	chID, itemID := createToolsFixtureWithModel(t, ctx, "t9-429-model")
+	const modelName = "t9-429-model"
+
+	if err := dbpkg.GetDB().WithContext(ctx).Model(&model.GroupItem{}).Where("id = ?", itemID).
+		Updates(map[string]any{"supports_tools": true, "supports_tools_source": "probe"}).Error; err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	// 429 两次，body 含白名单子串（限流回显场景）——不得判定
+	ReportToolsUnsupported(chID, modelName, `{"error":{"message":"too many requests: tool calls not supported right now"}}`, 429)
+	ReportToolsUnsupported(chID, modelName, `{"error":{"message":"too many requests: tool calls not supported right now"}}`, 429)
+	row := loadToolsRow(t, ctx, itemID)
+	if row.SupportsTools == nil || !*row.SupportsTools {
+		t.Fatalf("T9 429 must NOT flip to false, got supports=%v source=%s", row.SupportsTools, row.SupportsToolsSource)
 	}
 }

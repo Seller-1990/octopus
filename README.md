@@ -32,7 +32,11 @@ English | [简体中文](README_zh.md) | [Getting Started](USAGE.md)
 ### 🐳 Docker
 
 ```bash
-docker run -d --name octopus -v octopus-data:/app/data -p 8080:8080 ghcr.io/seller-1990/octopus:latest
+# F01: 容器内需绑定 0.0.0.0（否则端口映射失效），首启需设置 bootstrap 密码
+docker run -d --name octopus -v octopus-data:/app/data -p 8080:8080 \
+  -e OCTOPUS_SERVER_HOST=0.0.0.0 \
+  -e OCTOPUS_BOOTSTRAP_PASSWORD='your-strong-password' \
+  ghcr.io/seller-1990/octopus:latest
 ```
 
 Or with docker compose:
@@ -67,7 +71,9 @@ Download the `.zip` for your architecture from [Releases](https://github.com/Sel
 
 ### 🔐 Default Credentials
 
-Visit `http://localhost:8080` — Username: `admin` / Password: `admin`
+Visit `http://localhost:8080` — Username: `admin`, password = the `OCTOPUS_BOOTSTRAP_PASSWORD` you set on first boot (change it after login). No fixed default password exists.
+
+> ⚠️ **Bare-metal/desktop first boot**: you must provide a bootstrap password or startup will refuse. Set `OCTOPUS_BOOTSTRAP_PASSWORD` env before `./octopus start`, or add `bootstrap.password` to `data/config.json`.
 
 > ⚠️ Change the default password immediately after first login.
 

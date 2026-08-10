@@ -2,11 +2,17 @@ services:
   octopus:
     image: ghcr.io/seller-1990/octopus:${OCTOPUS_IMAGE_TAG:-latest}
     ports:
-       - '8080:8080'
+       # 默认只映射到本机回环（外部不可达）；公网部署显式改为 0.0.0.0:8080 并加防火墙
+       - '127.0.0.1:8080:8080'
     volumes:
        - octopus-data:/app/data
     environment:
        - OCTOPUS_DATA_DIR=/app/data
+       # F01 修复：容器内必须绑定 0.0.0.0（绑定 127.0.0.1 会使端口映射失效）；
+       # 暴露面由 compose 端口映射（默认本机回环）收敛
+       - OCTOPUS_SERVER_HOST=0.0.0.0
+       # 首次启动 bootstrap 密码（空库时必填，否则拒绝启动）。首次登录后建议立即改密。
+       # - OCTOPUS_BOOTSTRAP_PASSWORD=change-me
     container_name: octopus
     restart: unless-stopped
 

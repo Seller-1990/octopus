@@ -32,7 +32,11 @@
 ### 🐳 Docker
 
 ```bash
-docker run -d --name octopus -v octopus-data:/app/data -p 8080:8080 ghcr.io/seller-1990/octopus:latest
+# F01：容器内需绑定 0.0.0.0（否则端口映射失效），首启需设置 bootstrap 密码
+docker run -d --name octopus -v octopus-data:/app/data -p 8080:8080 \
+  -e OCTOPUS_SERVER_HOST=0.0.0.0 \
+  -e OCTOPUS_BOOTSTRAP_PASSWORD='your-strong-password' \
+  ghcr.io/seller-1990/octopus:latest
 ```
 
 或者使用 docker compose：
@@ -67,9 +71,9 @@ systemctl start octopus
 
 ### 🔐 默认账户
 
-访问 `http://localhost:8080` — 用户名：`admin` / 密码：`admin`
+访问 `http://localhost:8080` — 用户名：`admin`，密码 = 首启时设置的 `OCTOPUS_BOOTSTRAP_PASSWORD`（无固定默认密码，F01 安全修复）。请在首次登录后立即修改密码。
 
-> ⚠️ 请在首次登录后立即修改默认密码。
+> ⚠️ **裸机/桌面首启**：需在启动前设置 bootstrap 密码，否则会拒绝启动。方式：环境变量 `OCTOPUS_BOOTSTRAP_PASSWORD`（`./octopus start` 前 export），或写入 `data/config.json` 的 `bootstrap.password` 字段。
 
 ## 🔌 客户端接入
 

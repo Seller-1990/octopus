@@ -1160,8 +1160,9 @@ func (ra *relayAttempt) forwardViaHTTPPassthrough(ctx context.Context, pt model.
 		log.Warnf("upstream error from channel %s: status=%d, body=%s", ra.channel.Name, response.StatusCode, string(body))
 		// T9 失败反馈：带 tools 的真实请求遇 tools 不支持错误 → 回写 supports_tools=false（≥2 次规则在 op 内）
 		// 键用 internalRequest.Model（迭代后 = item.ModelName），与 group_items 行键一致（FIX-A）
+		// 传 response.StatusCode：仅 4xx 才判定（5xx 是网关故障，body 回显白名单文本不得误判）
 		if ra.hasToolsRequest() {
-			op.ReportToolsUnsupported(ra.channel.ID, ra.internalRequest.Model, string(body))
+			op.ReportToolsUnsupported(ra.channel.ID, ra.internalRequest.Model, string(body), response.StatusCode)
 		}
 		return statusCode, fmt.Errorf("upstream error: %d: %s", response.StatusCode, string(body))
 	}
@@ -1250,8 +1251,9 @@ func (ra *relayAttempt) forwardViaHTTPStandard(ctx context.Context) (int, error)
 		statusCode := normalizeUpstreamStatusCode(response.StatusCode, string(body))
 		log.Warnf("upstream error from channel %s: status=%d, body=%s", ra.channel.Name, response.StatusCode, string(body))
 		// FIX-B：transform 标准路径同样挂 T9（此前只挂 passthrough，覆盖不对称）
+		// 传 response.StatusCode：仅 4xx 才判定（5xx 是网关故障，body 回显白名单文本不得误判）
 		if ra.hasToolsRequest() {
-			op.ReportToolsUnsupported(ra.channel.ID, ra.internalRequest.Model, string(body))
+			op.ReportToolsUnsupported(ra.channel.ID, ra.internalRequest.Model, string(body), response.StatusCode)
 		}
 		return statusCode, fmt.Errorf("upstream error: %d: %s", response.StatusCode, string(body))
 	}

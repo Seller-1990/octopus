@@ -107,7 +107,11 @@ Octopus 是一个 **LLM API 聚合与负载均衡服务**。简单说，它帮�
 
 **Docker 直接运行：**
 ```bash
-docker run -d --name octopus -v /path/to/data:/app/data -p 8080:8080 ghcr.io/seller-1990/octopus:v0.1.0
+# F01：容器内需绑定 0.0.0.0（否则端口映射失效），首启需设置 bootstrap 密码
+docker run -d --name octopus -v /path/to/data:/app/data -p 8080:8080 \
+  -e OCTOPUS_SERVER_HOST=0.0.0.0 \
+  -e OCTOPUS_BOOTSTRAP_PASSWORD='your-strong-password' \
+  ghcr.io/seller-1990/octopus:v0.1.0
 ```
 
 **docker compose：**
@@ -121,10 +125,10 @@ docker compose up -d
 
 ### 4.2 首次登录
 
-浏览器打开 `http://你的IP:8080`，默认账号：
+浏览器打开 `http://你的IP:8080`：
 
 - 用户名：`admin`
-- 密码：`admin`
+- 密码：首启时设置的 `OCTOPUS_BOOTSTRAP_PASSWORD`（无固定默认密码，F01 安全修复；首次登录后建议立即修改）
 
 > ⚠️ **登录提示密码错误？大概率是装过原版、`data` 目录里残留了旧数据**（旧账号密码被保留了下来）。
 > 解决：记得旧密码就用旧的；不记得就**清空数据目录后重新部署**。详见 [FAQ Q1](#q1-默认-adminadmin-登录失败)。
@@ -493,7 +497,7 @@ Octopus 支持 **OpenAI Chat / OpenAI Responses / Anthropic** 三种格式互相
 > 汇总最常见的使用问题。
 
 ### Q1. 默认 admin/admin 登录失败？
-大概率是**装过原版、`data` 目录残留了旧数据**，旧账号密码被保留了。记得旧密码就用旧的；不记得就**清空数据目录后重新部署**。干净环境下 admin/admin 一定能登录。
+已取消固定 `admin/admin`（F01 安全修复）。**全新首启必须设置 bootstrap 密码**：通过环境变量 `OCTOPUS_BOOTSTRAP_PASSWORD`（Docker/compose）或配置 `bootstrap.password` 指定，否则拒绝启动。若是装过原版、`data` 目录残留旧数据，旧凭据被保留——记得旧密码就用旧的；不记得就**清空数据目录后重新部署**并设置 bootstrap 密码。
 
 ### Q2. 已经有模型了，为什么创建 Key 时说没有可用模型？
 因为**还没建分组**。octopus 里"分组名 = 可用的模型名"，**先去分组页新建一个分组**，创建 Key 时就能选到了。

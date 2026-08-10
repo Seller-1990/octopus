@@ -383,9 +383,20 @@ func ResetToolsState(channelID int, modelName string) error {
 
 // ReportToolsUnsupported T9 失败反馈：真实请求带 tools 遇 tools 不支持错误 → 回写 false。
 // 导出供 relay 包调用；按 (channel_id, model_name) 全量更新 + 刷新所有受影响分组（U6）。
-func ReportToolsUnsupported(channelID int, modelName, errText string) {
+// statusCode 过滤（审计报告 P0-1 修复 + 实施后审查 P1）：
+//   - 5xx 是网关故障，即使 body 回显白名单文本（502 包裹原始错误）也不得把故障当能力结论；
+//   - 429（限流）/408（超时）是服务端状态、非模型能力证据——限流 body 回显上游原始错误
+//     或含白名单子串（如 "too many requests: tool calls not supported right now"）会误判 false；
+//   - 仅 400-499 且非 429/408 才视为客户端请求语义错误 → 可判定。
+//
+// 已知取舍（登记）：真实不支持但上游用 5xx/429 表达的渠道会被漏判（保持现状或等待 auto 探测），
+// 方向是「宁漏勿误」。
+func ReportToolsUnsupported(channelID int, modelName, errText string, statusCode int) {
 	if channelID <= 0 || modelName == "" {
 		return
+	}
+	if statusCode < 400 || statusCode >= 500 || statusCode == 429 || statusCode == 408 {
+		return // 5xx=网关故障；429/408=限流/超时（服务端状态，非能力证据）
 	}
 	pattern, ok := matchToolsUnsupportedPattern(errText)
 	if !ok {
