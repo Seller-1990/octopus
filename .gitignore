@@ -13,5 +13,8 @@ docs/*
 !docs/adr/
 docs/adr/*
 !docs/adr/*.md
+!docs/reviews/
+docs/reviews/*
+!docs/reviews/*.md
 .impeccable.md
 .DS_Store
