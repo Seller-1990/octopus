@@ -25,12 +25,24 @@ func init() {
 // toolsProbeSemaphore 限制并发探测请求数（节流）。
 var toolsProbeSemaphore = make(chan struct{}, 4)
 
-// Run 探测渠道×模型是否支持 tools 调用。
-// 判定：2xx → true（接受 tools 参数，T4 语义收窄）；命中白名单且 ≥2 次 → false；
-// 其他错误 / embedding 渠道 / 无 enabled key → error（保持 nil 未探测态）。
-func Run(ctx context.Context, channel model.Channel, modelName string) (bool, error) {
+const probeTimeout = 12 * time.Second
+
+// Run 探测渠道×模型是否支持 tools 调用（v3.1 判别矩阵）。
+// toolChoice: ""=auto（自动探测）；"required"=手动测试（判别矩阵，含降级对照）。
+// 返回 model.ToolsProbeResult；error 表示完全无法探测（embedding/无 key/构造失败）。
+// 判别矩阵（每格状态见 model.ToolsProbeResult）：
+//
+//	auto 2xx            → accepted（true）
+//	auto 4xx 白名单     → pending（第 1 次）/ unsupported（≥2）
+//	auto 4xx 非白名单   → unknown
+//	required 2xx+tool_call → executed（true，强证据）
+//	required 2xx 无 tool_call → required_ignored（不写）
+//	required 4xx → 降级 auto（同 auto 规则，返回 required_unsupported（auto 2xx）/ unsupported/pending/unknown）
+//	required 非 4xx     → unknown
+//	注：required-400 本身不进 ≥2 registry（R7），仅降级后的 auto-400 白名单进。
+func Run(ctx context.Context, channel model.Channel, modelName, toolChoice string) (model.ToolsProbeResult, error) {
 	if !outbound.IsChatChannelType(channel.Type) {
-		return false, fmt.Errorf("channel type %d is not a chat channel, tools probe skipped", channel.Type)
+		return model.ToolsProbeResult{}, fmt.Errorf("channel type %d is not a chat channel, tools probe skipped", channel.Type)
 	}
 	var usedKey *model.ChannelKey
 	for i := range channel.Keys {
@@ -39,19 +51,124 @@ func Run(ctx context.Context, channel model.Channel, modelName string) (bool, er
 			break
 		}
 	}
-	if usedKey == nil {
-		return false, fmt.Errorf("channel %d has no enabled key, tools probe skipped", channel.ID)
+	if usedKey == nil || strings.TrimSpace(usedKey.ChannelKey) == "" {
+		return model.ToolsProbeResult{}, fmt.Errorf("channel %d has no enabled key with non-empty secret, tools probe skipped", channel.ID)
 	}
 
 	toolsProbeSemaphore <- struct{}{}
 	defer func() { <-toolsProbeSemaphore }()
 
-	probeCtx, cancel := context.WithTimeout(ctx, 12*time.Second)
+	// toolChoice="required" → 手动判别矩阵（含降级对照）
+	if toolChoice == "required" {
+		return runRequiredProbe(ctx, &channel, usedKey, modelName)
+	}
+	// auto 模式（自动探测）
+	return runAutoProbe(ctx, &channel, usedKey, modelName, ""), nil
+}
+
+// runRequiredProbe 手动 required 判别矩阵：required 请求 + 4xx 降级 auto 对照。
+func runRequiredProbe(ctx context.Context, channel *model.Channel, usedKey *model.ChannelKey, modelName string) (model.ToolsProbeResult, error) {
+	resp, statusCode, body, err := doProbeRequest(ctx, channel, usedKey, modelName, "required")
+	if err != nil {
+		return model.ToolsProbeResult{State: model.ToolsProbeStateUnknown}, err
+	}
+	_ = resp
+	if statusCode >= 200 && statusCode < 300 {
+		// required 2xx：读 body 判断是否有工具调用（按协议格式）
+		if responseHasToolCall(body, channel.Type) {
+			return model.ToolsProbeResult{State: model.ToolsProbeStateExecuted, Supports: true, Source: "manual"}, nil
+		}
+		// required 2xx 无 tool_call：不服从 required 或网关静默剥参（不写，可强制标不支持）
+		return model.ToolsProbeResult{State: model.ToolsProbeStateRequiredIgnored}, nil
+	}
+	if statusCode >= 400 && statusCode < 500 {
+		// 4xx：降级 auto 对照（required-400 本身不进 registry）
+		return runAutoProbe(ctx, channel, usedKey, modelName, "manual-required-fallback"), nil
+	}
+	// 5xx/其他：渠道故障，不判定
+	return model.ToolsProbeResult{State: model.ToolsProbeStateUnknown}, nil
+}
+
+// runAutoProbe auto 模式探测（自动探测或 required 降级对照）。
+// fallbackSource 非空表示这是 required 4xx 降级后的 auto 请求。
+func runAutoProbe(ctx context.Context, channel *model.Channel, usedKey *model.ChannelKey, modelName, fallbackSource string) model.ToolsProbeResult {
+	resp, statusCode, body, err := doProbeRequest(ctx, channel, usedKey, modelName, "")
+	if err != nil {
+		return model.ToolsProbeResult{State: model.ToolsProbeStateUnknown}
+	}
+	_ = resp
+	if statusCode >= 200 && statusCode < 300 {
+		// auto 2xx：接受 tools 参数（弱证据）。降级来源用 manual-required-fallback。
+		source := "probe"
+		if fallbackSource != "" {
+			source = fallbackSource
+		}
+		if fallbackSource != "" {
+			// required 4xx → auto 2xx：支持但 required 不可用
+			return model.ToolsProbeResult{State: model.ToolsProbeStateRequiredUnsupported, Supports: true, Source: source}
+		}
+		return model.ToolsProbeResult{State: model.ToolsProbeStateAccepted, Supports: true, Source: source}
+	}
+	message := fmt.Sprintf("upstream error: %d: %s", statusCode, strings.TrimSpace(string(body)))
+	if op.MatchToolsUnsupportedError(message) {
+		// 白名单：≥2 确认才 unsupported；第 1 次 pending
+		if op.ConfirmToolsUnsupportedOnce(channel.ID, modelName, message) {
+			return model.ToolsProbeResult{State: model.ToolsProbeStateUnsupported, Source: "probe"}
+		}
+		return model.ToolsProbeResult{State: model.ToolsProbeStatePending}
+	}
+	return model.ToolsProbeResult{State: model.ToolsProbeStateUnknown}
+}
+
+// responseHasToolCall 判断 2xx 响应体是否含非 null 的工具调用（required 执行确认启发式）。
+// 按协议分格式检测（逻辑对抗者 P1-2）：OpenAI chat 是 "tool_calls" 数组；Anthropic 是
+// content 块 "type":"tool_use"；Gemini 是 functionCall；OpenAI Responses 是 "type":"function_call"。
+// 仅 OpenAI chat 需要排除 null/[] 变体；其余协议出现即视为已执行工具调用。
+func responseHasToolCall(body []byte, channelType outbound.OutboundType) bool {
+	s := string(body)
+	switch channelType {
+	case outbound.OutboundTypeAnthropic:
+		return strings.Contains(s, `"type":"tool_use"`)
+	case outbound.OutboundTypeGemini:
+		return strings.Contains(s, "functionCall")
+	case outbound.OutboundTypeOpenAIResponse:
+		return strings.Contains(s, `"type":"function_call"`)
+	default:
+		if !strings.Contains(s, `"tool_calls"`) {
+			return false
+		}
+		// 跳过空白到冒号，取 value token；null / [] 视为未调用（排除合法 JSON 空白变体）
+		idx := strings.Index(s, `"tool_calls"`)
+		rest := strings.TrimLeft(s[idx+len(`"tool_calls"`):], " \t\r\n")
+		if !strings.HasPrefix(rest, ":") {
+			return true
+		}
+		rest = strings.TrimLeft(rest[1:], " \t\r\n")
+		if strings.HasPrefix(rest, "null") {
+			if len(rest) == 4 || !isJSONIdentByte(rest[4]) {
+				return false
+			}
+		}
+		if strings.HasPrefix(rest, "[]") {
+			return false
+		}
+		return true
+	}
+}
+
+// isJSONIdentByte 判断字节是否属于 JSON 标识符字符（用于区分 null 后是否紧跟其他内容）。
+func isJSONIdentByte(b byte) bool {
+	return b == '_' || (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z') || (b >= '0' && b <= '9')
+}
+
+// doProbeRequest 发一次探测请求（独立 12s 预算），返回响应、状态码、body。
+func doProbeRequest(ctx context.Context, channel *model.Channel, usedKey *model.ChannelKey, modelName, toolChoice string) (*http.Response, int, []byte, error) {
+	probeCtx, cancel := context.WithTimeout(ctx, probeTimeout)
 	defer cancel()
 
-	request, err := buildProbeRequest(probeCtx, &channel, usedKey, modelName)
+	request, err := buildProbeRequest(probeCtx, channel, usedKey, modelName, toolChoice)
 	if err != nil {
-		return false, err
+		return nil, 0, nil, err
 	}
 	policy, policyErr := op.ResolveHeaderPolicy(probeCtx, channel.ID, 0, 0)
 	if policyErr != nil {
@@ -62,34 +179,22 @@ func Run(ctx context.Context, channel model.Channel, modelName string) (bool, er
 		request.Header.Set("User-Agent", "")
 	}
 	if err := helper.ApplyParamOverride(request, channel.ParamOverride); err != nil {
-		return false, err
+		return nil, 0, nil, err
 	}
-	httpClient, err := helper.ChannelHTTPClientWithContext(probeCtx, &channel)
+	httpClient, err := helper.ChannelHTTPClientWithContext(probeCtx, channel)
 	if err != nil {
-		return false, err
+		return nil, 0, nil, err
 	}
 	response, err := httpClient.Do(request)
 	if err != nil {
-		return false, err
+		return nil, 0, nil, err
 	}
 	defer response.Body.Close()
-	if response.StatusCode >= 200 && response.StatusCode < 300 {
-		// 2xx：接受 tools 参数（无法区分静默剥参，文档明示）
-		return true, nil
-	}
 	body, _ := io.ReadAll(io.LimitReader(response.Body, 8*1024))
-	message := fmt.Sprintf("upstream error: %d: %s", response.StatusCode, strings.TrimSpace(string(body)))
-	if op.MatchToolsUnsupportedError(message) {
-		// FIX-F：探测命中白名单经 ≥2 次确认 → 返回 (false, nil) 让回填写 false（此前只返回 error 不回填，是死代码）
-		if op.ConfirmToolsUnsupportedOnce(channel.ID, modelName, message) {
-			return false, nil
-		}
-		return false, fmt.Errorf("tools unsupported detected, awaiting confirmation")
-	}
-	return false, fmt.Errorf("%s", message)
+	return response, response.StatusCode, body, nil
 }
 
-func buildProbeRequest(ctx context.Context, channel *model.Channel, usedKey *model.ChannelKey, modelName string) (*http.Request, error) {
+func buildProbeRequest(ctx context.Context, channel *model.Channel, usedKey *model.ChannelKey, modelName, toolChoice string) (*http.Request, error) {
 	if channel == nil {
 		return nil, fmt.Errorf("channel is nil")
 	}
@@ -99,7 +204,7 @@ func buildProbeRequest(ctx context.Context, channel *model.Channel, usedKey *mod
 	if strings.TrimSpace(modelName) == "" {
 		return nil, fmt.Errorf("model name is empty")
 	}
-	request := buildProbeInternalRequest(channel.Type, modelName)
+	request := buildProbeInternalRequest(channel.Type, modelName, toolChoice)
 	adapter := outbound.Get(channel.Type)
 	if adapter == nil {
 		return nil, fmt.Errorf("unsupported outbound type: %d", channel.Type)
@@ -108,10 +213,12 @@ func buildProbeRequest(ctx context.Context, channel *model.Channel, usedKey *mod
 }
 
 // buildProbeInternalRequest 构造带一个最小 function 定义的探测请求。
-// MaxTokens=128（工具参数 JSON 可能超过 16 token，避免截断误判）。
-func buildProbeInternalRequest(channelType outbound.OutboundType, modelName string) *transformerModel.InternalLLMRequest {
+// toolChoice: "required" 时设置 tool_choice=required（手动判别）；"" 时用 auto。
+// MaxTokens=128（工具调用输出 JSON 可能超过 16 token，避免截断）。
+// 使用 op.ResolveProbePrompt 随机 prompt 防封禁（R9）。
+func buildProbeInternalRequest(channelType outbound.OutboundType, modelName, toolChoice string) *transformerModel.InternalLLMRequest {
 	stream := false
-	ping := "Reply with the word ok."
+	ping := op.ResolveProbePrompt()
 	tool := transformerModel.Tool{
 		Type: "function",
 		Function: transformerModel.Function{
@@ -122,6 +229,13 @@ func buildProbeInternalRequest(channelType outbound.OutboundType, modelName stri
 	}
 	tokens := int64(128)
 
+	// tool_choice: required（"required" 是跨协议可透传的字符串形式，Anthropic/Gemini 转换器映射为 any/ANY）
+	var toolChoiceRef *transformerModel.ToolChoice
+	if toolChoice == "required" {
+		required := "required"
+		toolChoiceRef = &transformerModel.ToolChoice{ToolChoice: &required}
+	}
+
 	switch channelType {
 	case outbound.OutboundTypeOpenAIResponse:
 		return &transformerModel.InternalLLMRequest{
@@ -131,6 +245,7 @@ func buildProbeInternalRequest(channelType outbound.OutboundType, modelName stri
 			Stream:              &stream,
 			MaxCompletionTokens: &tokens,
 			Tools:               []transformerModel.Tool{tool},
+			ToolChoice:          toolChoiceRef,
 		}
 	case outbound.OutboundTypeAnthropic:
 		return &transformerModel.InternalLLMRequest{
@@ -140,6 +255,7 @@ func buildProbeInternalRequest(channelType outbound.OutboundType, modelName stri
 			Stream:       &stream,
 			MaxTokens:    &tokens,
 			Tools:        []transformerModel.Tool{tool},
+			ToolChoice:   toolChoiceRef,
 		}
 	case outbound.OutboundTypeGemini:
 		return &transformerModel.InternalLLMRequest{
@@ -149,6 +265,7 @@ func buildProbeInternalRequest(channelType outbound.OutboundType, modelName stri
 			Stream:       &stream,
 			MaxTokens:    &tokens,
 			Tools:        []transformerModel.Tool{tool},
+			ToolChoice:   toolChoiceRef,
 		}
 	default:
 		return &transformerModel.InternalLLMRequest{
@@ -158,6 +275,7 @@ func buildProbeInternalRequest(channelType outbound.OutboundType, modelName stri
 			Stream:       &stream,
 			MaxTokens:    &tokens,
 			Tools:        []transformerModel.Tool{tool},
+			ToolChoice:   toolChoiceRef,
 		}
 	}
 }

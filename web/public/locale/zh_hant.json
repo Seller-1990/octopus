@@ -822,7 +822,27 @@
         "runFailed": "執行自動分組失敗"
       }
     },
-    "applyDefaults": "套用預設策略"
+    "applyDefaults": "套用預設策略",
+    "tools": {
+      "batchTestTitle": "測試 tools 支援（required 探測，產生真實扣費請求）",
+      "testTools": "測試 tools",
+      "emptyBatch": "沒有可測試的已提交條目",
+      "batchFailed": "批次 tools 測試失敗",
+      "testQueued": "tools 測試已排隊",
+      "forceUnsupportedDone": "已強制標記為不支援 tools",
+      "forceFailed": "強制標記失敗",
+      "resetDone": "tools 狀態已恢復",
+      "resetFailed": "恢復 tools 狀態失敗",
+      "noCommitted": "請先儲存條目（僅已提交條目可測試）",
+      "onlyTools": "僅看 tools 條目",
+      "onlyToolsHint": "隱藏所有條目均確認不支援 tools 的分組（未探測條目保留）",
+      "batchInProgress": "已有批次測試進行中，請等待完成",
+      "forceUnsupported": "強制標不支援 tools（管理員顯式覆寫，任何探測不覆寫）",
+      "resetTools": "恢復自動（解除強制標記，回到未探測待重探）",
+      "badgeToolsYes": "探測為支援 tools（協定層接受 tools 參數；複雜工具可用性以實際呼叫為準）",
+      "badgeToolsNo": "探測為不支援 tools，「僅 tools」的 Key 會跳過此管道",
+      "source": "來源"
+    }
   },
   "model": {
     "create": {

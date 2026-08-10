@@ -822,7 +822,27 @@
         "runFailed": "Failed to run auto grouping"
       }
     },
-    "applyDefaults": "Apply Defaults"
+    "applyDefaults": "Apply Defaults",
+    "tools": {
+      "batchTestTitle": "Test tools support (required probe, real billed requests)",
+      "testTools": "Test tools",
+      "emptyBatch": "No committed items to test",
+      "batchFailed": "Tools batch test failed",
+      "testQueued": "Tools test queued",
+      "forceUnsupportedDone": "Marked as tools-unsupported",
+      "forceFailed": "Force mark failed",
+      "resetDone": "Tools state reset",
+      "resetFailed": "Tools state reset failed",
+      "noCommitted": "Save item first (committed items only)",
+      "onlyTools": "Only tools-capable groups",
+      "onlyToolsHint": "Hide groups whose items are all confirmed tools-unsupported (keeps unprobed items)",
+      "batchInProgress": "A batch test is already running, wait for it to finish",
+      "forceUnsupported": "Force mark as tools-unsupported (admin override, no probe can overwrite)",
+      "resetTools": "Restore auto (undo forced mark, back to unprobed)",
+      "badgeToolsYes": "Probed as tools-capable (protocol accepts tools; complex tool usability depends on actual calls)",
+      "badgeToolsNo": "Probed as tools-unsupported; Tools-only Keys skip this channel",
+      "source": "source"
+    }
   },
   "model": {
     "create": {

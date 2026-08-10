@@ -19,6 +19,9 @@ export interface GroupItem {
     multiplier_source?: 'group' | 'candidate' | string;
     multiplier_cap?: number | null;
     multiplier_known?: boolean;
+    supports_tools?: boolean | null;
+    supports_tools_source?: string;
+    supports_tools_probed_at?: string;
     policy_status?: 'allowed' | 'blocked' | 'unknown' | 'tentative' | string;
     policy_reason?: string;
 }
@@ -563,5 +566,104 @@ export function useApplyGroupDefaults() {
             queryClient.invalidateQueries({ queryKey: ['settings', 'list'] });
         },
         onError: (error) => logger.error('应用默认策略失败:', error),
+    });
+}
+
+/**
+ * tools 能力手动测试（v3.1）：对指定渠道×模型跑判别矩阵（tool_choice=required 时含降级对照），
+ * 结果按证据层级写入 supports_tools。返回五态 state。
+ */
+export type ToolsProbeState =
+    | 'accepted'
+    | 'executed'
+    | 'required_unsupported'
+    | 'required_ignored'
+    | 'unsupported'
+    | 'pending'
+    | 'unknown';
+
+export interface ToolsProbeResult {
+    channel_id: number;
+    model_name: string;
+    state: ToolsProbeState;
+    supports: boolean;
+    source: string;
+}
+
+export function useToolsProbe() {
+    const queryClient = useQueryClient();
+    return useMutation({
+        mutationFn: async ({ channelId, modelName, toolChoice }: { channelId: number; modelName: string; toolChoice?: 'required' | '' }) =>
+            apiClient.post<ToolsProbeResult>('/api/v1/tools-probe/reprobe', { channel_id: channelId, model_name: modelName, tool_choice: toolChoice ?? '' }),
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: ['groups', 'list'] });
+        },
+        onError: (error) => logger.error('tools 探测失败:', error),
+    });
+}
+
+/** 管理员强制标不支持（最高级，任何探测不覆盖）。 */
+export function useForceToolsUnsupported() {
+    const queryClient = useQueryClient();
+    return useMutation({
+        mutationFn: async ({ channelId, modelName }: { channelId: number; modelName: string }) =>
+            apiClient.post<{ channel_id: number; model_name: string }>('/api/v1/tools-probe/force-unsupported', { channel_id: channelId, model_name: modelName }),
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: ['groups', 'list'] });
+        },
+        onError: (error) => logger.error('强制标不支持失败:', error),
+    });
+}
+
+/** 管理员恢复自动（解除强制，回到未探测待重探）。 */
+export function useResetToolsState() {
+    const queryClient = useQueryClient();
+    return useMutation({
+        mutationFn: async ({ channelId, modelName }: { channelId: number; modelName: string }) =>
+            apiClient.post<{ channel_id: number; model_name: string }>('/api/v1/tools-probe/reset', { channel_id: channelId, model_name: modelName }),
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: ['groups', 'list'] });
+        },
+        onError: (error) => logger.error('恢复 tools 状态失败:', error),
+    });
+}
+
+/**
+ * 批量 tools 测试（v3.1 R6）：items 列表 → 异步任务（202 + task_id），
+ * 前端轮询 useToolsBatchStatus。上限 20 条，每条 = 一次真实扣费请求。
+ */
+export interface ToolsBatchItem {
+    channel_id: number;
+    model_name: string;
+}
+
+export interface ToolsBatchItemResult {
+    channel_id: number;
+    model_name: string;
+    state: ToolsProbeState;
+    supports: boolean;
+    source: string;
+    error?: string;
+}
+
+export interface ToolsBatchTask {
+    task_id: string;
+    tool_choice: string;
+    total: number;
+    done: number;
+    running: boolean;
+    results: ToolsBatchItemResult[];
+    created_at: string;
+}
+
+export function useToolsTestBatch() {
+    const queryClient = useQueryClient();
+    return useMutation({
+        mutationFn: async ({ items, toolChoice }: { items: ToolsBatchItem[]; toolChoice?: 'required' | '' }) =>
+            apiClient.post<ToolsBatchTask>('/api/v1/tools-probe/batch', { items, tool_choice: toolChoice ?? '' }),
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: ['groups', 'list'] });
+        },
+        onError: (error) => logger.error('批量 tools 测试启动失败:', error),
     });
 }

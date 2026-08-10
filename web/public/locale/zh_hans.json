@@ -822,7 +822,27 @@
         "runFailed": "执行自动分组失败"
       }
     },
-    "applyDefaults": "应用默认策略"
+    "applyDefaults": "应用默认策略",
+    "tools": {
+      "batchTestTitle": "测试 tools 支持（required 探测，产生真实扣费请求）",
+      "testTools": "测试 tools",
+      "emptyBatch": "没有可测试的已提交条目",
+      "batchFailed": "批量 tools 测试失败",
+      "testQueued": "tools 测试已排队",
+      "forceUnsupportedDone": "已强制标记为不支持 tools",
+      "forceFailed": "强制标记失败",
+      "resetDone": "tools 状态已恢复",
+      "resetFailed": "恢复 tools 状态失败",
+      "noCommitted": "请先保存条目（仅已提交条目可测试）",
+      "onlyTools": "仅看 tools 条目",
+      "onlyToolsHint": "隐藏所有条目均确认不支持 tools 的分组（未探测条目保留）",
+      "batchInProgress": "已有批量测试进行中，请等待完成",
+      "forceUnsupported": "强制标不支持 tools（管理员显式覆盖，任何探测不覆盖）",
+      "resetTools": "恢复自动（解除强制标记，回到未探测待重探）",
+      "badgeToolsYes": "探测为支持 tools（协议层接受 tools 参数；复杂工具可用性以实际调用为准）",
+      "badgeToolsNo": "探测为不支持 tools，「仅 tools」的 Key 会跳过此渠道",
+      "source": "来源"
+    }
   },
   "model": {
     "create": {

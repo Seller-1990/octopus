@@ -9,7 +9,7 @@ import { VirtualizedGrid } from '@/components/common/VirtualizedGrid';
 import { VendorIcon } from '@/components/shared/VendorIcon';
 import { toast } from '@/components/common/Toast';
 import { cn } from '@/lib/utils';
-import { Settings2 } from 'lucide-react';
+import { Settings2, Wrench } from 'lucide-react';
 
 function detectVendorFromModel(modelName: string): string | null {
     const lower = modelName.toLowerCase();
@@ -53,6 +53,8 @@ export function Group() {
     const sortField = useToolbarViewOptionsStore((s) => s.getSortField(pageKey));
     const sortOrder = useToolbarViewOptionsStore((s) => s.getSortOrder(pageKey));
     const [vendorFilter, setVendorFilter] = useState<Set<string>>(new Set());
+    // 「仅 tools 查看筛选」（v3.1 R11）：谓词 supports_tools !== false——隐藏 ✗，保留 true+nil，对齐路由语义。
+    const [toolsOnly, setToolsOnly] = useState(false);
 
     const allVendors = useMemo(() => {
         const vendors = new Set<string>();
@@ -91,8 +93,12 @@ export function Group() {
                 return false;
             });
         }
+        // 「仅 tools」：隐藏所有条目均确认不支持 tools 的分组（谓词 !== false，保留 true+nil）。
+        if (toolsOnly) {
+            result = result.filter((g) => (g.items ?? []).some((it) => it.supports_tools !== false));
+        }
         return result;
-    }, [sortedGroups, searchTerm, vendorFilter]);
+    }, [sortedGroups, searchTerm, vendorFilter, toolsOnly]);
 
     const toggleVendor = (vendor: string) => {
         setVendorFilter((prev) => {
@@ -140,6 +146,20 @@ export function Group() {
                     {VENDOR_LABELS[vendor] ?? vendor}
                 </button>
             ))}
+            <button
+                type="button"
+                onClick={() => setToolsOnly((prev) => !prev)}
+                className={cn(
+                    'flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-medium transition-colors',
+                    toolsOnly
+                        ? 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300'
+                        : 'bg-muted text-muted-foreground hover:bg-muted/80',
+                )}
+                title={t('tools.onlyToolsHint')}
+            >
+                <Wrench className="size-3.5" />
+                {t('tools.onlyTools')}
+            </button>
             <button
                 type="button"
                 onClick={() => applyDefaults.mutate(undefined, {

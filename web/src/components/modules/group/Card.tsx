@@ -1,9 +1,11 @@
 'use client';
 
 import { useState, useMemo, useCallback, useEffect, useRef } from 'react';
-import { Trash2, X, Pencil, Pin, PinOff, ArrowDownWideNarrow, HeartPulse } from 'lucide-react';
+import { useQueryClient } from '@tanstack/react-query';
+import { Trash2, X, Pencil, Pin, PinOff, ArrowDownWideNarrow, HeartPulse, FlaskConical } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { type Group, useDeleteGroup, useUpdateGroup, useToggleGroupPin } from '@/api/endpoints/group';
+import { type Group, useDeleteGroup, useUpdateGroup, useToggleGroupPin, useToolsTestBatch, useForceToolsUnsupported, useResetToolsState, type ToolsBatchItem, type ToolsBatchTask } from '@/api/endpoints/group';
+import { apiClient } from '@/api/client';
 import { useModelChannelList } from '@/api/endpoints/model';
 import { useSettingValue, SettingKey } from '@/api/endpoints/setting';
 import { useTranslations } from 'next-intl';
@@ -83,6 +85,44 @@ export function GroupCard({ group }: { group: Group }) {
     const togglePin = useToggleGroupPin();
     const { data: modelChannels = [] } = useModelChannelList();
     const { value: defaultSortStrategy } = useSettingValue(SettingKey.DefaultGroupSortStrategy, 'non_relay_balance');
+    const toolsTest = useToolsTestBatch();
+    const forceUnsupported = useForceToolsUnsupported();
+    const resetTools = useResetToolsState();
+    // 批量任务事件驱动轮询（v3.1 R6）：mutation onSuccess 启动 interval，完成时停止。
+    const [batchActive, setBatchActive] = useState(false);
+    const batchPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+    useEffect(() => {
+        return () => {
+            if (batchPollRef.current) clearInterval(batchPollRef.current);
+        };
+    }, []);
+
+    const stopBatchPolling = useCallback(() => {
+        if (batchPollRef.current) {
+            clearInterval(batchPollRef.current);
+            batchPollRef.current = null;
+        }
+    }, []);
+
+    const queryClient = useQueryClient();
+    const startBatchPolling = useCallback((taskId: string) => {
+        stopBatchPolling();
+        batchPollRef.current = setInterval(async () => {
+            try {
+                const task = await apiClient.get<ToolsBatchTask>(`/api/v1/tools-probe/batch/status/${taskId}`);
+                if (!task.running) {
+                    stopBatchPolling();
+                    setBatchActive(false);
+                    // 完成后刷新列表，徽标及时更新（P1 修复：之前只 invalidate 在启动时）
+                    queryClient.invalidateQueries({ queryKey: ['groups', 'list'] });
+                }
+            } catch {
+                stopBatchPolling();
+                setBatchActive(false);
+            }
+        }, 1500);
+    }, [stopBatchPolling, queryClient]);
 
     const [confirmDelete, setConfirmDelete] = useState(false);
     const [isDragging, setIsDragging] = useState(false);
@@ -128,6 +168,9 @@ export function GroupCard({ group }: { group: Group }) {
                     multiplier_source: item.multiplier_source,
                     multiplier_cap: item.multiplier_cap,
                     multiplier_known: item.multiplier_known,
+                    supports_tools: item.supports_tools,
+                    supports_tools_source: item.supports_tools_source,
+                    supports_tools_probed_at: item.supports_tools_probed_at,
                     policy_status: item.policy_status,
                     policy_reason: item.policy_reason,
                     item_id: item.id,
@@ -310,6 +353,86 @@ export function GroupCard({ group }: { group: Group }) {
         });
     }, [group.first_token_time_out, group.session_keep_time, group.retry_enabled, group.max_retries, group.id, group.items, group.match_regex, group.mode, group.name, group.sort_strategy, onSuccess, onError, updateGroup]);
 
+    // —— tools 能力操作（v3.1）——
+    // 卡片级批量测试：仅对已提交条目（有 item_id）启动异步任务 + 轮询。
+    const handleRunToolsBatch = useCallback(() => {
+        const items: ToolsBatchItem[] = (group.items ?? [])
+            .filter((it) => typeof it.id === 'number')
+            .map((it) => ({ channel_id: it.channel_id, model_name: it.model_name }));
+        if (items.length === 0) {
+            toast.error(t('tools.emptyBatch'));
+            return;
+        }
+        toolsTest.mutate(
+            { items, toolChoice: 'required' },
+            {
+                onSuccess: (task) => {
+                    setBatchActive(true);
+                    startBatchPolling(task.task_id);
+                },
+                onError: (e) => toast.error(t('tools.batchFailed'), { description: e.message }),
+            },
+        );
+    }, [group.items, toolsTest, t, startBatchPolling]);
+
+    // 行内：单条手动测试（required 判别矩阵）。复用批量任务通道，需与批量互斥（P1 修复：防止第二个任务杀死第一个任务的轮询）。
+    const handleToolsTest = useCallback((member: SelectedMember) => {
+        if (batchActive || toolsTest.isPending) {
+            toast.error(t('tools.batchInProgress'));
+            return;
+        }
+        if (typeof member.item_id !== 'number' || member.channel_id <= 0) {
+            toast.error(t('tools.noCommitted'));
+            return;
+        }
+        toolsTest.mutate(
+            { items: [{ channel_id: member.channel_id, model_name: member.name }], toolChoice: 'required' },
+            {
+                onSuccess: (task) => {
+                    setBatchActive(true);
+                    startBatchPolling(task.task_id);
+                },
+                onError: (e) => toast.error(t('tools.batchFailed'), { description: e.message }),
+            },
+        );
+    }, [toolsTest, t, startBatchPolling, batchActive]);
+
+    const handleToolsForce = useCallback((member: SelectedMember) => {
+        if (batchActive) {
+            toast.error(t('tools.batchInProgress'));
+            return;
+        }
+        if (typeof member.item_id !== 'number' || member.channel_id <= 0) {
+            toast.error(t('tools.noCommitted'));
+            return;
+        }
+        forceUnsupported.mutate(
+            { channelId: member.channel_id, modelName: member.name },
+            {
+                onSuccess: () => toast.success(t('tools.forceUnsupportedDone')),
+                onError: (e) => toast.error(t('tools.forceFailed'), { description: e.message }),
+            },
+        );
+    }, [forceUnsupported, t, batchActive]);
+
+    const handleToolsReset = useCallback((member: SelectedMember) => {
+        if (batchActive) {
+            toast.error(t('tools.batchInProgress'));
+            return;
+        }
+        if (typeof member.item_id !== 'number' || member.channel_id <= 0) {
+            toast.error(t('tools.noCommitted'));
+            return;
+        }
+        resetTools.mutate(
+            { channelId: member.channel_id, modelName: member.name },
+            {
+                onSuccess: () => toast.success(t('tools.resetDone')),
+                onError: (e) => toast.error(t('tools.resetFailed'), { description: e.message }),
+            },
+        );
+    }, [resetTools, t, batchActive]);
+
     return (
         <article className="relative group/card flex flex-col rounded-3xl border border-border bg-card text-card-foreground p-4 custom-shadow">
             <header className="flex items-start justify-between mb-3 relative overflow-visible rounded-xl -mx-1 px-1 -my-1 py-1">
@@ -393,6 +516,23 @@ export function GroupCard({ group }: { group: Group }) {
                 {group.id ? (
                     <ManualProbeButton groupId={group.id} />
                 ) : null}
+                <Tooltip side="top" sideOffset={6} align="center">
+                    <TooltipTrigger asChild>
+                        <button
+                            type="button"
+                            onClick={handleRunToolsBatch}
+                            disabled={toolsTest.isPending || batchActive || (group.items?.length ?? 0) === 0}
+                            title={t('tools.batchTestTitle')}
+                            className={cn(
+                                'shrink-0 rounded-md p-1 transition-colors disabled:opacity-50',
+                                batchActive ? 'text-primary animate-pulse' : 'text-muted-foreground hover:bg-muted hover:text-foreground',
+                            )}
+                        >
+                            <FlaskConical className="size-3.5" />
+                        </button>
+                    </TooltipTrigger>
+                    <TooltipContent>{t('tools.batchTestTitle')}</TooltipContent>
+                </Tooltip>
             </div>
 
             {/* Sort strategy selector + auto-sort button */}
@@ -457,6 +597,10 @@ export function GroupCard({ group }: { group: Group }) {
                     autoScrollOnAdd={false}
                     showWeight={group.mode === GroupMode.Weighted}
                     layoutScope={`card-${group.id ?? 'unknown'}`}
+                    onToolsTest={handleToolsTest}
+                    onToolsForce={handleToolsForce}
+                    onToolsReset={handleToolsReset}
+                    toolsDisabled={batchActive || toolsTest.isPending}
                 />
             </section>
 

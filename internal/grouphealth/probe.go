@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"math/rand"
 	"net/http"
 	"strings"
 	"time"
@@ -129,6 +128,7 @@ func buildProbeRequest(ctx context.Context, channel *model.Channel, usedKey *mod
 // probePrompts is a pool of natural, low-cost prompts used for health
 // probes. Randomized so providers cannot fingerprint probes by a fixed
 // "ping" string, while keeping generation tiny.
+// 实现迁至 op.ResolveProbePrompt（v3.1 R9：toolsprobe 与 grouphealth 共用随机池防封禁）。
 var probePrompts = []string{
 	"Hi! Please reply with a single short word.",
 	"Reply with only the word 'ok'.",
@@ -136,22 +136,9 @@ var probePrompts = []string{
 	"Say hello in exactly one short word.",
 }
 
-// resolveProbePrompt returns a probe prompt, preferring user-configured custom prompts.
+// resolveProbePrompt 复用 op.ResolveProbePrompt（随机池 + 自定义 prompt），保证与 tools 探测同一防指纹策略。
 func resolveProbePrompt() string {
-	custom, _ := op.SettingGetString(model.SettingKeyGroupHealthProbePrompt)
-	if custom = strings.TrimSpace(custom); custom != "" {
-		lines := strings.Split(custom, "\n")
-		var prompts []string
-		for _, line := range lines {
-			if trimmed := strings.TrimSpace(line); trimmed != "" {
-				prompts = append(prompts, trimmed)
-			}
-		}
-		if len(prompts) > 0 {
-			return prompts[rand.Intn(len(prompts))]
-		}
-	}
-	return probePrompts[rand.Intn(len(probePrompts))]
+	return op.ResolveProbePrompt()
 }
 
 func buildProbeInternalRequest(channelType outbound.OutboundType, modelName string) *transformerModel.InternalLLMRequest {

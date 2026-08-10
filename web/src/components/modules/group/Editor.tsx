@@ -1,11 +1,14 @@
 'use client';
 
-import { useCallback, useMemo, useState, type FormEvent } from 'react';
-import { Check, ChevronDownIcon, Plus, Search, Sparkles, Trash2, ArrowDownWideNarrow } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
+import { Check, ChevronDownIcon, Plus, Search, Sparkles, Trash2, ArrowDownWideNarrow, FlaskConical } from 'lucide-react';
 import { useTranslations } from 'next-intl';
 import * as AccordionPrimitive from '@radix-ui/react-accordion';
 import { useModelChannelList, type LLMChannel } from '@/api/endpoints/model';
 import { useSettingValue, SettingKey } from '@/api/endpoints/setting';
+import { useToolsTestBatch, useForceToolsUnsupported, useResetToolsState, type ToolsBatchTask } from '@/api/endpoints/group';
+import { apiClient } from '@/api/client';
+import { toast } from '@/components/common/Toast';
 import { Button } from '@/components/ui/button';
 import { Field, FieldGroup, FieldLabel } from '@/components/ui/field';
 import { Input } from '@/components/ui/input';
@@ -202,6 +205,13 @@ function SortSection({
     onAutoSort,
     sortStrategy,
     onSortStrategyChange,
+    onRunToolsTest,
+    toolsRunning = false,
+    enableToolsTest = true,
+    toolsDisabled = false,
+    onToolsTest,
+    onToolsForce,
+    onToolsReset,
 }: {
     members: SelectedMember[];
     onReorder: (members: SelectedMember[]) => void;
@@ -213,6 +223,18 @@ function SortSection({
     onAutoSort: () => void;
     sortStrategy: GroupSortStrategy;
     onSortStrategyChange: (strategy: GroupSortStrategy) => void;
+    /** 编辑器 tools 批量测试（v3.1 R8：未提交条目禁用）。 */
+    onRunToolsTest: () => void;
+    /** 批量测试进行中（按钮脉冲 + 禁用）。 */
+    toolsRunning?: boolean;
+    /** 预设编辑器传入 false：tools 测试不可用（快照无 item_id）。 */
+    enableToolsTest?: boolean;
+    /** 行级按钮禁用（批量进行中，前端对抗者 P2-1/P2-2）。 */
+    toolsDisabled?: boolean;
+    /** 行级操作（v3.1）：单条测试 / 强制标不支持 / 恢复自动。 */
+    onToolsTest?: (member: SelectedMember) => void;
+    onToolsForce?: (member: SelectedMember) => void;
+    onToolsReset?: (member: SelectedMember) => void;
 }) {
     const t = useTranslations('group');
 
@@ -228,6 +250,30 @@ function SortSection({
                     )}
                 </span>
                 <span className="flex items-center gap-1">
+                    {enableToolsTest && (
+                        <TooltipProvider>
+                            <Tooltip>
+                                <TooltipTrigger asChild>
+                                    <button
+                                        type="button"
+                                        onClick={onRunToolsTest}
+                                        disabled={toolsRunning}
+                                        className={cn(
+                                            'flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-medium transition-colors disabled:opacity-50',
+                                            toolsRunning
+                                                ? 'text-primary animate-pulse'
+                                                : 'text-muted-foreground hover:bg-muted hover:text-foreground',
+                                        )}
+                                        title={t('tools.batchTestTitle')}
+                                    >
+                                        <FlaskConical className="size-3.5" />
+                                        <span>{t('tools.testTools')}</span>
+                                    </button>
+                                </TooltipTrigger>
+                                <TooltipContent>{t('tools.batchTestTitle')}</TooltipContent>
+                            </Tooltip>
+                        </TooltipProvider>
+                    )}
                     <select
                         value={sortStrategy}
                         onChange={(e) => onSortStrategyChange(e.target.value as GroupSortStrategy)}
@@ -287,6 +333,10 @@ function SortSection({
                     removingIds={removingIds}
                     showWeight={showWeight}
                     showConfirmDelete={false}
+                    onToolsTest={onToolsTest}
+                    onToolsForce={onToolsForce}
+                    onToolsReset={onToolsReset}
+                    toolsDisabled={toolsDisabled || !enableToolsTest}
                 />
             </div>
         </div>
@@ -301,6 +351,7 @@ export function GroupEditor({
     onSubmit,
     onCancel,
     nameLabel,
+    enableToolsTest = true,
 }: {
     initial?: Partial<GroupEditorValues>;
     submitText: string;
@@ -309,6 +360,8 @@ export function GroupEditor({
     onSubmit: (values: GroupEditorValues) => void;
     onCancel?: () => void;
     nameLabel?: string;
+    /** 预设编辑器传入 false：预设 items 是快照无 item_id，tools 测试不可用（前端对抗者 P2-7）。 */
+    enableToolsTest?: boolean;
 }) {
     const t = useTranslations('group');
     const { data: modelChannels = [] } = useModelChannelList();
@@ -402,6 +455,148 @@ export function GroupEditor({
             return sortGroupMembers(prev, sortStrategy);
         });
     }, [sortStrategy]);
+
+    // —— tools 能力测试（v3.1 R8）——
+    const toolsTest = useToolsTestBatch();
+    const forceUnsupported = useForceToolsUnsupported();
+    const resetTools = useResetToolsState();
+    const [batchRunning, setBatchRunning] = useState(false);
+    const batchPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+    useEffect(() => {
+        return () => {
+            if (batchPollRef.current) clearInterval(batchPollRef.current);
+        };
+    }, []);
+
+    const stopBatchPolling = useCallback(() => {
+        if (batchPollRef.current) {
+            clearInterval(batchPollRef.current);
+            batchPollRef.current = null;
+        }
+    }, []);
+
+    // 编辑器内测试结果回写本地 selectedMembers（R8：提交前即反映徽标）。
+    // 镜像后端证据层级（P1 修复）：weak true 不覆盖 false、强 true 不覆盖 manual-force/manual。
+    const writebackToolsResults = useCallback((results: ToolsBatchTask['results']) => {
+        if (results.length === 0) return;
+        const byKey = new Map<string, (typeof results)[number]>();
+        for (const r of results) {
+            byKey.set(`${r.channel_id}\u0000${r.model_name}`, r);
+        }
+        if (byKey.size === 0) return;
+        setSelectedMembers((prev) => prev.map((m) => {
+            const r = byKey.get(`${m.channel_id}\u0000${m.name}`);
+            if (!r || r.error) return m;
+            const isWeakTrue = r.state === 'accepted' || r.state === 'required_unsupported';
+            const isStrongTrue = r.state === 'executed';
+            const isFalse = r.state === 'unsupported';
+            const isNonDeciding = !isWeakTrue && !isStrongTrue && !isFalse;
+            if (isNonDeciding) return m; // pending/required_ignored/unknown 不写
+            if (isWeakTrue && m.supports_tools === false) return m; // 弱 true 不覆盖任何 false
+            if (isStrongTrue && m.supports_tools === false && m.supports_tools_source === 'manual-force') return m; // 不覆盖管理员强制
+            if (isFalse && (m.supports_tools_source === 'manual' || m.supports_tools_source === 'manual-force')) return m; // ≥2 false 不覆盖强 true/强制
+            const isProtectedSource = m.supports_tools_source === 'manual' || m.supports_tools_source === 'manual-force';
+            return {
+                ...m,
+                supports_tools: isFalse ? false : true,
+                // 镜像后端 CASE WHEN：弱 true 不抹掉 manual/manual-force 保护标记（复审 P0）
+                supports_tools_source: isWeakTrue && isProtectedSource ? m.supports_tools_source : (r.source || m.supports_tools_source),
+            };
+        }));
+    }, []);
+
+    const startBatchPolling = useCallback((taskId: string) => {
+        stopBatchPolling();
+        batchPollRef.current = setInterval(async () => {
+            try {
+                const task = await apiClient.get<ToolsBatchTask>(`/api/v1/tools-probe/batch/status/${taskId}`);
+                if (!task.running) {
+                    stopBatchPolling();
+                    setBatchRunning(false);
+                    writebackToolsResults(task.results);
+                }
+            } catch {
+                stopBatchPolling();
+                setBatchRunning(false);
+            }
+        }, 1500);
+    }, [stopBatchPolling, writebackToolsResults]);
+
+    // 单条手动测试；未提交新条目（无 item_id）禁用——Update 按 (channel,model) 命中 0 行静默无效（R8）。
+    const handleRunToolsTest = useCallback((member?: SelectedMember) => {
+        if (batchRunning) {
+            toast.error(t('tools.batchInProgress'));
+            return;
+        }
+        const targets = member ? [member] : selectedMembers;
+        const committed = targets.filter((m) => typeof m.item_id === 'number' && m.channel_id > 0);
+        if (committed.length === 0) {
+            toast.error(t('tools.noCommitted'));
+            return;
+        }
+        toolsTest.mutate(
+            { items: committed.map((m) => ({ channel_id: m.channel_id, model_name: m.name })), toolChoice: 'required' },
+            {
+                onSuccess: (task) => {
+                    setBatchRunning(true);
+                    startBatchPolling(task.task_id);
+                },
+                onError: (e) => toast.error(t('tools.batchFailed'), { description: e.message }),
+            },
+        );
+    }, [toolsTest, selectedMembers, t, startBatchPolling, batchRunning]);
+
+    // 行级强制标不支持 / 恢复自动（回写本地，提交后以后端为准）。
+    const handleToolsForce = useCallback((member: SelectedMember) => {
+        if (batchRunning) {
+            toast.error(t('tools.batchInProgress'));
+            return;
+        }
+        if (typeof member.item_id !== 'number' || member.channel_id <= 0) {
+            toast.error(t('tools.noCommitted'));
+            return;
+        }
+        forceUnsupported.mutate(
+            { channelId: member.channel_id, modelName: member.name },
+            {
+                onSuccess: () => {
+                    setSelectedMembers((prev) => prev.map((m) =>
+                        m.id === member.id
+                            ? { ...m, supports_tools: false, supports_tools_source: 'manual-force' }
+                            : m,
+                    ));
+                    toast.success(t('tools.forceUnsupportedDone'));
+                },
+                onError: (e) => toast.error(t('tools.forceFailed'), { description: e.message }),
+            },
+        );
+    }, [forceUnsupported, t, batchRunning]);
+
+    const handleToolsReset = useCallback((member: SelectedMember) => {
+        if (batchRunning) {
+            toast.error(t('tools.batchInProgress'));
+            return;
+        }
+        if (typeof member.item_id !== 'number' || member.channel_id <= 0) {
+            toast.error(t('tools.noCommitted'));
+            return;
+        }
+        resetTools.mutate(
+            { channelId: member.channel_id, modelName: member.name },
+            {
+                onSuccess: () => {
+                    setSelectedMembers((prev) => prev.map((m) =>
+                        m.id === member.id
+                            ? { ...m, supports_tools: undefined, supports_tools_source: undefined }
+                            : m,
+                    ));
+                    toast.success(t('tools.resetDone'));
+                },
+                onError: (e) => toast.error(t('tools.resetFailed'), { description: e.message }),
+            },
+        );
+    }, [resetTools, t, batchRunning]);
 
     const isValid = groupKey.length > 0 && selectedMembers.length > 0 && !regexError;
 
@@ -604,6 +799,13 @@ export function GroupEditor({
                                 onAutoSort={handleAutoSort}
                                 sortStrategy={sortStrategy}
                                 onSortStrategyChange={setSortStrategy}
+                                onRunToolsTest={() => handleRunToolsTest()}
+                                toolsRunning={batchRunning}
+                                enableToolsTest={enableToolsTest}
+                                toolsDisabled={batchRunning}
+                                onToolsTest={(m) => handleRunToolsTest(m)}
+                                onToolsForce={handleToolsForce}
+                                onToolsReset={handleToolsReset}
                             />
                         </div>
                     </div>

@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useId, useRef, useState } from 'react';
-import { Layers, GripVertical, X, Trash2, Coins, Wallet } from 'lucide-react';
+import { Layers, GripVertical, X, Trash2, Coins, Wallet, FlaskConical, Ban, RotateCcw } from 'lucide-react';
 import {
     DragDropContext,
     Draggable,
@@ -41,6 +41,9 @@ export interface SelectedMember extends LLMChannel {
     multiplier_source?: string;
     multiplier_cap?: number | null;
     multiplier_known?: boolean | null;
+    supports_tools?: boolean | null;
+    supports_tools_source?: string;
+    supports_tools_probed_at?: string;
     policy_status?: string;
     policy_reason?: string;
 }
@@ -69,6 +72,10 @@ function MemberItem({
     showConfirmDelete = true,
     layoutScope,
     dnd,
+    onToolsTest,
+    onToolsForce,
+    onToolsReset,
+    toolsDisabled = false,
 }: {
     member: SelectedMember;
     onRemove: (id: string) => void;
@@ -79,6 +86,10 @@ function MemberItem({
     showConfirmDelete?: boolean;
     layoutScope?: string;
     dnd: MemberItemDnd;
+    onToolsTest?: (member: SelectedMember) => void;
+    onToolsForce?: (member: SelectedMember) => void;
+    onToolsReset?: (member: SelectedMember) => void;
+    toolsDisabled?: boolean;
 }) {
     const { Avatar: ModelAvatar } = getModelIcon(member.name);
     const [confirmDelete, setConfirmDelete] = useState(false);
@@ -88,6 +99,8 @@ function MemberItem({
     const sourceLabel = [member.channel_name, isSiteChannel ? null : member.endpoint_type?.trim()]
         .filter(Boolean)
         .join(' · ');
+    const canForce = member.supports_tools !== false;
+    const canReset = member.supports_tools === false;
 
     return (
         <div
@@ -107,7 +120,7 @@ function MemberItem({
             }}
         >
             <div className={cn(
-                'flex items-center gap-2 rounded-lg bg-background border border-border/50 px-2.5 py-2 select-none transition-opacity duration-200 relative overflow-hidden',
+                'group flex items-center gap-2 rounded-lg bg-background border border-border/50 px-2.5 py-2 select-none transition-opacity duration-200 relative overflow-hidden',
                 isRemoving && 'opacity-0',
                 isDisabled && 'opacity-60 grayscale'
             )}>
@@ -157,9 +170,66 @@ function MemberItem({
                                 倍率阻断
                             </Badge>
                         )}
+                        {member.supports_tools === true && (
+                            <span
+                                title={`${t('tools.badgeToolsYes')}${member.supports_tools_source ? ` · ${t('tools.source')} ${member.supports_tools_source}` : ''}`}
+                                className="inline-flex shrink-0 items-center rounded px-1 py-px text-[9px] font-medium leading-none bg-emerald-500/15 text-emerald-700 dark:text-emerald-300"
+                            >
+                                ✓tools
+                            </span>
+                        )}
+                        {member.supports_tools === false && (
+                            <span
+                                title={`${t('tools.badgeToolsNo')}${member.supports_tools_source ? ` · ${t('tools.source')} ${member.supports_tools_source}` : ''}`}
+                                className="inline-flex shrink-0 items-center rounded px-1 py-px text-[9px] font-medium leading-none bg-destructive/10 text-destructive"
+                            >
+                                ✗tools
+                            </span>
+                        )}
+                        {/* supports_tools 为 null/undefined（未探测）不渲染，保持布局精简 */}
+                        {(onToolsTest || onToolsForce || onToolsReset) && (
+                            <span className="ml-auto inline-flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100 pointer-events-none group-hover:pointer-events-auto focus-within:pointer-events-auto">
+                                {onToolsTest && (
+                                    <button
+                                        type="button"
+                                        onClick={() => onToolsTest(member)}
+                                        title={t('tools.batchTestTitle')}
+                                        aria-label={t('tools.batchTestTitle')}
+                                        disabled={isDisabled || toolsDisabled}
+                                        className="rounded p-0.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-40 disabled:pointer-events-none"
+                                    >
+                                        <FlaskConical className="size-3" />
+                                    </button>
+                                )}
+                                {onToolsForce && canForce && (
+                                    <button
+                                        type="button"
+                                        onClick={() => onToolsForce(member)}
+                                        title={t('tools.forceUnsupported')}
+                                        aria-label={t('tools.forceUnsupported')}
+                                        disabled={isDisabled || toolsDisabled}
+                                        className="rounded p-0.5 text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive disabled:opacity-40 disabled:pointer-events-none"
+                                    >
+                                        <Ban className="size-3" />
+                                    </button>
+                                )}
+                                {onToolsReset && canReset && (
+                                    <button
+                                        type="button"
+                                        onClick={() => onToolsReset(member)}
+                                        title={t('tools.resetTools')}
+                                        aria-label={t('tools.resetTools')}
+                                        disabled={isDisabled || toolsDisabled}
+                                        className="rounded p-0.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-40 disabled:pointer-events-none"
+                                    >
+                                        <RotateCcw className="size-3" />
+                                    </button>
+                                )}
+                            </span>
+                        )}
                     </div>
                     <span className="text-[10px] text-muted-foreground truncate leading-tight">{sourceLabel}</span>
-                    {(member.balance != null || (member.site_id != null && (member.group_multiplier != null || member.multiplier_known !== true))) && (
+                    {(member.balance != null || (member.site_id != null && (member.group_multiplier != null || member.multiplier_known !== true)) || member.supports_tools != null) && (
                         <span className="flex items-center gap-1 mt-0.5">
                             {member.balance != null && (
                                 <Badge variant="secondary" className="shrink-0 gap-1 px-1.5 py-0 text-[9px] bg-emerald-500/15 text-emerald-700 dark:text-emerald-300">
@@ -287,6 +357,12 @@ export interface MemberListProps {
      */
     showConfirmDelete?: boolean;
     layoutScope?: string;
+    /** tools 操作回调（v3.1）：手动测试 / 强制标不支持 / 恢复自动。缺省不渲染操作按钮。 */
+    onToolsTest?: (member: SelectedMember) => void;
+    onToolsForce?: (member: SelectedMember) => void;
+    onToolsReset?: (member: SelectedMember) => void;
+    /** 行级 tools 按钮禁用（批量进行中 / 预设编辑器不可用，前端对抗者 P2-1/P2-7）。 */
+    toolsDisabled?: boolean;
 }
 
 export function MemberList({
@@ -302,6 +378,10 @@ export function MemberList({
     showWeight = false,
     showConfirmDelete = true,
     layoutScope: externalLayoutScope,
+    onToolsTest,
+    onToolsForce,
+    onToolsReset,
+    toolsDisabled = false,
 }: MemberListProps) {
     const internalLayoutScope = useId();
     const layoutScope = externalLayoutScope ?? internalLayoutScope;
@@ -405,6 +485,10 @@ export function MemberList({
                                                 showWeight={showWeight}
                                                 showConfirmDelete={showConfirmDelete}
                                                 layoutScope={layoutScope}
+                                                onToolsTest={onToolsTest}
+                                                onToolsForce={onToolsForce}
+                                                onToolsReset={onToolsReset}
+                                                toolsDisabled={toolsDisabled}
                                                 dnd={{
                                                     innerRef: draggableProvided.innerRef,
                                                     draggableProps: draggableProvided.draggableProps,

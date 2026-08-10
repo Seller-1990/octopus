@@ -1365,3 +1365,346 @@ func ProbeChannelModelToolsSupport(ctx context.Context, channel model.Channel, u
 - 探测真实计费（冷却期缓解，但初次/重探会扣费）
 - U7 恢复依赖非 toolsOnly key 的带 tools 真实请求成功（纯 toolsOnly 部署下 false 需手动 reprobe）
 - 流式 passthrough/WS 错误点未挂 T9（SSE 200+error event，记录为边界）
+
+---
+
+## tools 方案 v2 迭代（2026-08-10，用户拍板，待审查）
+
+> 用户反馈：① 分组内需 tools 能力小徽标（一目了然 + 仅 tools 筛选依据）；② 探测时机改「新建分组 + 手动测试为主」（首次同步可能失败）；③ 与现有测活（grouphealth）结合——一次请求同时测活 + 测 tools，节省调用，且请求要避免易封禁的固定文案；④ key 维度维持「渠道×模型」。并请求提供真实 API 做端到端验证。
+
+### v2 调整
+
+| # | 调整 | 内容 |
+|---|---|---|
+| V2-1 | **分组内 tools 小徽标** | Group 卡片/编辑器每个条目加小徽标：`✓tools`（支持）/ `✗`（不支持）/ `·`（未探测），尺寸小（text-[9px]），不占布局（绝对定位或行内小点） |
+| V2-2 | **手动测试为主** | 分组条目上加「测试 tools」按钮（逐条/批量），点击立即调 reprobe 并回填；自动探测降为辅：仅新建分组时尝试一次，失败不重试、不阻塞 |
+| V2-3 | **与测活结合** | 复用 grouphealth 探测链路：请求带最小 tools 定义 + 随机 prompt 池（隐蔽，避免固定 "hi" 易封禁）；一次请求结果双写——测活健康状态 + group_items.supports_tools（2xx→活+true、白名单错误→活+false、其他错误→不活+不判定） |
+| V2-4 | key 维度 | 维持「渠道×模型」，不按渠道 key 探测 |
+| V2-5 | **真实 API 端到端验证** | 待用户提供测试 API 后，用真实上游验证：2xx→true、白名单→false、各协议 transform 路径、静默剥参场景 |
+
+### V2-3 结合测活的实现要点（初稿，待审查细化）
+
+- 改 `internal/grouphealth/probe.go` 的 `buildProbeInternalRequest`：chat 类型渠道的探测请求加最小 tools 定义；MaxTokens 16→128（工具参数可能超 16）。
+- 判定双写：probe.go RunCandidate 返回后，按结果调 op 导出函数回填 supports_tools（grouphealth import op 已存在）。
+- 风险：改探测请求影响现有测活回归（需测活测试全绿）；测活频率决定 tools 标记刷新频率（手动测试为主后自动频率次要）。
+- embedding 渠道不带 tools（保持原样）。
+
+### V2-5 端到端验证计划（待 API）
+
+用户提供 2-3 个不同协议 API（OpenAI 兼容 / Anthropic / Gemini 或中转）+ 1 个已知不支持 tools 的，验证：
+1. 探测 2xx→true 对真实支持 tools 渠道成立
+2. 白名单对真实不支持渠道成立（实际报错文本 vs 白名单）
+3. transform 路径（如 OpenAI→Anthropic）探测请求有效
+4. 结合测活后的双写正确
+
+---
+
+## models.dev 定位修正 + tools 确认路径锁定（2026-08-10，用户拍板）
+
+> 第二轮 smart-search 调研 + 端到端实测（prism.uno 三模型均支持 tools，2xx→true 判对）+ 用户质疑后定稿。
+
+### models.dev 正确用法（用户拍板，已修正）
+
+- **❌ 不得用于 tools 确认**：中转站模型名与官方一致，但 tools 是否被阉割是**实例级动态属性**——模型名/静态库都确认不了，预标只会制造「假 true」靠 T9 纠偏，纯添乱。
+- **✅ 可用于模型能力分类**（可靠，能力是模型级静态属性）：
+  - 厂商分类（provider 维度稳定）
+  - 模型能力标记：文本/生图/多模态（vision 等）——对接已认可的「多模态入口模型能力标记」需求
+  - 实现：models.dev `capabilities` 字段作为**默认预填值**，管理员可覆盖；models.dev 不可达时自动跳过（降级为不预填）；同名但能力被改的中转站靠管理员覆盖 + 实际使用修正
+- **本次 v2 不做** models.dev 集成（先做核心 v2；能力分类预填列为 v2 后置项）
+
+### tools 确认路径（锁定）
+
+1. **手动测试为主**：分组条目「测试 tools」按钮（tool_choice=required 加强判定，实测逼出真实 tool_call）
+2. **自动探测为辅**：新建分组时尝试一次，失败不阻塞、不重试（避免首次同步失败导致永久 nil）
+3. **T9/U7 反馈收敛**：真实请求失败（≥2 次）→ false；真实请求成功（≥2 次，标记 false）→ 回写 nil 待重探
+4. **语义边界**：「支持基础 function 调用」（协议层接受 tools + 能产出 tool_call）；复杂工具（终端/文件）可用性以实际调用为准，靠 T9 反馈收敛
+5. **不做** models.dev 预填 tools
+
+### 端到端验证结论（prism.uno 三模型）
+
+- gpt-5.6-sol / gpt-5.6-terra / claude-sonnet-5 均真支持 tools（tool_choice=required 均返回 tool_calls）
+- 「2xx→true」判定在真实上游**判对**（无 tool_choice 时 tool_calls:null 不误判——印证确认轮「不按 tool_calls 判」的决策）
+- 「不支持→白名单→false」侧**未验证**（暂无确认不支持的 API）
+- runanytime.hxi.me 当前网络不可达（DNS 正常、TCP 超时），测试暂停
+
+## tools v2 迭代方案（2026-08-10，实施前定稿，待顾问审查）
+
+> 用户拍板：① 分组内 tools 能力**小徽标**（避免占布局）；② **手动测试为主**；③ **与现有测活结合**（一次请求同时测活+测 tools，请求用随机 prompt 避免易封禁的固定文案）；④ key 维度维持「渠道×模型」；⑤ models.dev 正确用法已锁定（上述）。
+
+### V2-1 分组内 tools 小徽标
+
+- Group 卡片/编辑器每个条目加小徽标：`✓tools`（支持）/ `✗`（不支持）/ `·`（未探测）
+- 尺寸小（text-[9px]）、行内，不占布局
+- 「仅 tools」设置时可按标注筛选（辅助查看哪些条目会走）
+
+### V2-2 手动测试为主
+
+- 分组条目加「测试 tools」按钮（逐条/批量）
+- 点击调 reprobe 语义：**带 tool_choice=required**（加强判定，逼出真实 tool_call）+ 超时/错误处理
+- 结果立即回填标注 + 刷新缓存
+- 自动探测降为辅：仅新建分组时尝试一次，失败不重试
+
+### V2-3 与测活结合
+
+- 改 `internal/grouphealth/probe.go` 的 `buildProbeInternalRequest`：chat 类型渠道的探测请求**加最小 tools 定义**；MaxTokens 16→128（工具参数可能超 16）
+- 请求 prompt 用**现有随机池**（grouphealth 已有 4 条随机 prompt，防指纹；tools 探测沿用，避免固定 "Reply with the word ok" 易封禁）
+- 判定双写：一次请求结果 → 测活健康状态 + group_items.supports_tools（2xx→活+true、白名单→活+false、其他→不活+不判定）
+- grouphealth import op 已存在，回填调 op 导出函数
+- embedding 渠道不带 tools（保持原样）
+- 风险：改探测请求影响现有测活回归（需测活测试全绿）；测活频率决定 tools 标记刷新频率（手动测试为主后自动频率次要）
+
+### V2-4 key 维度
+
+维持「渠道×模型」，不按渠道 key 探测。
+
+### V2 改动清单（初稿，审查后细化）
+
+1. `internal/grouphealth/probe.go`：buildProbeInternalRequest 加 tools + MaxTokens 128（chat 类型）
+2. `internal/op/tools_policy.go`：`ReprobeToolsWithRequired`（tool_choice=required 版探测）+ 回填导出
+3. `internal/toolsprobe`：支持 tool_choice=required 参数（手动测试用）+ 随机 prompt
+4. 后端 handler：`POST /api/v1/group/tools-test`（分组条目手动测试，批量）
+5. 前端：Group 卡片/编辑器条目 tools 小徽标 + 「测试 tools」按钮 + 筛选
+6. 测活判定双写接线
+7. 测试：测活回归 + 手动测试 + 徽标渲染
+
+### 验收标准
+
+1. go test 全绿（含测活回归）+ 前端 tsc/lint/build
+2. 分组条目显示 tools 小徽标（✓/✗/·），仅 tools 设置时可按标注筛选
+3. 「测试 tools」按钮：带 tool_choice=required 手动测试，结果回填标注
+4. 测活请求同时产出健康状态 + supports_tools（随机 prompt + MaxTokens 128）
+5. 端到端：prism.uno gpt-5.6-sol 手动测试 → ✓tools（实测过 tool_choice 逼出 tool_call）
+
+### 待办
+
+- v2 方案审查（多顾问）
+- v2 实施 + 验证
+- v2 实施后审查
+- （后置）models.dev 能力分类预填（多模态入口模型能力标记）
+
+---
+
+## tools v2 方案审查修正 v3（2026-08-10，3 顾问审查 + 用户拍板，实施以此为准）
+
+> 3 顾问审查（后端/前端/逻辑对抗者）结论：V2-3（与测活结合）被三位独立推翻（健康维度被 tools 污染）；V2-1 前端三处接线遗漏（复现阶段 5 事故）；V2-2 required 判别矩阵缺失；T9 复杂工具收敛承诺不成立。用户拍板：**放弃 V2-3**。v3 覆盖 v2 方案，实施以 v3 为准。
+
+### 用户拍板
+
+- **放弃 V2-3**（测活保持纯净不带 tools，健康判定不被 tools 污染；tools 探测独立走「手动测试为主 + 自动辅助」）
+
+### v3 修正对照
+
+| # | v2 问题（顾问） | v3 修正 |
+|---|---|---|
+| W1 | V2-3 双写让纯聊天渠道测活被标不健康（三位一致） | **放弃 V2-3**：grouphealth 探测请求不加 tools、MaxTokens 保持 16、无双写。测活与 tools 完全分离 |
+| W2 | V2-1 前端三处接线遗漏（前端对抗者，致命） | **V2-1 接线写死**：group.ts GroupItem 加 `supports_tools?: boolean`；ItemList SelectedMember 加 `supports_tools?: boolean \| null`；Card displayMembers 映射补 `supports_tools: item.supports_tools`；徽标谓词 `=== true/false` 严格比较（严禁 `!member.supports_tools`，nil 语义与 multiplier_known 相反） |
+| W3 | V2-2 required 400 无判别矩阵（后端/逻辑对抗者） | **required 对照探测**：手动测试带 tool_choice=required；400 → 自动降级重发「带 tools 不带 required」——2xx → 判 true（source=manual-required-fallback）+ 返回「支持 tools 但 required 不可用」提示；required 200 无 tool_calls → 不判定（保留现值）+ 提示「模型不服从 required」；其余按现有判定 |
+| W4 | 语义双定义（逻辑对抗者） | **true 收敛为单一谓词**：「协议层接受 tools 参数」（2xx→true）。「能产出 tool_call」降级为手动测试的**附加展示信息**（tool_choice 逼出的 tool_call 作为确认展示），不得作为 false 依据 |
+| W5 | 双写/多 writer 覆盖无优先级（后端/逻辑对抗者） | **写路径优先级**：手动测试 > 自动探测；「不判定」= **不写列、保留现值**（禁止写 nil 覆盖 T9 结论）；自动探测保留现有 4 触发点 + 6h 冷却（不改为「仅新建一次」——审查证明「新建一次失败不重试」在创建时抖动下同样永久 nil，且与现有触发点冲突） |
+| W6 | T9 复杂工具收敛承诺不成立（逻辑对抗者） | **承诺降级为已知边界**：T9 白名单是协议级措辞，终端/文件执行期失败（command not found 等）不命中 → 复杂工具失败不自动收敛，flag 可能 stale-true；且白名单误伤风险（某 function 失败文本含白名单词 → 整模型标 false）如实记录 |
+| W7 | 手动测试按钮位置（前端对抗者） | 卡片级批量（复用 ManualProbeButton 先例）+ 编辑器 SortSection 头部；逐条 loading 本地化 + in-flight 去重；行内不做常驻按钮（右侧已满） |
+
+### v3 实施清单（最终）
+
+1. **后端**：
+   - `internal/toolsprobe/tools_probe.go`：Run 加 `ToolChoice string` 参数（空=auto 现行为；"required"=手动测试用）；required 400 → 降级对照探测（W3）
+   - `internal/op/tools_policy.go`：`ReprobeToolsWithRequired`（手动测试入口，含对照降级 + source=manual-required-fallback）；写优先级（手动>自动）；「不判定」不写列
+   - `internal/server/handlers/tools_probe.go`：reprobe 支持 `tool_choice: "required"` + 返回判别信息（支持 auto / required 不可用 / 模型不服从 required / 不支持 tools）
+   - 前端类型 group.ts 加 supports_tools
+2. **前端**：
+   - ItemList.tsx：SelectedMember 加字段 + 三态小徽标（✓绿 / ✗红 / 未探测不渲染，tooltip 显示血缘 source）
+   - Card.tsx：displayMembers 透传 supports_tools
+   - 卡片级「测试 tools」批量按钮 + 编辑器 SortSection 头部逐条按钮（复用 ManualProbeButton loading 模式）
+3. **测试**：
+   - 手动 required 对照探测单测（400→降级 2xx→true）
+   - 写优先级单测（手动覆盖自动）
+   - 前端徽标三态渲染（含老数据 nil→不渲染）
+   - 测活回归（确认 grouphealth 未被 tools 改动——v3 不改 probe.go）
+
+### v3 验收标准
+
+1. go test 全绿（含测活回归，证明 grouphealth 未被污染）+ 前端 tsc/lint/build
+2. 分组条目显示 tools 小徽标（✓/✗/未探测不渲染），仅 tools key 路由过滤（后端已做）+ 查看筛选（前端辅助）
+3. 「测试 tools」按钮：手动 required → 对照降级 → 明确返回「支持(auto)/required 不可用/不服从 required/不支持」四态之一
+4. 自动探测保留 4 触发点 + 冷却，手动结果优先
+5. 端到端：prism.uno gpt-5.6-sol 手动测试 → ✓tools（required 逼出 tool_call 已实测）
+
+### v3 已知边界（发布说明）
+
+- 复杂工具（终端/文件）失败不自动收敛（T9 白名单是协议级措辞），flag 可能 stale-true；白名单误伤风险如实记录
+- 静默剥参网关 2xx→true 伪正（无错误响应，手动 required 逼不出 tool_call 时提示）
+- ≥2 registry 进程内 + TTL：重启清零、多实例不共享
+- 探测计费（手动测试是真实扣费请求，UI 明示）
+
+---
+
+## tools v3 复审修正 v3.1（2026-08-10，4 顾问复审 + 用户拍板 3 项，实施以此为准）
+
+> 4 顾问复审（后端/逻辑/本质追问/前端对抗者）发现 v3 逻辑仍未闭环：W4「单一谓词」与 W3 自相矛盾、W5「手动>自动」语义空转、W3 四态契约 ≥2 下违约、required 400 降级假设无数据、前端 W2 外层守卫致命缺口、批量/虚拟化/编辑器断链。用户拍板 3 项。v3.1 覆盖 v3，实施以 v3.1 为准。
+
+### 用户拍板（v3.1 定稿）
+
+1. **加强制标不支持入口**：手动 required 逼不出 tool_call 时，提供「强制标不支持」按钮（管理员显式覆盖，source=manual）+「恢复自动」可撤销——手动强证据有落库动作，不再空转。
+2. **写覆盖按证据层级**：`required 逼出 tool_call > T9 双确认 false > 手动降级 2xx = 自动 2xx`。手动降级 2xx 不得覆盖 T9 false；T9 false 可被更强的手动 required 确认覆盖；手动「强制标不支持」为最高级（管理员显式）。
+3. **五态契约**：返回态加「待确认」（白名单首次命中，≥2 确认机制）——诚实表达，前端五态文案。
+
+### v3.1 修正对照（4 顾问复审发现）
+
+| # | 复审问题 | v3.1 修正 |
+|---|---|---|
+| R1 | W4「单一谓词 2xx→true」与 W3「required 200 无 tool_calls 不判定」自相矛盾（逻辑对抗者 C1） | **改双证据层**：auto/降级 2xx → true（接受参数）；required 2xx + tool_call → true（执行确认，更强证据）；required 2xx 无 tool_call → 不判定。tool_call 是 required 分支的判定输入，非「附加展示」 |
+| R2 | W5「手动>自动」空转：手动唯一强证据场景不落库；手动降级 2xx 与自动同构（本质 A1 + 逻辑 C3） | **证据层级 + 强制入口**（用户拍板 1/2）：手动 required 逼出 tool_call 强证据；逼不出 → 提供「强制标不支持」落库入口；手动降级 2xx 与自动 2xx 同层（不得覆盖 T9 false） |
+| R3 | W3 四态契约 ≥2 下违约（逻辑 C6） | **五态**（用户拍板 3）：支持 auto / required 不可用 / 不服从 required（可强制标不支持）/ 不支持 / 待确认（白名单首次命中） |
+| R4 | required 400→降级假设无数据（本质 A2） | 降级链保留但**不依赖常态假设**：无论 required 400 是否常见，判别矩阵穷举全分支；「不服从 required」（200 无 tool_call）升级为**可落库的纠正动作**（强制标不支持入口） |
+| R5 | 前端 W2 外层守卫致命缺口（前端对抗者） | **ItemList.tsx:162 外层守卫加 `\|\| member.supports_tools != null`**（Y2 同构事故；本地渠道条目是 tools 徽标主受众） |
+| R6 | 批量 sync/async 未定义（前端对抗者） | **批量接口改异步任务 + 轮询**（对齐 group-health 先例：POST 返回 accepted，前端轮询进度）；批量上限（如 20）；同步 reprobe 保留单条 |
+| R7 | in-flight 去重载体未定义（前端对抗者） | **去重放 react-query mutation 缓存**（按 (groupID,itemID) key）或模块级 store——VirtualizedGrid 卸载卡片后组件 state 不可靠 |
+| R8 | 编辑器断链（前端对抗者） | 编辑器内测试结果**回写本地 selectedMembers**；未提交新条目（无 item_id）触发测试 → **禁用 + 提示**（Update 按 (channel,model) 命中 0 行静默无效） |
+| R9 | toolsprobe 固定 prompt 未防封禁（本质 A3，用户原始需求） | **抽 grouphealth 的 resolveProbePrompt 为公共函数复用**（随机池防指纹；用户「避免易封禁固定文案」需求在 V2-3 放弃后迁移到 tools 探测侧） |
+| R10 | T9 保护窗口只有 6h（本质 A4） | **声明**：6h 冷却后自动探测可覆盖 T9 false（写 true），但按 R2 证据层级，手动降级 2xx 与自动同层——T9 双确认 false 可被 6h 后自动探测覆盖（如实记录，不隐藏）；U7 是唯一合法 nil 写路径 |
+| R11 | 「仅 tools 查看筛选」清单与验收矛盾（前端对抗者） | **补进清单**：谓词 `supports_tools !== false`（隐藏 ✗，保留 true+nil，对齐路由语义）；文案与 key 页「仅 tools」区分（如「仅看 tools 条目」）；位置：组列表页 filter 区（仿 search+vendorFilter） |
+| R12 | W7「复用 ManualProbeButton 先例」不存在（本质 A6） | **改「新建按钮组件，loading 仿 group_health 面板现有模式」**（grep 证实 ManualProbeButton 不存在） |
+| R13 | 四态遗漏两格（逻辑 C2/F） | 判别矩阵补全：required 400 + auto 400（白名单第 1/2 次 → 待确认/不支持；非白名单 → 不判定）；required 200 无 tool_call 且当前 true（自动伪正残留）→ 提示 + 强制标不支持入口 |
+| R14 | 不判定语义歧义（本质 A4） | 明确：自动探测的 2xx=判定且写 true、白名单≥2=判定且写 false、其余=不判定不写列；「不判定不写列」仅指 error 路径 |
+
+### v3.1 判别矩阵（每格：返回态 / 写入值 / source）
+
+| 请求序列 | 结果 | 返回态 | 写入 | source |
+|---|---|---|---|---|
+| required 200 + tool_call | 支持 | 支持（执行确认） | true | manual |
+| required 200 无 tool_call | 不服从/剥参 | 不服从 required（可强制标不支持） | 不写（保留现值） | — |
+| required 400 → auto 2xx | 支持但 required 不可用 | required 不可用 | true | manual-required-fallback |
+| required 400 → auto 400（白名单第 1 次） | 待确认 | 待确认 | 不写 | — |
+| required 400 → auto 400（白名单 ≥2） | 不支持 | 不支持 | false | probe/manual |
+| required 400 → auto 400（非白名单） | 未知 | 不判定 | 不写 | — |
+| required 非 400（5xx/超时） | 渠道故障 | 不判定 | 不写 | — |
+| **强制标不支持（管理员）** | — | — | false | manual |
+| **恢复自动（管理员）** | — | — | nil | u7/manual |
+
+### v3.1 实施清单（最终，含 4 顾问修正）
+
+**后端**
+1. toolsprobe.Run 加 `ToolChoice` 参数；返回**结构化结果** `{Decided bool, Supports bool, Source string, State string(五态)}`（后端对抗者 R0：现有 (bool,error) 装不下五态）
+2. op.ToolsProbeFn hook 签名同步；新增 `ForceToolsUnsupported` / `ResetToolsState`（强制标不支持 + 恢复自动，source=manual）
+3. 判别矩阵全分支实现（含 required 降级独立 12s 预算——后端对抗者 R 发现共享 ctx 会超时）
+4. required-400 的 400 不进 ≥2 registry（防污染，后端对抗者）
+5. 批量接口：`POST /api/v1/group/tools-test`（items 列表 → 异步任务 + 轮询状态接口）
+6. 写覆盖按证据层级：手动 required 确认 > T9 > 手动降级 2xx = 自动 2xx；强制标不支持最高级
+7. resolveProbePrompt 抽公共函数（grouphealth 与 toolsprobe 复用）
+8. T9 6h 后自动覆盖声明（R10）
+
+**前端**
+9. group.ts GroupItem 加 supports_tools；ItemList SelectedMember 加；Card displayMembers 透传（R 确认已到位）
+10. **ItemList.tsx:162 外层守卫加 `|| member.supports_tools != null`**（R5 致命）
+11. 三态小徽标（✓绿/✗红/未探测不渲染）+ tooltip 血缘 source + probed_at（不显示 probeKeyID）
+12. 手动测试按钮（卡片级批量 + 编辑器 SortSection 头部）：异步任务+轮询；in-flight 去重放 mutation 缓存；编辑器结果回写本地 state；未提交条目禁用
+13. 「强制标不支持」/「恢复自动」按钮（手动 required 逼不出时出现）
+14. 「仅 tools 查看筛选」（谓词 `!== false`，文案区分，组列表 filter 区）
+15. supports_tools 保留 undefined 不兜底（防照抄 multiplier_known 的兜底模式）
+
+**测试**
+16. 判别矩阵全分支单测（8 格）；写覆盖优先级单测；强制标不支持；批量异步；前端徽标三态 + 守卫
+
+### v3.1 验收标准
+
+1. go test 全绿 + 前端 tsc/lint/build
+2. 分组条目 tools 小徽标（✓/✗/未探测不渲染），本地渠道条目也能显示（R5 守卫）
+3. 手动测试返回五态之一 + 判别矩阵各分支写入正确
+4. 「强制标不支持」/「恢复自动」可落库可撤销
+5. 写覆盖按证据层级（手动 required > T9 > 降级 2xx=自动 2xx）
+6. 批量异步 + 轮询 + 去重 + 编辑器回流
+7. 端到端：prism.uno gpt-5.6-sol 手动 required → ✓（执行确认）
+
+### v3.1 已知边界（发布说明）
+
+- 复杂工具失败不自动收敛（T9 白名单协议级），「强制标不支持」是管理员持久收敛手段
+- 静默剥参网关：自动 2xx 伪正 + required 逼不出 → 提示 + 可强制标不支持
+- T9 双确认 false 在 6h 后可能被自动探测覆盖（如实记录）
+- ≥2 registry 进程内 + TTL 重启清零
+- 批量测试 = N 个真实扣费请求（UI 计费警示）
+
+## v3.1 实施完成记录（2026-08-09，含实施后 4 顾问联合审查 + 修复）
+
+> 流程：实施（批量接口/按钮/筛选/编辑器回流/测试）→ 4 顾问实施后联合审查（后端/前端/逻辑/数据对抗者）→ 3 P0 + 7 P1 修复 → 全量验证。
+
+### 实施清单完成情况
+- 后端：判别矩阵 8 分支 mock 测试（matrix_test.go）、批量异步任务 + 轮询（batch.go + /api/v1/tools-probe/batch + /batch/status/:task_id）、写覆盖优先级/force/reset/批量共 9 用例全过
+- 前端：卡片批量按钮（事件驱动轮询）、行级 测试/强制/恢复 三按钮、编辑器 SortSection 头部按钮 + 回写本地 + 未提交禁用、组列表「仅 tools 查看筛选」、三语 locale
+
+### 实施后联合审查发现并修复（3 P0 + 7 P1）
+| # | 级别 | 问题 | 修复 |
+|---|---|---|---|
+| 1 | P0 | manual-force 守卫极性错误：unsupported/T9 守卫写 `NOT(supports_tools=true AND manual-force)`，保护永不存在的行，forced-false 被静默降级 | 守卫改 `supports_tools_source NOT IN (manual, manual-force)`（4 处：ApplyToolsProbeResult unsupported 分支 + ReportToolsUnsupported + T9） |
+| 2 | P0 | ≥2 registry 按全文 hash：probe 侧带 `upstream error:` 前缀 vs T9 裸 body → 两侧 hash 永不相等交叉重置；动态文本（trace_id/时间戳）永不累计 → unsupported=false 真实数据形态下几乎不可达 | 改按「命中的白名单 pattern」计数（matchToolsUnsupportedPattern），跨路径/动态文本同 pattern 即累计 |
+| 3 | P0 | batch 并发：Running 无锁写 + handler 序列化 goroutine 仍在 append 的活指针 | Running 置位放锁内；StartBatch 返回 BatchStatus 快照副本 |
+| 4 | P1 | executed 强 true 可被后到的 unsupported/T9 覆盖（层级按到达顺序而非证据比较） | unsupported/T9 守卫排除 source=manual 行（与 1 同修复） |
+| 5 | P1 | responseHasToolCall 只认 OpenAI `"tool_calls"`，Anthropic/Gemini/Responses 协议下 executed 不可达（误引导强制标不支持） | 按 channelType 分格式检测（tool_use/functionCall/function_call）+ tool_calls null/[] 空白变体 token 级排除 |
+| 6 | P1 | 白名单缺口：`does not support tool calls`（复数）、`currently`/`the` 插入、OpenAI 规范 `Unrecognized request argument supplied: tools` 漏报 | 补 6 条主流网关模式（21 条） |
+| 7 | P1 | FIX-E 冷却只看 SupportsTools 非 nil：U7/Reset 写 nil 绕过冷却；preset 路径传裸结构体（无 ProbedAt）每次激活全量付费重探 | 冷却只认 probed_at + 内部合并 DB 已有行最近探测时间 |
+| 8 | P1 | 编辑器未提交守卫死代码（channel_id>0 恒真）→ 未保存条目触发真实扣费 | 改 `typeof m.item_id === 'number'` 判定 |
+| 9 | P1 | 编辑器 writeback 无条件涂 true，与后端证据层级不一致（弱 true 覆盖 ✗、executed 覆盖 manual-force） | writeback 镜像后端守卫（弱 true 不覆盖 false / 强 true 不覆盖 manual-force / ≥2 false 不覆盖 manual） |
+| 10 | P1 | 单轮询槽位：第二个批任务杀死第一个的轮询 → 重复扣费 + 孤儿任务 | 行级/批量统一受 batchActive/toolsRunning 互斥（Card + Editor），进行中发 toast「已有批量测试进行中」 |
+
+### 验收结果
+- go test 全量 30 包 EXIT=0（含新增：判别矩阵 8 分支、协议检测 8 用例、P0 回归 3 项、批量 3 项）
+- 前端 tsc/lint/build 全绿（lint 2 个 set-state-in-effect → 事件驱动轮询重构解决）
+- 待办：prism.uno 端到端手测（验收标准 7，需真实渠道）
+
+### v3.1 已知边界更新
+- T9 双确认 false 在 6h 后**不会被**自动探测覆盖（accepted 弱 true 不覆盖 false）；false→true 唯一路径 = U7（≥2 真实成功写 nil）或手动 executed/强制（发布说明以此为准，修正原 R10 声明）
+- ≥2 registry 按 pattern 计数 + TTL 10min 重启清零；probe 与 T9 跨路径共用
+- 批量测试 = N 个真实扣费请求（UI 计费警示）
+
+## v3.1 复审记录（2026-08-09，修复后 4 顾问再审 + 修复）
+
+> 用户要求「重新多子智能体审查」。4 顾问（后端/逻辑/数据/前端对抗者）对修复后代码再审。结论：上一轮 3 个 P0 修复本体验证正确（守卫极性、pattern-keyed registry、batch 锁与快照），但发现 **1 个新 P0 层级绕过** + 4 个 P1 + 若干 P2，已全部修复。
+
+### 复审发现与修复
+| # | 级别 | 问题（双顾问独立确认） | 修复 |
+|---|---|---|---|
+| 1 | **P0** | accepted（弱 true）分支 WHERE 命中 executed 的 true 行并把 source 覆盖成 probe → 后续 unsupported/T9 的 `source NOT IN (manual, manual-force)` 不再保护 → **≥2 false 覆盖 executed 强 true**（保护标记被低层级写入者先行拆除） | accepted 分支 source 改 `CASE WHEN source IN (manual, manual-force) THEN 原 source ELSE result.Source END`——probed_at 照常推进，只保留保护标记（逻辑对抗者推荐方案 B，避免与冷却耦合） |
+| 2 | P1 | pattern 计数是「措辞级」非「类别级」：`tools not supported` vs `does not support tools` 同义不累计；`not support tools` 是多 pattern 子串致同义分裂 | pattern 重构为「语义类别组」map（tools_param_rejected / tool_calls_rejected / function_calling_rejected / chinese_rejected），计数 key 用类别——同义不同措辞跨路径累计 |
+| 3 | P1 | 白名单漏报 40-50%：引号参数 `does not support the 'tools' parameter`、`tool calling` 形态、缩约 `doesn't`、中文 `不支持tool`/`tools 参数不支持` | 补 `doesn't support tools`、`not support the tools parameter`、tool calling 系列、中文倒装等模式（现 38 条） |
+| 4 | P1 | TTL 10min 对低频渠道确认率清零：probe 命中后下次真实失败 >10min 即过期，永远 ≥2 不到 | TTL 10min→24h（平衡近期性与低频可确认；进程内 registry 重启清零不变） |
+| 5 | P1 | 冷却合并查询自指失败：`Order id DESC` 取到刚创建的新行（probed_at=nil）→ 冷却从不生效 → 重复付费探测 | 查询加 `supports_tools_probed_at IS NOT NULL` 排除新行（preset 激活 FIX-G 显式继承路径仍生效） |
+| 6 | P1 | 中文否定语境误伤：`不支持 tools 以外的参数` 语义=支持 tools 却命中 `不支持 tools` | matchToolsUnsupportedPattern 对 chinese_rejected 类别遇 `以外的` 排除 |
+| 7 | P2 | 前端：行级按钮在批量进行中仍可点（toast 报错而非禁用）、Card force/reset 无 batchActive 互斥、预设编辑器 tools 按钮恒死（快照无 item_id）、✓/✗ 徽标 title 硬编码中文 | `toolsDisabled` 经 MemberList→MemberItem 下传（batchActive/toolsRunning/预设禁用）；Card force/reset 加 batchActive 守卫；PresetEditor 传 `enableToolsTest={false}` 隐藏；徽标 title 改 locale 键 |
+| 8 | P2 | 前端 writeback 镜像滞后：后端 CASE WHEN 保护标记后前端仍用 `r.source` 覆盖 | writeback 加 `isProtectedSource` 分支：weak true 不抹 manual/manual-force source |
+
+### 新增回归测试（8 个）
+- TestAcceptedDoesNotEraseExecutedSource（P0 链路：executed→accepted→unsupported 全程保护）
+- TestAcceptedPreservesManualForceSource
+- TestToolsProbeRegistryCategoryAccumulates（同类别不同措辞累计）
+- TestMatchToolsUnsupportedErrorNegationContext（否定语境 + 引号参数 + tool calling + 缩约）
+- 保留：CrossPath/UnsupportedDoesNotOverride* 等 6 项
+
+### 验收
+- go test 全量 30 包 EXIT=0（gofmt 干净）
+- 前端 tsc/lint/build 全绿
+- 剩余 P2 观察项（不阻塞）：NULL source 旧行漏写 false（保守方向，可加 `source IS NULL OR`）、batch 返回 200 非 202（纯契约）、半开筛选口径、coarse pointer 触屏按钮、批信号量排队无超时
+
+## v3.1 第三轮复审记录（2026-08-09，过度修改检测 + 真实遗漏）
+
+> 用户要求再 review，且重点检查「过度修改」（干到 10 即可却改到 20）。后端对抗者复审 + 主席自检。
+
+### 过度修改检测结论（用户核心关切）
+**整体恰到好处，非明显过度**——6 项候选修改中 4 项被证明为真实修复（非对抗压力产物）：
+- **TTL 10min→24h：必要**。TTL 是计数窗口上限，风暴内 5 次失败在 10min 与 24h 下都确认，行为无差异；24h 只让相距数小时的独立失败可累计（证据质量更高），且低频渠道在 10min 下 ≥2 几乎不可达。
+- **冷却 `IS NOT NULL` 排除新行：必要**。bug 不在新行而在**重建行**：同 (channel,model) 旧行近期 probed_at、行删后重加时 Order id DESC 取到新行自己（nil）→ 必重探 → 付费重复 + ApplyToolsProbeResult 全量更新翻转旧行已确认结论。
+- **CASE WHEN 保护 source：可商榷但保留**。替代（WHERE 跳过）牺牲 probed_at 推进 → 冷却耦合 → 探测风暴。
+- **死代码删除：必要**。
+- **可商榷（非过度）**：pattern 23→38 条膨胀（同义屈折变体多，可用正则精简，非正确性影响）；两条 registry 测试轻度重复（可合并，非病态）。
+
+### 真实遗漏（本轮新发现 + 修复）
+| # | 级别 | 问题 | 修复 |
+|---|---|---|---|
+| 1 | **P1** | **Reset/Force 不清 ≥2 计数 registry**：管理员「恢复自动/强制」后，24h TTL 内残留失败计数让单次新失败立即绕过 ≥2 门槛（「重新评估」只给 1 次新证据资格） | ForceToolsUnsupported 调 `toolsProbeCounts.reset`；ResetToolsState 调 `toolsProbeCounts.reset` + `toolsSuccessRegistry.reset`；新增 TestResetToolsStateClearsFailureRegistry |
+| 2 | P2 | batch 任务 runBatchItem panic 时 Running 永 true → cleaner 不回收 + 前端永轮询 | Running=false 改 defer 兜底（safe.Go recover 后仍置位） |
+| 3 | P2 | reprobe/batch 对 pending/unknown/required_ignored 返回 supports:false（未判定伪装成不支持） | 记录为已知边界（DB 安全，state 字段可消歧，前端不依赖 supports 布尔） |
+| 4 | P2 | 多类别同命中时 map 迭代序致计数 key 抖动（永不累计，保守失败） | 记录观察（罕见场景） |
+| 5 | P2 | 审计 key（firstEnabledKeyID）与实际探测 key（首个 enabled 非空 secret）可能不一致 | 记录观察（多 key 渠道审计失真） |
+
+### 验收
+- 死代码 UpdateGroupItemToolsSupport 已删净（grep 无引用）
+- go test 30 包 EXIT=0，gofmt 干净；前端本轮零改动
+- 前端 3 项候选（props 膨胀/行级 3 按钮/writeback 镜像守卫）经前两轮评估为「内网自用可接受」，未过度收口
