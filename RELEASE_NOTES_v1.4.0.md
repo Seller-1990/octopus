@@ -1,6 +1,6 @@
 # Octopus v1.4.0 Release Notes
 
-> English first, 中文见下方. — v1.3.5 → v1.4.0, 9 commits.
+> English first, 中文见下方. — v1.3.5 → v1.4.0, 12 commits.
 
 ## ✨ Features
 
@@ -32,7 +32,7 @@
 
 ## 🐙 v1.4.0 发布说明（中文）
 
-> 自 v1.3.5 起，9 个提交。English above.
+> 自 v1.3.5 起，12 个提交。English above.
 
 ## ✨ 新功能
 
