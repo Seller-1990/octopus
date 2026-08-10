@@ -713,6 +713,22 @@ func rewriteManagedGroupItemsForAccount(ctx context.Context, siteRecord *model.S
 	}
 	affectedGroupIDs := make(map[int]struct{})
 	deleteItemIDs := make([]int, 0)
+	// 修复（2026-08-10 同步失败复审）：原实现逐条裸 UPDATE channel_id，
+	// 当同 (group_id, model_name) 的多条记录被重定向到同一目标渠道、且目标渠道已有该组合时，
+	// 撞唯一索引 idx_group_channel_model（2067），同步 500 且 failed 账号残留态无限重演。
+	// 三处修正：
+	//   1) 判定域对齐唯一索引三列 (GroupID, targetChannelID, ModelName)，而非 binding 的
+	//      baseGroupKey（不同 key 可映射同一 GroupID，逻辑对抗者 P1-3）；
+	//   2) 事务内先删 stale 再搬运（先删后移，消除碰撞源——碰撞目标可能是稍后会被删的行）；
+	//   3) 「目标组合已存在（排除自己）」→ 删除当前条目（目标行已代表该组合），覆盖 failed
+	//      账号半提交残留态；同批多条搬同一目标时，事务内读写一致使第二条看到第一条 → 删除而非撞索引。
+	type rewriteTarget struct {
+		itemID     int
+		groupID    int
+		modelName  string
+		targetChan int
+	}
+	var needMove []rewriteTarget
 	for _, item := range items {
 		var binding *model.SiteChannelBinding
 		for i := range bindings {
@@ -750,15 +766,48 @@ func rewriteManagedGroupItemsForAccount(ctx context.Context, siteRecord *model.S
 		if targetChannelID == item.ChannelID {
 			continue
 		}
-		if err := db.GetDB().WithContext(ctx).Model(&model.GroupItem{}).Where("id = ?", item.ID).Update("channel_id", targetChannelID).Error; err != nil {
-			return fmt.Errorf("failed to rewrite group item %d: %w", item.ID, err)
-		}
+		needMove = append(needMove, rewriteTarget{
+			itemID:     item.ID,
+			groupID:    item.GroupID,
+			modelName:  strings.TrimSpace(item.ModelName),
+			targetChan: targetChannelID,
+		})
 		affectedGroupIDs[item.GroupID] = struct{}{}
 	}
-	if len(deleteItemIDs) > 0 {
-		if err := db.GetDB().WithContext(ctx).Where("id IN ?", deleteItemIDs).Delete(&model.GroupItem{}).Error; err != nil {
-			return fmt.Errorf("failed to delete stale group items: %w", err)
+	if len(deleteItemIDs) == 0 && len(needMove) == 0 {
+		return nil
+	}
+	if err := db.GetDB().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		// 先删 stale（模型下线 / 路由类型变化 / 无目标渠道）——先删后移，消除碰撞源
+		if len(deleteItemIDs) > 0 {
+			if err := tx.Where("id IN ?", deleteItemIDs).Delete(&model.GroupItem{}).Error; err != nil {
+				return fmt.Errorf("failed to delete stale group items: %w", err)
+			}
 		}
+		// 逐条搬运：目标组合已存在（排除自己）→ 删除当前条目（目标行已代表该组合）；
+		// 否则 UPDATE channel_id。事务内读写一致保证同批互相撞时后者看到前者。
+		for _, m := range needMove {
+			var count int64
+			if err := tx.Model(&model.GroupItem{}).
+				Where("group_id = ? AND channel_id = ? AND model_name = ? AND id != ?",
+					m.groupID, m.targetChan, m.modelName, m.itemID).
+				Count(&count).Error; err != nil {
+				return fmt.Errorf("failed to check target group item: %w", err)
+			}
+			if count > 0 {
+				if err := tx.Delete(&model.GroupItem{}, m.itemID).Error; err != nil {
+					return fmt.Errorf("failed to dedupe group item %d: %w", m.itemID, err)
+				}
+				continue
+			}
+			if err := tx.Model(&model.GroupItem{}).Where("id = ?", m.itemID).
+				Update("channel_id", m.targetChan).Error; err != nil {
+				return fmt.Errorf("failed to rewrite group item %d: %w", m.itemID, err)
+			}
+		}
+		return nil
+	}); err != nil {
+		return err
 	}
 	if len(affectedGroupIDs) == 0 {
 		return nil
