@@ -30,24 +30,45 @@ func NormalizeModelIdentity(value string) string {
 	return strings.ToLower(strings.TrimSpace(value))
 }
 
-// resolveVisionCapable 解析模型的视觉能力（多模态输入）：
-//  1. models.dev 能力索引优先（modelvendor.LookupVision，模态级静态属性可信）
-//  2. 索引未收录时用模型名后缀兜底（5v/vision/vl 等显式后缀）
+// resolveCapabilities 解析模型的能力位图（多模态/推理/语音/生图）：
+//  1. models.dev 能力索引优先（modelvendor.LookupCapabilities，模态级静态属性可信）
+//  2. 索引未收录时用模型名后缀兜底（仅多模态/推理可后缀推断）
 //  3. 都没有 → nil（未知，不预填）
 //
 // 只读徽标版：无手动覆盖字段，预填后不参与任何路由判定（纯标识）。
-func resolveVisionCapable(modelName string) *bool {
-	if vision, ok := modelvendor.LookupVision(modelName); ok {
-		return &vision
+// tools 能力不在此列——tools 是实例级动态属性，由 supports_tools 探测负责（用户拍板）。
+func resolveCapabilities(modelName string) *uint8 {
+	if caps, ok := modelvendor.LookupCapabilities(modelName); ok {
+		return &caps
 	}
 	lower := strings.ToLower(modelName)
-	// 显式视觉后缀兜底（中文厂商命名惯例 + 通用 vision 后缀）。
+	var caps uint8
+	// 显式后缀兜底（中文厂商命名惯例 + 通用后缀）。
 	// 注意：5v/vision 子串误伤概率低（纯文本模型少用这些后缀），漏判方向安全（nil=未知）。
 	for _, suffix := range []string{"5v", "vision", "-vl", "-vlx", "omni", "visual"} {
 		if strings.Contains(lower, suffix) {
-			v := true
-			return &v
+			caps |= uint8(model.CapMultimodal)
+			break
 		}
+	}
+	// 推理后缀兜底（reasoning 无 models.dev 数据时的保守推断）。
+	for _, suffix := range []string{"reasoning", "-r1", "thinking"} {
+		if strings.Contains(lower, suffix) {
+			caps |= uint8(model.CapReasoning)
+			break
+		}
+	}
+	if caps == 0 {
+		return nil
+	}
+	return &caps
+}
+
+// resolveVisionCapable 兼容旧字段：仅多模态位（由 resolveCapabilities 派生）。
+func resolveVisionCapable(modelName string) *bool {
+	if caps := resolveCapabilities(modelName); caps != nil {
+		v := *caps&uint8(model.CapMultimodal) != 0
+		return &v
 	}
 	return nil
 }
@@ -278,6 +299,7 @@ func CatalogSync(ctx context.Context) (model.CatalogSyncResult, error) {
 					NormalizedName:  normalized,
 					Vendor:          modelvendor.Detect(displayName),
 					VisionCapable:   resolveVisionCapable(displayName),
+					Capabilities:    resolveCapabilities(displayName),
 					RoutingStrategy: model.RoutingStrategyBalanced,
 					ProtocolPolicy:  model.ProtocolPolicyAuto,
 					Enabled:         true,
@@ -297,15 +319,30 @@ func CatalogSync(ctx context.Context) (model.CatalogSyncResult, error) {
 					}
 					canonical.Vendor = vendor
 				}
-			} else if canonical.VisionCapable == nil {
+			} else if canonical.VisionCapable == nil || canonical.Capabilities == nil {
 				// 存量回填（P0 修复：create-only 预填对迁移前存量行永远 nil）：
 				// 仅当从未预填（nil）时按能力索引回填；无手动覆盖字段（只读徽标版）。
-				if vision, ok := modelvendor.LookupVision(canonical.Name); ok {
+				if caps, ok := modelvendor.LookupCapabilities(canonical.Name); ok {
+					vision := caps&uint8(model.CapMultimodal) != 0
+					updates := map[string]any{
+						"vision_capable": vision,
+						"capabilities":   caps,
+					}
+					if canonical.Capabilities != nil {
+						delete(updates, "capabilities") // 已回填能力位图，只补 vision 派生
+					}
+					if canonical.VisionCapable != nil {
+						delete(updates, "vision_capable") // 已回填 vision，只补能力位图
+					}
+					if len(updates) == 0 {
+						continue
+					}
 					if err := tx.Model(&model.CanonicalModel{}).Where("id = ?", canonical.ID).
-						Update("vision_capable", vision).Error; err != nil {
+						Updates(updates).Error; err != nil {
 						return err
 					}
 					canonical.VisionCapable = &vision
+					canonical.Capabilities = &caps
 				}
 			}
 
@@ -567,6 +604,18 @@ func CatalogList(ctx context.Context) ([]model.CanonicalModel, error) {
 		}).
 		Order("normalized_name ASC").
 		Find(&items).Error
+	// 序列化层：把能力位图解码为 API string[]（CapabilitiesList）。
+	// 兼容旧数据：仅 VisionCapable 有值而 Capabilities 为 nil 时，派生多模态位。
+	for i := range items {
+		caps := items[i].Capabilities
+		if caps == nil && items[i].VisionCapable != nil && *items[i].VisionCapable {
+			v := uint8(model.CapMultimodal)
+			caps = &v
+		}
+		if caps != nil {
+			items[i].CapabilitiesList = model.CapabilitiesToNames(*caps)
+		}
+	}
 	return items, err
 }
 

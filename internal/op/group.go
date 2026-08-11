@@ -18,9 +18,35 @@ func GroupList(ctx context.Context) ([]model.Group, error) {
 	groups := make([]model.Group, 0, groupCache.Len())
 	for _, group := range groupCache.GetAll() {
 		group.Items = applyGroupItemMultiplierPolicies(ctx, group.Items)
+		// 能力标识（分组名 → CanonicalModel 能力，并集聚合，只读徽标）。
+		// 规范化名匹配（NormalizeModelIdentity 已小写化），改名/手建分组无匹配 → 空（可接受）。
+		if caps, ok := canonicalCapabilitiesByName(NormalizeModelIdentity(group.Name)); ok {
+			group.Capabilities = caps
+		}
 		groups = append(groups, group)
 	}
 	return groups, nil
+}
+
+// canonicalCapabilitiesByName 按规范化模型名查 CanonicalModel 能力位图并解码。
+// 数据源 canonicalByNormalized 缓存（catalogRefreshCache 刷新）；并发读由 catalogCacheMu 保护。
+// 兼容旧数据：仅 vision_capable 有值而 Capabilities 为 nil 时派生多模态位。
+func canonicalCapabilitiesByName(normalized string) ([]string, bool) {
+	catalogCacheMu.RLock()
+	canonical, ok := canonicalByNormalized[normalized]
+	catalogCacheMu.RUnlock()
+	if !ok {
+		return nil, false
+	}
+	caps := canonical.Capabilities
+	if caps == nil && canonical.VisionCapable != nil && *canonical.VisionCapable {
+		v := uint8(model.CapMultimodal)
+		caps = &v
+	}
+	if caps == nil {
+		return nil, false
+	}
+	return model.CapabilitiesToNames(*caps), true
 }
 
 func GroupListModel(ctx context.Context) ([]string, error) {

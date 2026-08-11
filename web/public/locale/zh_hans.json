@@ -1047,7 +1047,13 @@
         "gemini_extensions": "Gemini 扩展",
         "websocket": "WebSocket"
       },
-      "visionCapable": "多模态（支持图像/视频输入，来源 models.dev）"
+      "visionCapable": "多模态（支持图像/视频输入，来源 models.dev）",
+      "capability.multimodal": "多模态（图像/视频输入，来源 models.dev）",
+      "capability.reasoning": "推理（models.dev 静态声明）",
+      "capability.voice_input": "语音输入（音频输入，来源 models.dev）",
+      "capability.voice_output": "语音输出（TTS，来源 models.dev）",
+      "capability.image_gen": "生图（来源 models.dev）",
+      "capability.video_gen": "视频生成（来源 models.dev）"
     },
     "pricing": {
       "title": "有效价格",

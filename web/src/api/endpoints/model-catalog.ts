@@ -77,6 +77,8 @@ export type CanonicalModel = {
     vendor: string;
     vendor_manual: boolean;
     vision_capable?: boolean | null;
+    /** 能力位图解码后的能力名（models.dev 静态声明，如 ["multimodal","reasoning"]）。只读徽标。 */
+    capabilities?: string[];
     routing_strategy: RoutingStrategy;
     protocol_policy: Exclude<ProtocolPolicy, 'inherit'>;
     allow_lossy: boolean;
@@ -155,6 +157,8 @@ export type DiscoveredModel = {
     normalized_name: string;
     vendor: string;
     vendor_manual: boolean;
+    /** 能力位图解码（models.dev 静态声明，如 ["multimodal","reasoning"]）。只读徽标。 */
+    capabilities?: string[];
     status: DiscoveredModelStatus;
     canonical_model_id?: number;
     canonical_name?: string;

@@ -52,6 +52,8 @@ export interface Group {
     pinned?: boolean;
     pinned_at?: string | null;
     active_preset_id?: number | null;
+    /** 分组名对应 CanonicalModel 的能力（并集聚合，models.dev 静态声明）。只读徽标。 */
+    capabilities?: string[];
     items?: GroupItem[];
 }
 

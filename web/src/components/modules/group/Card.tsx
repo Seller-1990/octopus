@@ -17,6 +17,7 @@ import type { SelectedMember } from './ItemList';
 import { MemberList } from './ItemList';
 import { GroupEditor, type GroupEditorValues } from './Editor';
 import { GroupHealthBadge } from './health';
+import { CapabilityBadges } from '../model/CapabilityBadges';
 import { useRunGroupHealth } from '@/api/endpoints/group-health';
 import { modelChannelKey, MODE_LABELS } from './utils';
 import { GroupMode, type GroupUpdateRequest } from '@/api/endpoints/group';
@@ -441,7 +442,10 @@ export function GroupCard({ group }: { group: Group }) {
                 <div className="relative flex-1 mr-2 min-w-0 group/title">
                     <Tooltip side="top" sideOffset={10} align="center">
                         <TooltipTrigger asChild>
-                            <h3 className="text-lg font-bold truncate">{group.name}</h3>
+                            <h3 className="text-lg font-bold truncate flex items-center gap-1.5">
+                                <span className="truncate">{group.name}</span>
+                                <CapabilityBadges capabilities={group.capabilities} size="xs" />
+                            </h3>
                         </TooltipTrigger>
                         <TooltipContent key={group.name}>{group.name}</TooltipContent>
                     </Tooltip>

@@ -24,29 +24,47 @@ type registryModel struct {
 	ID         string          `json:"id"`
 	Cost       model.LLMPrice  `json:"cost"`
 	Modalities json.RawMessage `json:"modalities"`
+	Reasoning  bool            `json:"reasoning"`
 }
 
-// registryHasVision 判定 models.dev 条目的视觉输入能力：modalities.input 含 image 或 video。
-// 宽松容错：modalities 缺失/结构异常 → 未知（false, 不写列）。
-// P1 修复：不直接依赖顶层 Unmarshal（单条 modalities 结构异常会炸掉整个价格更新）——
-// 这里用 RawMessage 单独防御解析，异常降级为 false 而非整包失败。
-func registryHasVision(raw json.RawMessage) bool {
+// registryCapabilities 从 models.dev 条目构建能力位图（不含 tools——tools 走实例级探测）。
+// 宽松容错：modalities 缺失/结构异常 → 对应位不置（未知，不写列）。
+// P1 修复：不直接依赖顶层 Unmarshal（单条结构异常会炸掉整个价格更新）——
+// 用 RawMessage 单独防御解析，异常降级而非整包失败。
+func registryCapabilities(raw json.RawMessage, reasoning bool) uint8 {
+	var caps uint8
+	if reasoning {
+		caps |= uint8(model.CapReasoning)
+	}
 	if len(raw) == 0 || string(raw) == "null" {
-		return false
+		return caps
 	}
 	var m struct {
-		Input []string `json:"input"`
+		Input  []string `json:"input"`
+		Output []string `json:"output"`
 	}
 	if err := json.Unmarshal(raw, &m); err != nil {
-		return false // 结构异常 → 未知，不判定
+		return caps // 结构异常 → 未知，不判定
 	}
 	for _, in := range m.Input {
 		switch strings.ToLower(strings.TrimSpace(in)) {
 		case "image", "video":
-			return true
+			caps |= uint8(model.CapMultimodal)
+		case "audio":
+			caps |= uint8(model.CapVoiceInput)
 		}
 	}
-	return false
+	for _, out := range m.Output {
+		switch strings.ToLower(strings.TrimSpace(out)) {
+		case "image":
+			caps |= uint8(model.CapImageGen)
+		case "video":
+			caps |= uint8(model.CapVideoGen)
+		case "audio":
+			caps |= uint8(model.CapVoiceOutput)
+		}
+	}
+	return caps
 }
 
 type registryProvider struct {
@@ -115,27 +133,39 @@ func UpdateLLMPrice(ctx context.Context) error {
 	}
 	globalprice.Replace(prices)
 	modelvendor.ReplaceIndex(vendorIndex(rawPrice))
-	modelvendor.ReplaceVisionIndex(visionIndex(rawPrice))
+	modelvendor.ReplaceCapabilityIndex(capabilityIndex(rawPrice))
 	lastUpdateTime = time.Now()
 	return nil
 }
 
-// visionIndex 把 models.dev 的 provider→models 结构翻成「模型名 → 视觉能力」索引。
+// capabilityIndex 把 models.dev 的 provider→models 结构翻成「模型名 → 能力位图」索引。
 // 与 vendorIndex 同源：遍历**全部** provider（不套价格白名单——P1 修复：
-// 覆盖 mistral/meta/cohere 等非价格厂商的视觉模型，如 pixtral 旗舰），
-// 托管方（openrouter/groq）由 ReplaceVisionIndex 的 prefixAliases 过滤裁掉。
+// 覆盖 mistral/meta/cohere 等非价格厂商的视觉模型，如 pixtral 旗舰）。
+// P0-3 修复（实施后审查）：**先按 prefixAliases 过滤 provider，再做并集合并**——
+// 不能合并后才靠单值 Provider 过滤（openrouter/groq 托管方先被遍历会让整条被丢弃，
+// 或残留托管方污染数据）。过滤前置到每个条目，只保留真厂商贡献。
 // key 与 item.ID 双写（对齐 vendorIndex 口径，P1 修复 vendor/ 前缀模型名可查）。
-func visionIndex(raw map[string]registryProvider) map[string]modelvendor.VisionEntry {
-	index := make(map[string]modelvendor.VisionEntry)
+func capabilityIndex(raw map[string]registryProvider) map[string]modelvendor.CapabilityEntry {
+	index := make(map[string]modelvendor.CapabilityEntry)
 	for provider, entry := range raw {
+		if !modelvendor.IsKnownProvider(provider) {
+			continue // 托管方/未知 provider 直接过滤，不参与并集
+		}
 		for key, item := range entry.Models {
-			vision := registryHasVision(item.Modalities)
+			caps := registryCapabilities(item.Modalities, item.Reasoning)
 			for _, name := range []string{key, item.ID} {
 				name = strings.ToLower(strings.TrimSpace(name))
 				if name == "" {
 					continue
 				}
-				index[name] = modelvendor.VisionEntry{Provider: provider, Vision: vision}
+				if existing, ok := index[name]; ok {
+					index[name] = modelvendor.CapabilityEntry{
+						Provider:     provider,
+						Capabilities: existing.Capabilities | caps,
+					}
+				} else {
+					index[name] = modelvendor.CapabilityEntry{Provider: provider, Capabilities: caps}
+				}
 			}
 		}
 	}

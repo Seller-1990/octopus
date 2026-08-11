@@ -122,6 +122,16 @@ func newDiscoveredModel(
 		item.Vendor = canonical.Vendor
 		item.VendorManual = canonical.VendorManual
 	}
+	// 能力标识：从 canonical 能力位图解码（models.dev 静态声明）。
+	// 兼容旧数据：仅 vision_capable 有值而 Capabilities 为 nil 时派生多模态位。
+	caps := canonical.Capabilities
+	if caps == nil && canonical.VisionCapable != nil && *canonical.VisionCapable {
+		v := uint8(model.CapMultimodal)
+		caps = &v
+	}
+	if caps != nil {
+		item.Capabilities = model.CapabilitiesToNames(*caps)
+	}
 	group, hasGroup := groupByNormalized[NormalizeModelIdentity(canonical.Name)]
 	if hasGroup {
 		item.GroupID = group.ID

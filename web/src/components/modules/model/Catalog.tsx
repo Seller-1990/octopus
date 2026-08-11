@@ -20,6 +20,7 @@ import { useSearchStore } from '@/components/modules/toolbar';
 import { cn } from '@/lib/utils';
 import { CatalogModelDialog } from './CatalogModelDialog';
 import { VendorBadge } from './VendorBadge';
+import { CapabilityBadges } from './CapabilityBadges';
 
 function errorMessage(error: unknown) {
     return error instanceof Error ? error.message : String(error);
@@ -199,14 +200,7 @@ function CatalogCard({
                 <span className="min-w-0 flex-1 truncate text-sm font-medium">
                     {model.name}
                 </span>
-                {model.vision_capable === true && (
-                    <span
-                        title={t('visionCapable')}
-                        className="inline-flex shrink-0 items-center rounded px-1 py-px text-[10px] font-medium leading-none bg-violet-500/15 text-violet-700 dark:text-violet-300"
-                    >
-                        🖼️ 多模态
-                    </span>
-                )}
+                <CapabilityBadges capabilities={model.capabilities} size="xs" />
                 {model.vendor ? (
                     <VendorBadge vendor={model.vendor} unknownLabel="" className="shrink-0" />
                 ) : null}

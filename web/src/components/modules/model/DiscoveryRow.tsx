@@ -5,6 +5,7 @@ import type { DiscoveredModel } from '@/api/endpoints/model-catalog';
 import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
 import { VendorBadge } from './VendorBadge';
+import { CapabilityBadges } from './CapabilityBadges';
 
 /**
  * 模型发现列表的一行：勾选框、模型名与来源、厂商标签、归属状态。
@@ -36,7 +37,10 @@ export function DiscoveryRow({
                 className="size-4 shrink-0 rounded border-border bg-background align-middle accent-primary"
             />
             <div className="min-w-0 flex-1">
-                <p className="truncate text-sm font-medium">{item.name}</p>
+                <p className="flex items-center gap-1.5 truncate text-sm font-medium">
+                    <span className="truncate">{item.name}</span>
+                    <CapabilityBadges capabilities={item.capabilities} size="xs" />
+                </p>
                 <p className="truncate text-xs text-muted-foreground">
                     {t('channelCount', { count: item.channel_count })}
                     {item.site_names?.length ? ` · ${item.site_names.join(', ')}` : ''}

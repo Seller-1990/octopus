@@ -46,6 +46,7 @@ type DiscoveredModel struct {
 	NormalizedName   string                `json:"normalized_name"`
 	Vendor           string                `json:"vendor"`
 	VendorManual     bool                  `json:"vendor_manual"`
+	Capabilities     []string              `json:"capabilities,omitempty"` // 能力位图解码（models.dev 静态声明）
 	Status           DiscoveredModelStatus `json:"status"`
 	CanonicalModelID int                   `json:"canonical_model_id,omitempty"`
 	CanonicalName    string                `json:"canonical_name,omitempty"`

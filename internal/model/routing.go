@@ -140,22 +140,60 @@ const (
 	RouteCandidateArchived    RouteCandidateStatus = "archived"
 )
 
+// ModelCapability 模型能力位（来源 models.dev，只读徽标，无手动覆盖）。
+// 位图存 DB（*uint8 保持三值：nil=未知、非0=能力位图），API 输出解码为 string[]。
+type ModelCapability uint8
+
+const (
+	CapMultimodal  ModelCapability = 1 << iota // 多模态（image/video 输入，不含 pdf）
+	CapReasoning                               // 推理（models.dev reasoning=true）
+	CapVoiceInput                              // 语音输入（input 含 audio）
+	CapVoiceOutput                             // 语音输出（output 含 audio）
+	CapImageGen                                // 生图（output 含 image）
+	CapVideoGen                                // 视频输出（output 含 video，暂不展示）
+)
+
+// CapabilityNames 位图 → API 字符串名（前端解码用，后端保持位序稳定）。
+var CapabilityNames = map[ModelCapability]string{
+	CapMultimodal:  "multimodal",
+	CapReasoning:   "reasoning",
+	CapVoiceInput:  "voice_input",
+	CapVoiceOutput: "voice_output",
+	CapImageGen:    "image_gen",
+	CapVideoGen:    "video_gen",
+}
+
+// CapabilitiesToNames 解码位图为有序字符串数组（API 输出契约）。
+func CapabilitiesToNames(caps uint8) []string {
+	out := make([]string, 0, 4)
+	for bit := CapMultimodal; bit <= CapVideoGen; bit <<= 1 {
+		if caps&uint8(bit) != 0 {
+			if name, ok := CapabilityNames[bit]; ok {
+				out = append(out, name)
+			}
+		}
+	}
+	return out
+}
+
 type CanonicalModel struct {
-	ID              int              `json:"id" gorm:"primaryKey"`
-	Name            string           `json:"name" gorm:"size:191;not null"`
-	NormalizedName  string           `json:"normalized_name" gorm:"size:191;uniqueIndex;not null"`
-	Vendor          string           `json:"vendor" gorm:"size:64;index"`                 // 厂商 ID，自动识别或人工指定，空表示未知
-	VendorManual    bool             `json:"vendor_manual" gorm:"not null;default:false"` // 人工指定后不再被自动识别覆盖
-	VisionCapable   *bool            `json:"vision_capable,omitempty"`                    // 多模态（视觉输入）能力：true=支持，false=不支持，nil=未知/未预填（只读徽标，无手动覆盖）
-	RoutingStrategy RoutingStrategy  `json:"routing_strategy" gorm:"type:varchar(32);not null;default:'balanced'"`
-	ProtocolPolicy  ProtocolPolicy   `json:"protocol_policy" gorm:"type:varchar(32);not null;default:'auto'"`
-	AllowLossy      bool             `json:"allow_lossy" gorm:"not null;default:false"`
-	Enabled         bool             `json:"enabled" gorm:"not null;default:true;index"`
-	Manual          bool             `json:"manual" gorm:"not null;default:false"`
-	CreatedAt       time.Time        `json:"created_at"`
-	UpdatedAt       time.Time        `json:"updated_at"`
-	Aliases         []ModelAlias     `json:"aliases,omitempty" gorm:"foreignKey:CanonicalModelID"`
-	RouteCandidates []RouteCandidate `json:"route_candidates,omitempty" gorm:"foreignKey:CanonicalModelID"`
+	ID               int              `json:"id" gorm:"primaryKey"`
+	Name             string           `json:"name" gorm:"size:191;not null"`
+	NormalizedName   string           `json:"normalized_name" gorm:"size:191;uniqueIndex;not null"`
+	Vendor           string           `json:"vendor" gorm:"size:64;index"`                 // 厂商 ID，自动识别或人工指定，空表示未知
+	VendorManual     bool             `json:"vendor_manual" gorm:"not null;default:false"` // 人工指定后不再被自动识别覆盖
+	VisionCapable    *bool            `json:"vision_capable,omitempty"`                    // 兼容旧字段：多模态（视觉输入），nil=未知（新数据由 Capabilities 派生）
+	Capabilities     *uint8           `json:"capabilities_raw,omitempty"`                  // 能力位图（*uint8：nil=未知、非0=能力）；DB 存储 + 备份导出用（raw 数字）
+	CapabilitiesList []string         `json:"capabilities,omitempty" gorm:"-"`             // API 输出解码后的能力名（如 ["multimodal","reasoning"]）；序列化层填充
+	RoutingStrategy  RoutingStrategy  `json:"routing_strategy" gorm:"type:varchar(32);not null;default:'balanced'"`
+	ProtocolPolicy   ProtocolPolicy   `json:"protocol_policy" gorm:"type:varchar(32);not null;default:'auto'"`
+	AllowLossy       bool             `json:"allow_lossy" gorm:"not null;default:false"`
+	Enabled          bool             `json:"enabled" gorm:"not null;default:true;index"`
+	Manual           bool             `json:"manual" gorm:"not null;default:false"`
+	CreatedAt        time.Time        `json:"created_at"`
+	UpdatedAt        time.Time        `json:"updated_at"`
+	Aliases          []ModelAlias     `json:"aliases,omitempty" gorm:"foreignKey:CanonicalModelID"`
+	RouteCandidates  []RouteCandidate `json:"route_candidates,omitempty" gorm:"foreignKey:CanonicalModelID"`
 }
 
 type ModelAlias struct {

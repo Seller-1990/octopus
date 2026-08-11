@@ -1047,7 +1047,13 @@
         "gemini_extensions": "Gemini 擴展",
         "websocket": "WebSocket"
       },
-      "visionCapable": "多模態（支援圖像/視訊輸入，來源 models.dev）"
+      "visionCapable": "多模態（支援圖像/視訊輸入，來源 models.dev）",
+      "capability.multimodal": "多模態（圖像/視訊輸入，來源 models.dev）",
+      "capability.reasoning": "推理（models.dev 靜態聲明）",
+      "capability.voice_input": "語音輸入（音訊輸入，來源 models.dev）",
+      "capability.voice_output": "語音輸出（TTS，來源 models.dev）",
+      "capability.image_gen": "生圖（來源 models.dev）",
+      "capability.video_gen": "影片生成（來源 models.dev）"
     },
     "pricing": {
       "title": "有效價格",

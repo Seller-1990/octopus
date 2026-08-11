@@ -1047,7 +1047,13 @@
         "gemini_extensions": "Gemini extensions",
         "websocket": "WebSocket"
       },
-      "visionCapable": "Multimodal (supports image/video input, from models.dev)"
+      "visionCapable": "Multimodal (supports image/video input, from models.dev)",
+      "capability.multimodal": "Multimodal (image/video input, from models.dev)",
+      "capability.reasoning": "Reasoning (models.dev static declaration)",
+      "capability.voice_input": "Voice input (audio input, from models.dev)",
+      "capability.voice_output": "Voice output (TTS, from models.dev)",
+      "capability.image_gen": "Image generation (from models.dev)",
+      "capability.video_gen": "Video generation (from models.dev)"
     },
     "pricing": {
       "title": "Effective price",

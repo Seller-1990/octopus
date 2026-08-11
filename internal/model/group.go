@@ -25,6 +25,9 @@ type Group struct {
 	PinnedAt          *time.Time  `json:"pinned_at,omitempty"`                // 置顶时间，置顶时写入，取消置顶时置空
 	ActivePresetID    *int        `json:"active_preset_id,omitempty"`         // 当前激活的预设ID，仅 UI 标记，不参与路由
 	Items             []GroupItem `json:"items,omitempty" gorm:"foreignKey:GroupID"`
+	// Capabilities 分组名对应 CanonicalModel 的能力并集（models.dev 静态声明，只读徽标）。
+	// gorm:"-" 计算字段，GroupList 注入；不参与路由判定。
+	Capabilities []string `json:"capabilities,omitempty" gorm:"-"`
 }
 
 type GroupItem struct {
