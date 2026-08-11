@@ -13,12 +13,13 @@
 build: frontend build-go
 
 # 仅重建前端并同步到 static/out（Go embed 的目标目录）
+# NEXT_PUBLIC_APP_VERSION 注入前端版本显示（默认取 VERSION 或 git describe）
 frontend:
 	cd web && pnpm install --frozen-lockfile
-	cd web && CI=true pnpm build
+	cd web && NEXT_PUBLIC_APP_VERSION="$(if $(VERSION),$(VERSION),$(shell git describe --tags --always 2>/dev/null))" CI=true pnpm build
 	rm -rf static/out
 	mv web/out static/out
-	@echo "frontend -> static/out synced"
+	@echo "frontend -> static/out synced (APP_VERSION=$(if $(VERSION),$(VERSION),$(shell git describe --tags --always 2>/dev/null)))"
 
 # 仅编译当前平台二进制（内嵌最新 static/out）
 build-go:
@@ -29,12 +30,13 @@ build-go:
 test:
 	go test ./...
 
-# 交叉编译 Linux amd64（NAS 部署用；用法：make deploy VERSION=v1.4.0 COMMIT=<sha>）
+# 交叉编译 Linux amd64（NAS 部署用；用法：make deploy VERSION=v1.4.1 COMMIT=<sha>）
+# VERSION 同时注入后端 conf.Version 与前端 NEXT_PUBLIC_APP_VERSION，避免前端显示 dev。
 deploy:
-	@test -n "$(VERSION)" || (echo "usage: make deploy VERSION=v1.4.0 [COMMIT=<sha>]"; exit 1)
+	@test -n "$(VERSION)" || (echo "usage: make deploy VERSION=v1.4.1 [COMMIT=<sha>]"; exit 1)
 	rm -rf static/out
 	cd web && pnpm install --frozen-lockfile
-	cd web && CI=true pnpm build
+	cd web && NEXT_PUBLIC_APP_VERSION="$(VERSION)" CI=true pnpm build
 	mv web/out static/out
 	GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o build/bin/octopus-linux-amd64 \
 		-ldflags="-X 'github.com/bestruirui/octopus/internal/conf.Version=$(VERSION)' \

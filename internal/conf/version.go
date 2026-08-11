@@ -3,7 +3,7 @@ package conf
 const GitHubRepository = "Seller-1990/octopus"
 
 var (
-	Version   = "v1.4.1"
+	Version   = "v1.4.2"
 	Commit    = "unknown"
 	BuildTime = "unknown"
 	Author    = "Seller-1990"
