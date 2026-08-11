@@ -1797,3 +1797,134 @@ func ProbeChannelModelToolsSupport(ctx context.Context, channel model.Channel, u
 - go test 30 包 EXIT=0（新增：vision 索引过滤/大小写 2、resolveVisionCapable 1、熔断 Snapshot/清理/Reset 5、清理 P1 回归 2）
 - 前端 tsc/lint/build 全绿
 - 已知边界（发布说明）：后缀兜底有误判可能（纯展示）；半开/closed 无倒计时；重置精确匹配大小写敏感
+
+## NAS 同步故障修复记录（2026-08-11）
+
+> 现象：NAS 容器（镜像 2b66078，端口 8088）多个站点同步 500，`UNIQUE constraint failed: group_items.group_id, group_items.channel_id, group_items.model_name (2067)`。多顾问（本质/后端/逻辑/数据）复审 + NAS 实测验证后修复。
+
+### 根因（复审确认）
+- `internal/sitesync/project.go` 原 `rewriteManagedGroupItemsForAccount` 对 group_items 逐条裸 `UPDATE channel_id`，无冲突保护（全仓库唯一无 OnConflict 的改写点）。同 (group_id, model_name) 合法分布在多个 split-route channel 的条目被重定向到同一目标渠道且目标已有该组合时，撞唯一索引 → 同步 500，failed 账号半提交残留态每次重试复现。
+- 数据佐证（NAS 实测）：同账号内 (group,model) 跨 ≥2 channel 命中 15 组，报错账号 2/23/30 均在列（如账号2 的 grok-4.5 分布在 Grok/default/Grok::anthropic/default::anthropic 4 渠道）。
+- 范围修正：10 个 failed 账号仅 3 个（2/23/30）是 rewrite 类，其余 7 个为各自上游问题（Cloudflare 403×3、401 暂停、404、超时、系统升级）。
+
+### 修复（3 处顾问修正）
+1. 判定域对齐唯一索引三列 (GroupID, targetChannelID, ModelName)，而非 binding 的 baseGroupKey（逻辑对抗者 P1-3）
+2. 事务内先删 stale 再搬运（消除碰撞源）
+3. 「目标组合已存在（排除自己）」→ 删除当前条目（目标行已代表该组合），覆盖残留态与同批互相撞（事务读己写）
+
+### 实施与验证
+- 提交 `3832383`，30 包 go test EXIT=0；新增 2 个回归测试（残留态 + 同批碰撞）
+- 交叉编译 Linux amd64 部署到 NAS（scp 临时名 + mv 规避 root 文件权限，旧二进制备份 `octopus-updated.pre-3832383`）
+- 验证：容器版本 v1.4.0-dev/3832383；账号2 从 failed → partial，grok-4.5 从 4 条收敛到 2 条（按 routeType 合法拆分）；账号30 自动 success
+
+### 修复后同步状态（NAS 实测）
+- success 21（账号 1/12/16/17/18/24/26/28/29/30/31/34/36/40/41/44/45/46/55/59/77）
+- partial 36 / idle 15 / failed 9
+- failed 明细：anyrouter.top(4)=无可用 key（cookie 会话拉不到 token，待处理）；11=模型未确认；21=303 非 JSON；37=404；38=401 暂停；47/52/56=Cloudflare 403；57=系统升级
+
+## anyrouter.top 同步问题调研记录（2026-08-11，网络实测）
+
+### 实测结论（匿名 curl 探测）
+- **anyrouter.top 基于 new-api**：`/v1/models` 无 token 返回 `{"error":{"type":"new_api_error",...}}`（new-api 专有错误类型）、`x-oneapi-request-id` 头 → 源站 new-api（或兼容分支）
+- **全站被阿里云 ESA WAF + JS 挑战拦截**（`acw_sc__v2` cookie，`server: ESA`），仅 `/v1/*` 路径穿透
+- `/api/token/`、`/api/user/self` 等管理接口 curl 均返回 JS 挑战页（2714B 混淆脚本），**真实接口被 WAF 挡在挑战层**
+- 源站反代 Caddy（`via: 1.1 Caddy`）；公开文档在 `docs.anyrouter.top`（腾讯 EdgeOne，非主站 /docs）
+
+### 对 Octopus 同步失败的解释
+- 账号4（anyrouter.top，cookie 凭据）报「无可用 key」：`fetchAnyRouterManagementTokens` 用 cookie 请求 `/api/token/`，被 ESA JS 挑战拦截 → 拉不到真实 token → `newNoAvailableKeyError`
+- 项目已有 CF JS 挑战处理（verification-bridge、anyRouterChallengeACW），但 ESA 挑战脚本（acw_sc__v2）与 CF acw 挑战形态可能不同，需确认现有 handler 是否覆盖
+
+### anyrouter 调研补充（new-api 对接模式，第二调研 agent）
+- **anyrouter = new-api/one-api 老版本**：`/api/user/sign_in` 旧签到路径、session cookie + `New-Api-User` 头鉴权（旧式），非新版 JWT
+- **WAF 需三件套**：acw_tc / cdn_sec_tc / acw_sc__v2；部分网络须走代理
+- **New-Api-User 头必须**：缺失报「未提供 New-Api-User」，与 session 不匹配报「不匹配」——`anyRouterDiscoverUserID` 探测失败会导致 401
+- **本地实现已覆盖**：New-Api-User 头（anyrouter.go:692）、cookie fallback（fetchAnyRouterTokensByCookie）、acw_sc__v2 求解器（:1292）
+- **候选失败原因（运行态）**：① cookie session 过期（~1 月，账号4 cookie 可能 8/5 前保存）② WAF 三件套不全（本地只显式解 acw_sc__v2）③ userID 探测失败
+- **第三方参考**：metapi（cita-777/metapi，newApi.ts 整套 cookie 候选+user_id 探测+acw 求解）、anyrouter-check-in（millylee，CloakBrowser 拿 WAF cookie）、anyrouter-pool（FastAPI 多账号聚合，HTTP_PROXY 必需）
+
+### anyrouter 调研补充（anyrouter API 对接，第三调研 agent）
+- **anyrouter = NewAPI 系魔改平台**（非 one-api/独立网关）：登录页/控制台/token 页/pricing 均 NewAPI 前端路由风格
+- **管理 API 路径**（NewAPI 标准）：`GET /api/token/?p=0&size=100`（token 列表）、`GET /api/user/self`（余额）、`GET /v1/models` 或 `/api/user/models`（模型）、`GET /api/pricing`（定价）、`POST /api/user/login`（登录）
+- **认证双通道**：① `Authorization: Bearer sk-...`（API Key）；② `Cookie: session=...` + `New-Api-User: <user_id>` 头（cookie 会话，JWT 内含 uid，gob 编码）
+- **成功案例（可直接参考）**：metapi（cita-777/metapi，newApi.ts + newApiShield.ts node:vm 解 acw_sc__v2，最接近 Octopus 场景）、anyrouter-pool（多账号聚合+渠道同步）、anyrouter-check-in（CloakBrowser 拿 WAF cookie）、anyrouter-gateway（CF Worker 透传+Claude Code 指纹头）
+- **已知问题**：WAF 强风控（acw_tc/cdn_sec_tc/acw_sc__v2 三件套）；session cookie ~1 月失效提前 401；Access Token 入口可能隐藏（需 cookie 导入）；官方数据库不稳（1040 Too many connections）；Anthropic 接口指纹校验（cc_version 等头）
+
+### 本地代码 vs 调研对照（账号4 失败诊断）
+- 本地 anyrouter.go **已实现**：New-Api-User 头（:692）、cookie fallback（fetchAnyRouterTokensByCookie）、acw_sc__v2 求解器（:1292）、shield challenge 检测（:1101）、token 分页（/api/token/?p=0&size=100）
+- 功能覆盖完整 → 账号4「无可用 key」更可能是**运行态**：① cookie session 过期（~1月，账号4 cookie 可能 8/5 前保存）；② WAF 三件套不全（本地显式解 acw_sc__v2，acw_tc/cdn_sec_tc 依赖 jar 自动存）；③ userID 探测失败（New-Api-User 头带错 id → 401）
+
+### anyrouter 账号4 断点实测（2026-08-11，用用户新 cookie）
+- **决定性实测**：session + 无 New-Api-User 头 → 401「未提供 New-Api-User」；+ `New-Api-User: 137417` → 成功拉用户+token
+- **结论**：WAF 三件套（acw_tc/cdn_sec_tc/acw_sc__v2）非断点——代码自动维护（jar 存 Set-Cookie + acw_sc__v2 自动求解），**手动存账号会过期失效**
+- **真正断点**：① DB 里账号4 的 session 是 8/5 前保存的，已过期（session ~1 月有效期）；② `New-Api-User` 头必须且 userID 须解对（137417）
+- **待做**：更新账号4 session（UI/API）；验证 anyRouterDiscoverUserID 能从新 session 解出 137417
+- **不需要**：账号管理加 acw_tc/cdn_sec_tc 字段（会话级，非账号级）
+
+### anyrouter 账号4 同步成功（2026-08-11，切换 clash 节点后）
+- **结果**：用户切换 clash 出口节点后，anyrouter.top 同步成功
+- **诊断修正**：真正的阻断因素大概率是「NAS 出口节点被 anyrouter WAF/上游风控」——切换节点（出口 IP 变干净）后 WAF 放行、session 生效。此前「session 必然过期」的推断不成立或不是主因（本地 7897 代理下用户 session 实测有效）
+- **印证调研发现**：anyrouter-pool 明确要求 HTTP_PROXY；anyrouter 对出口 IP 风控敏感
+- **结论**：
+  - 不需要给账号管理加 acw_tc/cdn_sec_tc/acw_sc__v2 字段（会话级反爬 cookie，Octopus 自动求解/维护，手动存会过期失效）
+  - 账号身份只需 session（UI 填裸值，normalizeCookieValue 自动加 session= 前缀）
+  - 若再次同步失败，优先排查 clash 出口节点被风控（换节点重试），而非凭据问题
+
+## 模型能力标识扩展方案（2026-08-11，待顾问审查）
+
+> 用户需求：把现有「多模态（vision）标识」扩展为完整能力分类，徽标加在 ① 分组卡片分组名后 ② 模型目录卡片 ③ 模型发现卡片。
+
+### 用户拍板
+- **不显示文本**（人人都有，噪音）
+- **tools 不来自 models.dev**——沿用现有 `supports_tools` 实例级探测（之前已拍板 models.dev 不得用于 tools 确认，tools 是实例级动态属性）
+- **多模态合并一个徽标**（image/video/pdf 不细分）
+- **分组聚合用并集**——按分组名（规范模型名）匹配 CanonicalModel，任一个支持就显示；关注模型名能力声明，不关注渠道是否阉割（阉割由 tools 探测负责）
+
+### 能力维度（4 个静态 + tools 实例级）
+| 徽标 | 来源 | 判定（models.dev 实测字段） |
+|---|---|---|
+| 🖼️ 多模态 | 静态 | input 含 image/video/pdf |
+| 🧠 推理 | 静态 | `reasoning=true` |
+| 🎤 语音 | 静态 | input 含 audio 或 output 含 audio |
+| 🎨 生图 | 静态 | output 含 image |
+| ~~🔧 工具~~ | 实例级 | 沿用 supports_tools（行级 ✓/✗ 徽标已存在，分组不聚合静态） |
+
+### 后端改动
+1. `model/routing.go`：CanonicalModel 加 `Capabilities uint8` + 位常量（CapMultimodal/CapReasoning/CapVoice/CapImageGen）
+2. `modelvendor/index.go`：VisionEntry → CapabilityEntry（4 位），ReplaceVisionIndex 扩展为 ReplaceCapabilityIndex（保留旧函数）
+3. `price/price.go`：visionIndex → 构建 4 位能力（读 input/output + reasoning）
+4. `op/catalog.go`：resolveVisionCapable → resolveCapabilities（建表预填 capabilities；存量回填保留 VisionCapable 兼容）
+5. 迁移 027：存量 CanonicalModel 回填 capabilities
+6. **分组读路径**：Group 响应注入 capabilities（分组名→CanonicalModel 并集聚合）
+
+### 前端改动
+1. `CapabilityBadges.tsx`（新组件）：4 徽标渲染，支持 compact 模式
+2. `model-catalog.ts`：CanonicalModel 加 capabilities
+3. `group.ts`：Group 加 capabilities
+4. 三处接入：Catalog.tsx（目录卡片，替换现有 vision 徽标）、DiscoveryRow.tsx（发现行）、Card.tsx（分组名后）
+
+### 方案修订 v2（2026-08-11，吸收 3 顾问审查 P0/P1 修正，实施以此为准）
+
+**3 顾问审查发现并修正：**
+| # | 审查问题 | v2 修正 |
+|---|---|---|
+| P0-1 | `Capabilities uint8` 丢三值语义（零值=0 无法区分未知/不支持，存量回填 `==nil` 幂等失效） | 改 `Capabilities *uint8`（指针三值：nil=未知/0=明确不支持/非0=能力位图） |
+| P0-2 | 多模态位与 VisionCapable 判定不同源（image/video vs image/video/pdf）双写不一致 | 多模态位 = **image/video**（与 VisionCapable 完全同源）；pdf 不算（实测 deepseek-chat input=[text,pdf] 纯文本，标多模态是污染） |
+| P0-3 | 同模型多 provider 条目 map 覆盖竞态（deepseek-reasoner 的 reasoning true/false 混杂随机漂移） | 合并策略 = **并集**（任一条目位=1 则置位，与分组聚合语义一致） |
+| P1-4 | pdf 判多模态污染；语音覆盖窄（gpt-4o-realtime 无数据源）；reasoning 字段不可靠（ernie-x1.1 reasoning:false） | pdf 排除（见 P0-2）；语音按 input/output audio 分 2 bit；reasoning 保守方向（==true 才标，false 不代表非推理） |
+| P1-5 | 迁移 027 只能回填多模态位（语音/生图/推理无后缀规则） | 027 回填多模态（从 vision_capable 转）+ 推理用 naming 兜底；语音/生图等 CatalogSync 预填；声明已知边界 |
+| P1-6 | 分组聚合规则/注入层未定义；改名/手建分组静默无徽标 | **normalized 精确名匹配**（复用 NormalizeModelIdentity + canonicalByNormalized 缓存）；改名/手建无匹配 → 空徽标（可接受，tooltip 说明） |
+| 前端 P0 | 发现行是空数据源（discovered 端点未注入 capabilities） | **补后端**：discovered 端点按模型名查 modelvendor 能力索引注入 |
+| 前端 P1 | capabilities 传输契约未定义（uint8 位域穿透 TS） | API 输出解码后 `capabilities: string[]`（如 ["multimodal","reasoning"]），前端不复制位常量 |
+| 前端 P1 | 目录卡片 4 徽标过载（~280px 挤没模型名） | CapabilityBadges 组件 + `size` prop：目录卡用 sm（emoji+文字换行）、发现行用 xs（纯 emoji+tooltip）、分组卡用 xs |
+| 前端 P1 | compact 纯 emoji 丢双通道（色盲/黑白渲染） | 每徽标 `aria-label` + Tooltip 组件（非 title）+ 颜色+字形+文字三通道 |
+| 前端 P1 | i18n 未提（visionCapable 键去留） | 新建 `model.catalog.capability.{multimodal,reasoning,voice,imageGen}` 三语键；visionCapable 替换后删除 |
+
+**v2 最终能力维度（4 静态位 + tools 实例级）**
+| 位 | models.dev 判定（并集，多 provider 合并） |
+|---|---|
+| CapMultimodal | input 含 image 或 video（不含 pdf） |
+| CapReasoning | reasoning == true |
+| CapVoiceInput / CapVoiceOutput | input 含 audio / output 含 audio（2 bit，展示合并 🎤） |
+| CapImageGen | output 含 image（video 输出记位暂不展示） |
+
+**tools 不来自 models.dev**（用户拍板）：沿用 supports_tools 实例级，行级 ✓/✗ 徽标；分组卡片能力徽标不含 tools，tooltip 注明「模型名声明能力，渠道阉割由 tools 探测反映」。
