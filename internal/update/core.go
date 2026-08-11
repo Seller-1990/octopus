@@ -44,6 +44,17 @@ func releaseDownloadURL(filename string) string {
 	return strings.TrimRight(conf.Repo, "/") + "/releases/latest/download/" + filename
 }
 
+// isReleaseDownloadURL 判断是否为 release 二进制下载 URL（github.com 而非 api.github.com）。
+// api.github.com 的 releases/latest 是版本检查（保留 HTTP/2）；github.com/releases/.../download
+// 是大文件下载（用 HTTP/1.1 规避 HTTP/2 代理流中断）。
+func isReleaseDownloadURL(rawURL string) bool {
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		return strings.Contains(rawURL, "/releases/") && !strings.Contains(rawURL, "api.github.com")
+	}
+	return strings.EqualFold(parsed.Host, "github.com") && strings.Contains(parsed.Path, "/releases/")
+}
+
 // doRequestWithFallback performs an HTTP GET request, first without proxy, then with proxy if failed.
 func doRequestWithFallback(url string) ([]byte, error) {
 	data, err := doRequest(url, false)
@@ -58,6 +69,8 @@ func doRequestWithFallback(url string) ([]byte, error) {
 // 修复（2026-08-11）：大文件下载（60MB release 二进制）经 HTTP/2 代理传输时
 // 流易中断（`PROTOCOL_ERROR` / SSL_ERROR_SYSCALL），一键更新反复失败。
 // HTTP/1.1 对长连接/代理更稳，规避 HTTP/2 多路复用的流中断问题。
+// 注意：仅用于 releases 下载（github.com），版本检查（api.github.com）保留 HTTP/2——
+// api.github.com 对 Go HTTP/1.1 稳定 EOF（实测），不得一刀切。
 func newDownloadClient(useProxy bool) (*http.Client, error) {
 	transport, ok := http.DefaultTransport.(*http.Transport)
 	if !ok {
@@ -99,7 +112,15 @@ func doRequest(url string, useProxy bool) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
 	defer cancel()
 
-	hc, err := newDownloadClient(useProxy)
+	// 按主机选择协议：github.com（release 下载）用 HTTP/1.1（规避 HTTP/2 代理流中断）；
+	// api.github.com（版本检查）保留 HTTP/2（HTTP/1.1 对 Go EOF，实测）。
+	var hc *http.Client
+	var err error
+	if isReleaseDownloadURL(url) {
+		hc, err = newDownloadClient(useProxy)
+	} else {
+		hc, err = client.GetHTTPClientSystemProxy(useProxy)
+	}
 	if err != nil {
 		return nil, err
 	}
