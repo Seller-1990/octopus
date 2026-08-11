@@ -1928,3 +1928,26 @@ func ProbeChannelModelToolsSupport(ctx context.Context, channel model.Channel, u
 | CapImageGen | output 含 image（video 输出记位暂不展示） |
 
 **tools 不来自 models.dev**（用户拍板）：沿用 supports_tools 实例级，行级 ✓/✗ 徽标；分组卡片能力徽标不含 tools，tooltip 注明「模型名声明能力，渠道阉割由 tools 探测反映」。
+
+## NAS 一键更新问题排查记录（2026-08-11）
+
+### 现象
+- NAS 一键更新失败：下载 60MB release 二进制经 clash 代理 HTTP/2 流中断（`PROTOCOL_ERROR`），`io.ReadAll` 超时
+- 且版本检查接口 `GET /api/v1/update` 返回 500（`api.github.com ... EOF`）
+- 前端版本显示 dev（手动编译未注入 NEXT_PUBLIC_APP_VERSION）
+
+### 根因（3 个独立问题）
+1. **下载 HTTP/2 流中断**：默认 transport 协商 HTTP/2，大文件经代理多路复用流易断 → 修复：下载专用 client 禁用 HTTP/2（ForceAttemptHTTP2=false）
+2. **HTTP/1.1 一刀切破坏版本检查**（7358360 前）：api.github.com 对 Go HTTP/1.1 稳定 EOF（实测复现）→ 修复：按主机选择——github.com/releases 下载用 HTTP/1.1，api.github.com 版本检查保留 HTTP/2
+3. **前端版本 dev**：`APP_VERSION = NEXT_PUBLIC_APP_VERSION || 'dev'`，Makefile deploy 未注入 → 修复：make deploy 自动注入 `NEXT_PUBLIC_APP_VERSION=VERSION`
+
+### 修复提交
+- 7db3ab4：更新下载 HTTP/1.1
+- 7358360：按主机选择协议（api.github.com HTTP/2 + github.com HTTP/1.1）
+- d9a281a：Makefile 注入前端版本号
+
+### NAS 当前状态
+- v1.4.2（Commit 7358360，手动部署含全部修复）
+- 版本检查 EOF 已清零；下载走 HTTP/1.1 规避代理流中断
+- 前端版本 v1.4.2（非 dev）
+- 后续 v1.4.3+ 可一键更新（修复后逻辑）

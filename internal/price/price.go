@@ -99,7 +99,10 @@ func UpdateLLMPrice(ctx context.Context) error {
 		ctx, cancel = context.WithTimeout(ctx, 30*time.Second)
 		defer cancel()
 	}
-	client, err := client.GetHTTPClientSystemProxy(false)
+	// 能力标识修复（2026-08-11）：models.dev 直连在部分网络（NAS）超时，导致能力索引
+	// 永远为空、徽标不显示。改为跟随系统代理（配置 proxy_url 时走代理，未配置回退直连）——
+	// 与更新下载、其他外网访问一致。超时 30s 由上面 ctx 保证。
+	client, err := client.GetHTTPClientSystemProxy(true)
 	if err != nil {
 		return err
 	}

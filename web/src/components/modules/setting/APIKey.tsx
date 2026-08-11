@@ -636,6 +636,8 @@ function APIKeyKeyItem({
     onDelete,
     onExport,
     isDeleting,
+    onToggleEnabled,
+    onToggleToolsOnly,
 }: {
     apiKey: APIKey;
     stats?: StatsAPIKeyFormatted;
@@ -648,6 +650,10 @@ function APIKeyKeyItem({
     onDelete: () => void;
     onExport?: () => void;
     isDeleting: boolean;
+    /** 卡片内联开关：启用/禁用（不用进编辑）。 */
+    onToggleEnabled: () => void;
+    /** 卡片内联开关：仅 tools（不用进编辑）。 */
+    onToggleToolsOnly: () => void;
 }) {
     const t = useTranslations('setting');
     const [confirmDelete, setConfirmDelete] = useState(false);
@@ -696,6 +702,16 @@ function APIKeyKeyItem({
             </div>
 
             <div className="flex items-center justify-end gap-1.5">
+                <div className="mr-1 flex shrink-0 flex-col items-end gap-1">
+                    <label className="flex cursor-pointer items-center gap-1.5" title={t('apiKey.form.enabled')}>
+                        <span className="text-[10px] text-muted-foreground">{t('apiKey.form.enabled')}</span>
+                        <Switch checked={apiKey.enabled} onCheckedChange={onToggleEnabled} aria-label={t('apiKey.form.enabled')} />
+                    </label>
+                    <label className="flex cursor-pointer items-center gap-1.5" title={t('apiKey.form.toolsOnly')}>
+                        <span className="text-[10px] text-muted-foreground">{t('apiKey.form.toolsOnly')}</span>
+                        <Switch checked={apiKey.tools_only} onCheckedChange={onToggleToolsOnly} aria-label={t('apiKey.form.toolsOnly')} />
+                    </label>
+                </div>
                 <motion.button
                     type="button"
                     layoutId={statsLayoutId}
@@ -1003,6 +1019,8 @@ export function APIKeyPanelBase({
                                     } : undefined}
                                     onDelete={() => handleDelete(apiKey.id)}
                                     isDeleting={deleteAPIKey.isPending && deletingId === apiKey.id}
+                                    onToggleEnabled={() => updateAPIKey.mutate({ ...apiKey, enabled: !apiKey.enabled })}
+                                    onToggleToolsOnly={() => updateAPIKey.mutate({ ...apiKey, tools_only: !apiKey.tools_only })}
                                 />
                             );
                         })}
