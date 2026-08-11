@@ -1951,3 +1951,21 @@ func ProbeChannelModelToolsSupport(ctx context.Context, channel model.Channel, u
 - 版本检查 EOF 已清零；下载走 HTTP/1.1 规避代理流中断
 - 前端版本 v1.4.2（非 dev）
 - 后续 v1.4.3+ 可一键更新（修复后逻辑）
+
+## v1.4.3 发布记录（2026-08-11）
+
+### 内容（9e15bb9，dev → v1.4.3 tag）
+- 能力徽标数据源修复：models.dev 拉取按「有代理走代理、无代理直连」策略（P0-1 代理 fallback，price.go）——NAS 直连超时问题解决，能力索引成功填充
+- 迁移 027 冻结修复（P1-1）：仅当 `VisionCapable == nil` 才写 `vision_capable`（只写 true，不写 false），不再用后缀猜测覆盖注册表/历史证据
+- Makefile 版本注入（P1-2）：`make deploy VERSION=...` 同时注入后端 `conf.Version` 与前端 `NEXT_PUBLIC_APP_VERSION`，前端不再显示 dev
+- API Key 卡片内联开关：启用 + 仅 tools 开关直接放在密钥卡片上，无需进编辑对话框
+- 保留 v1.4.2 的一键更新修复（HTTP/1.1 下载 + api.github.com HTTP/2）
+
+### 验证
+- 全量测试 31 包 EXIT=0；go build + make build（注入 v1.4.3）通过
+- NAS 部署 9e15bb9：Version v1.4.3 / Commit 9e15bb9；前端版本 v1.4.3
+- 能力位图落库验证：canonical_models 22/33 有 capabilities（值 1/2/3/7），4 个模型 =7（多模态+推理+语音，如 gemini-3.5-flash）——语音位只能来自 models.dev，证明代理拉取成功
+
+### Release
+- tag v1.4.3 + workflow success（含 Docker Alpine/Debian 镜像）
+- 双语 release notes 已更新（RELEASE_NOTES_v1.4.3.md）
