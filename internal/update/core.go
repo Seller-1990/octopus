@@ -4,10 +4,13 @@ import (
 	"archive/zip"
 	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -16,6 +19,7 @@ import (
 	"github.com/bestruirui/octopus/internal/client"
 	"github.com/bestruirui/octopus/internal/conf"
 	"github.com/bestruirui/octopus/internal/utils/log"
+	"golang.org/x/net/proxy"
 )
 
 type LatestInfo struct {
@@ -50,11 +54,52 @@ func doRequestWithFallback(url string) ([]byte, error) {
 	return doRequest(url, true)
 }
 
+// newDownloadClient 构建下载专用 HTTP client（禁用 HTTP/2）。
+// 修复（2026-08-11）：大文件下载（60MB release 二进制）经 HTTP/2 代理传输时
+// 流易中断（`PROTOCOL_ERROR` / SSL_ERROR_SYSCALL），一键更新反复失败。
+// HTTP/1.1 对长连接/代理更稳，规避 HTTP/2 多路复用的流中断问题。
+func newDownloadClient(useProxy bool) (*http.Client, error) {
+	transport, ok := http.DefaultTransport.(*http.Transport)
+	if !ok {
+		return nil, fmt.Errorf("default transport is not *http.Transport")
+	}
+	cloned := transport.Clone()
+	cloned.ForceAttemptHTTP2 = false // 关键：禁用 HTTP/2 协商
+	cloned.TLSNextProto = make(map[string]func(string, *tls.Conn) http.RoundTripper)
+	if useProxy {
+		proxyURL := client.ResolveSystemProxyURL()
+		if proxyURL != "" {
+			u, err := url.Parse(proxyURL)
+			if err != nil {
+				return nil, fmt.Errorf("invalid proxy url: %w", err)
+			}
+			switch u.Scheme {
+			case "http", "https":
+				cloned.Proxy = http.ProxyURL(u)
+			case "socks", "socks5":
+				d, err := proxy.FromURL(u, proxy.Direct)
+				if err != nil {
+					return nil, fmt.Errorf("invalid socks proxy: %w", err)
+				}
+				cloned.Proxy = nil
+				cloned.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
+					return d.Dial(network, addr)
+				}
+			default:
+				return nil, fmt.Errorf("unsupported proxy scheme: %s", u.Scheme)
+			}
+		}
+	} else {
+		cloned.Proxy = nil
+	}
+	return &http.Client{Transport: cloned}, nil
+}
+
 func doRequest(url string, useProxy bool) ([]byte, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
 	defer cancel()
 
-	hc, err := client.GetHTTPClientSystemProxy(useProxy)
+	hc, err := newDownloadClient(useProxy)
 	if err != nil {
 		return nil, err
 	}
@@ -64,6 +109,7 @@ func doRequest(url string, useProxy bool) ([]byte, error) {
 		log.Debugf("new request failed: %v", err)
 		return nil, err
 	}
+	req.Header.Set("User-Agent", "Mozilla/5.0 (compatible; Octopus-update/1.0)")
 
 	if github_pat != "" {
 		req.Header.Set("Authorization", "Bearer "+github_pat)
