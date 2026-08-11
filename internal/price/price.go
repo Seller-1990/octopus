@@ -99,10 +99,18 @@ func UpdateLLMPrice(ctx context.Context) error {
 		ctx, cancel = context.WithTimeout(ctx, 30*time.Second)
 		defer cancel()
 	}
-	// 能力标识修复（2026-08-11）：models.dev 直连在部分网络（NAS）超时，导致能力索引
-	// 永远为空、徽标不显示。改为跟随系统代理（配置 proxy_url 时走代理，未配置回退直连）——
-	// 与更新下载、其他外网访问一致。超时 30s 由上面 ctx 保证。
-	client, err := client.GetHTTPClientSystemProxy(true)
+	// models.dev 拉取（能力标识/价格索引数据源）。P0 修复（2026-08-11 审查）：
+	// 不能强制走代理——无代理配置的环境（直连可用）会因 "proxy url is empty" 直接失败，
+	// 能力索引永远为空。策略：配置了代理则走代理（NAS 直连超时场景），未配置则直连。
+	// 与 update 包的 doRequestWithFallback「直连优先、失败走代理」不同——这里代理配置
+	// 是明确意图（NAS 用代理），故按「有代理走代理、无代理走直连」；超时 30s 由 ctx 保证。
+	var priceClient *http.Client
+	var err error
+	if client.ResolveSystemProxyURL() != "" {
+		priceClient, err = client.GetHTTPClientSystemProxy(true)
+	} else {
+		priceClient, err = client.GetHTTPClientSystemProxy(false)
+	}
 	if err != nil {
 		return err
 	}
@@ -111,7 +119,7 @@ func UpdateLLMPrice(ctx context.Context) error {
 		return err
 	}
 	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36")
-	resp, err := client.Do(req)
+	resp, err := priceClient.Do(req)
 	if err != nil {
 		return err
 	}

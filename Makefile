@@ -21,10 +21,15 @@ frontend:
 	mv web/out static/out
 	@echo "frontend -> static/out synced (APP_VERSION=$(if $(VERSION),$(VERSION),$(shell git describe --tags --always 2>/dev/null)))"
 
-# 仅编译当前平台二进制（内嵌最新 static/out）
+# 仅编译当前平台二进制（内嵌最新 static/out）。
+# P1-2 修复：build-go 也注入后端版本（默认取 VERSION 或 git describe），
+# 避免 make build 产物后端 conf.Version 停在硬编码默认值（前端/后端版本不一致）。
 build-go:
 	mkdir -p build/bin
-	go build -o build/bin/octopus .
+	go build -o build/bin/octopus \
+		-ldflags="-X 'github.com/bestruirui/octopus/internal/conf.Version=$(if $(VERSION),$(VERSION),$(shell git describe --tags --always 2>/dev/null))' \
+		          -X 'github.com/bestruirui/octopus/internal/conf.Commit=$(shell git rev-parse --short HEAD)' \
+		          -s -w" .
 
 # 全量测试
 test:

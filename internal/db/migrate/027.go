@@ -50,11 +50,13 @@ func migrateCanonicalModelCapabilities(conn *gorm.DB) error {
 			if caps == 0 {
 				continue // 无可推断能力 → 保持 nil，留给运行时 models.dev 预填
 			}
-			vision := caps&uint8(model.CapMultimodal) != 0
 			updates := map[string]any{"capabilities": caps}
-			// 仅在 vision 从未回填时才写 vision_capable（避免覆盖已有证据值）
-			if c.VisionCapable == nil {
-				updates["vision_capable"] = vision
+			// 仅当有多模态位时才写 vision_capable=true；**从不写 false**（P1-1 修复：
+			// 仅推理后缀的行（如 gemini-2.5-flash-thinking）写 false 会冻结 models.dev
+			// 后续的多模态纠错——运行时回填要求 VisionCapable==nil 才查 registry）。
+			// 对齐 026 先例（026 只写 true、从不写 false）。
+			if caps&uint8(model.CapMultimodal) != 0 && c.VisionCapable == nil {
+				updates["vision_capable"] = true
 			}
 			if err := tx.Model(&model.CanonicalModel{}).
 				Where("id = ? AND capabilities IS NULL", c.ID).
