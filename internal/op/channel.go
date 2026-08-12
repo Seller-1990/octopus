@@ -518,7 +518,6 @@ func ChannelLLMList(ctx context.Context) ([]model.LLMChannel, error) {
 	accountCache := make(map[int]*model.SiteAccount)
 
 	balanceByAccount := accountBalanceMap(ctx, bindingMap)
-	multiplierByKey := channelCandidateMultiplierMap(ctx, channelIDs)
 	groupMultiplierByChannel := channelGroupMultiplierMap(ctx, bindingMap)
 
 	models := []model.LLMChannel{}
@@ -596,7 +595,6 @@ func ChannelLLMList(ctx context.Context) ([]model.LLMChannel, error) {
 			if modelName == "" {
 				continue
 			}
-			multiplier := multiplierByKey[routeCandidateKey(channel.ID, modelName)]
 			models = append(models, model.LLMChannel{
 				Name:            modelName,
 				Enabled:         channel.Enabled,
@@ -611,7 +609,6 @@ func ChannelLLMList(ctx context.Context) ([]model.LLMChannel, error) {
 				EndpointType:    endpointType,
 				IsReserve:       channelIsReserve,
 				Balance:         balance,
-				Multiplier:      multiplier,
 				GroupMultiplier: channelGroupMultiplierPointer(gm, gmOK),
 			})
 		}
@@ -722,29 +719,6 @@ func accountBalanceMap(ctx context.Context, bindingMap map[int]model.SiteChannel
 	}
 	for _, row := range rows {
 		result[row.ID] = row.Balance
-	}
-	return result
-}
-
-// channelCandidateMultiplierMap 返回 (channel_id, upstream_model) -> 倍率。
-func channelCandidateMultiplierMap(ctx context.Context, channelIDs []int) map[string]*float64 {
-	result := make(map[string]*float64)
-	if len(channelIDs) == 0 {
-		return result
-	}
-	var candidates []model.RouteCandidate
-	if err := db.GetDB().WithContext(ctx).
-		Where("channel_id IN ?", channelIDs).
-		Find(&candidates).Error; err != nil {
-		return result
-	}
-	multipliers := candidateMultiplierByCandidate(ctx, candidates)
-	for _, candidate := range candidates {
-		if math.IsInf(multipliers[candidate.ID], 1) {
-			continue
-		}
-		value := multipliers[candidate.ID]
-		result[routeCandidateKey(candidate.ChannelID, candidate.UpstreamModelName)] = &value
 	}
 	return result
 }

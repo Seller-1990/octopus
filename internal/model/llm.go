@@ -26,7 +26,7 @@ type LLMChannel struct {
 	EndpointType    string   `json:"endpoint_type,omitempty"`
 	IsReserve       bool     `json:"is_reserve,omitempty"`
 	Balance         *float64 `json:"balance,omitempty"`
-	Multiplier      *float64 `json:"multiplier,omitempty"`       // 模型综合倍率，仅供现有路由排序
+	Multiplier      *float64 `json:"multiplier,omitempty"`       // 已停止填充（D2' A'：candidate 倍率不再展示），仅为 API 兼容保留
 	GroupMultiplier *float64 `json:"group_multiplier,omitempty"` // API Key 所属分组倍率，nil 表示未知
 }
 

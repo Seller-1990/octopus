@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/bestruirui/octopus/internal/db"
-	"github.com/bestruirui/octopus/internal/globalprice"
 	"github.com/bestruirui/octopus/internal/model"
 	"github.com/bestruirui/octopus/internal/modelvendor"
 	"github.com/bestruirui/octopus/internal/transformer/outbound"
@@ -1038,50 +1037,6 @@ func channelBalanceByChannel(ctx context.Context, items []model.GroupItem) map[i
 	return result
 }
 
-// candidateRateByCandidate 返回 candidate_id -> 倍率（每百万 token USD，Input+Output 折算）。
-// 优先站点报价，回退全局价格；未知价格返回 +Inf（排序时排最后）。
-// candidateMultiplierByCandidate 计算每个候选渠道的倍率（1x/0.1x/0.08x 语义）：
-//   - 站点直接给出模型倍率时取 ModelMultiplier × GroupMultiplier；
-//   - 否则用站点价 ÷ 官方基准价推算相对倍率；
-//   - 均不可得时为 +Inf（排最后）。
-func candidateMultiplierByCandidate(ctx context.Context, candidates []model.RouteCandidate) map[int]float64 {
-	result := make(map[int]float64, len(candidates))
-	if len(candidates) == 0 {
-		return result
-	}
-	quotes, err := batchPriceQuotesForCandidates(ctx, candidates)
-	if err != nil {
-		return result
-	}
-	now := time.Now()
-	for _, candidate := range candidates {
-		best := pickBestPriceQuote(quotes[candidate.ID], candidate, now)
-		globalInput, globalOutput := 0.0, 0.0
-		globalKnown := false
-		if candidate.ID > 0 {
-			if global, ok := globalprice.Get(strings.ToLower(strings.TrimSpace(candidate.UpstreamModelName))); ok {
-				globalInput, globalOutput = global.Input, global.Output
-				globalKnown = true
-			}
-		}
-		switch {
-		case best != nil && best.Unit != model.PriceUnitPerRequest && best.PerRequest == 0:
-			switch {
-			case best.ModelMultiplier > 0 && validGroupMultiplier(best.GroupMultiplier):
-				result[candidate.ID] = best.ModelMultiplier * best.GroupMultiplier
-			case globalKnown && globalInput+globalOutput > 0 && validGroupMultiplier(best.GroupMultiplier):
-				result[candidate.ID] = (best.Input + best.Output) * best.GroupMultiplier *
-					best.ExchangeRateToUSD / (globalInput + globalOutput)
-			default:
-				result[candidate.ID] = math.Inf(1)
-			}
-		default:
-			result[candidate.ID] = math.Inf(1)
-		}
-	}
-	return result
-}
-
 // batchPriceQuotesForCandidates 一次性获取所有候选渠道的站点价格报价。
 func batchPriceQuotesForCandidates(ctx context.Context, candidates []model.RouteCandidate) (map[int][]model.SiteModelPriceQuote, error) {
 	result := make(map[int][]model.SiteModelPriceQuote, len(candidates))
@@ -1236,7 +1191,6 @@ func CatalogPlanGroup(
 	}
 	tierByChannel := siteReserveTierByChannel(ctx, group.Items)
 	balanceByChannel := channelBalanceByChannel(ctx, group.Items)
-	multiplierByCandidate := candidateMultiplierByCandidate(ctx, candidates)
 	included := make([]scoredItem, 0, len(group.Items))
 	for _, item := range group.Items {
 		decision := model.RouteDecisionReason{
@@ -1330,6 +1284,11 @@ func CatalogPlanGroup(
 			decision.Score = score
 		}
 		preview.Decisions = append(preview.Decisions, decision)
+		// 排序用分组倍率（已知真值用值，暂定/未知按 1x）
+		sortMultiplier := 1.0
+		if item.MultiplierKnown != nil && *item.MultiplierKnown && item.GroupMultiplier != nil {
+			sortMultiplier = *item.GroupMultiplier
+		}
 		included = append(included, scoredItem{
 			item:              item,
 			decision:          decision,
@@ -1340,7 +1299,7 @@ func CatalogPlanGroup(
 			candidateWeight:   candidateWeight,
 			tier:              tierByChannel[item.ChannelID],
 			balance:           balanceByChannel[item.ChannelID],
-			multiplier:        multiplierByCandidate[candidate.ID],
+			multiplier:        sortMultiplier,
 		})
 	}
 

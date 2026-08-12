@@ -3,7 +3,6 @@ package op
 import (
 	"context"
 	"fmt"
-	"math"
 	"slices"
 	"testing"
 	"time"
@@ -1132,6 +1131,21 @@ func TestCatalogPlanGroupSortsByReserveBalanceAndRate(t *testing.T) {
 	if err := dbpkg.GetDB().WithContext(ctx).Create(&canonical).Error; err != nil {
 		t.Fatalf("create canonical failed: %v", err)
 	}
+	// 排序 rate 维度读站点分组倍率（known=true 用真值，否则按 1x）；
+	// candidate 报价倍率不再参与排序（修订 11 / D2' A'）。
+	groupMultiplierPerAccount := []float64{1, 1, 1, 0}
+	for index, multiplier := range groupMultiplierPerAccount {
+		known := true
+		siteGroup := model.SiteUserGroup{
+			SiteAccountID:   accounts[index].ID,
+			GroupKey:        model.SiteDefaultGroupKey,
+			Multiplier:      f64Ptr(multiplier),
+			MultiplierKnown: &known,
+		}
+		if err := dbpkg.GetDB().WithContext(ctx).Create(&siteGroup).Error; err != nil {
+			t.Fatalf("create site user group %d failed: %v", index, err)
+		}
+	}
 	channelIsReserve := []bool{false, false, true, true}
 	upstreamNames := []string{"sort-upstream-a", "sort-upstream-b", "sort-upstream-c", "sort-upstream-d"}
 	ratePerQuote := []float64{2, 1, 3, 0.5}
@@ -1202,58 +1216,6 @@ func TestCatalogPlanGroupSortsByReserveBalanceAndRate(t *testing.T) {
 	want := []int{channels[0].ID, channels[1].ID, channels[3].ID, channels[2].ID}
 	if !slices.Equal(got, want) {
 		t.Fatalf("sort order mismatch: got %v, want %v", got, want)
-	}
-}
-
-func TestCandidateMultiplierAppliesGroupMultiplierToPriceFallback(t *testing.T) {
-	ctx := setupBackupTestDB(t)
-	site := model.Site{
-		Name: "fallback-multiplier-site", Platform: model.SitePlatformNewAPI,
-		BaseURL: "https://fallback-multiplier.example.com", Enabled: true,
-	}
-	if err := dbpkg.GetDB().WithContext(ctx).Create(&site).Error; err != nil {
-		t.Fatalf("create site: %v", err)
-	}
-	account := model.SiteAccount{
-		SiteID: site.ID, Name: "fallback-multiplier-account",
-		CredentialType: model.SiteCredentialTypeAccessToken, AccessToken: "fallback-token", Enabled: true,
-	}
-	if err := dbpkg.GetDB().WithContext(ctx).Create(&account).Error; err != nil {
-		t.Fatalf("create account: %v", err)
-	}
-	channel := model.Channel{Name: "fallback-multiplier-channel", Model: "gpt-4o", Enabled: true}
-	if err := ChannelCreate(&channel, ctx); err != nil {
-		t.Fatalf("create channel: %v", err)
-	}
-	canonical := model.CanonicalModel{
-		Name: "fallback-multiplier-model", NormalizedName: "fallback-multiplier-model",
-		RoutingStrategy: model.RoutingStrategyManual, ProtocolPolicy: model.ProtocolPolicyAuto, Enabled: true,
-	}
-	if err := dbpkg.GetDB().WithContext(ctx).Create(&canonical).Error; err != nil {
-		t.Fatalf("create canonical: %v", err)
-	}
-	candidate := model.RouteCandidate{
-		CanonicalModelID: canonical.ID, ChannelID: channel.ID, UpstreamModelName: "gpt-4o",
-		SiteID: &site.ID, SiteAccountID: &account.ID, SiteGroupKey: model.SiteDefaultGroupKey,
-		Status: model.RouteCandidateActive, Priority: 1, Weight: 1, LastSeenAt: time.Now(),
-	}
-	if err := dbpkg.GetDB().WithContext(ctx).Create(&candidate).Error; err != nil {
-		t.Fatalf("create candidate: %v", err)
-	}
-	quote := model.SiteModelPriceQuote{
-		RouteCandidateID: &candidate.ID, SiteID: site.ID, SiteAccountID: &account.ID,
-		GroupKey: model.SiteDefaultGroupKey, ModelName: candidate.UpstreamModelName,
-		Source: model.PriceQuoteSourceSiteExact, Unit: model.PriceUnitPerMillionTokens,
-		Currency: "USD", Input: 2.5, Output: 10, GroupMultiplier: 0.2,
-		GroupMultiplierKnown: true, ExchangeRateToUSD: 1, ObservedAt: time.Now(),
-	}
-	if err := SiteModelPriceQuotesUpsert(ctx, []model.SiteModelPriceQuote{quote}); err != nil {
-		t.Fatalf("create quote: %v", err)
-	}
-
-	got := candidateMultiplierByCandidate(ctx, []model.RouteCandidate{candidate})[candidate.ID]
-	if math.Abs(got-0.2) > 1e-9 {
-		t.Fatalf("price fallback multiplier = %v, want 0.2", got)
 	}
 }
 

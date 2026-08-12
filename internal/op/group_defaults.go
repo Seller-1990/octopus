@@ -4,11 +4,19 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"sync"
 	"time"
 
 	"github.com/bestruirui/octopus/internal/db"
 	"github.com/bestruirui/octopus/internal/model"
 )
+
+// multiplierCapMu 串行化 EnforceMultiplierCap 的整个读-判定-写周期：并发触发点
+// （同步完成 / pricing 刷新 / 设置变更 / 启动兜底）各自做全表决策，交错执行会基于
+// 过期快照互相覆盖 policy_blocked 终态。低频全量操作，串行化无性能代价。
+// 注意：勿在 db.Transaction 闭包内调用 EnforceMultiplierCap——SQLite 连接池
+// SetMaxOpenConns(1) 下会形成「持连接等锁 / 持锁等连接」死锁。
+var multiplierCapMu sync.Mutex
 
 // ApplyGroupDefaultsResult holds the counts of affected rows.
 type ApplyGroupDefaultsResult struct {
@@ -43,6 +51,9 @@ type enrichedItem struct {
 //  4. Marks site user groups exceeding the multiplier cap as policy-blocked
 func ApplyGroupDefaults(ctx context.Context) (*ApplyGroupDefaultsResult, error) {
 	result := &ApplyGroupDefaultsResult{}
+	// 本函数分多段写库（mode / sort_strategy / item priority / policy_blocked），
+	// 任意路径退出都刷新分组缓存：中途报错时部分写入已落库，跳过刷新会让缓存滞留旧值。
+	defer func() { _ = groupRefreshCache(ctx) }()
 
 	// 1. Apply default load balance mode to all groups
 	lbStr, _ := SettingGetString(model.SettingKeyDefaultGroupLoadBalance)
@@ -160,9 +171,6 @@ func ApplyGroupDefaults(ctx context.Context) (*ApplyGroupDefaultsResult, error) 
 	result.GroupsSuspended = blocked
 	result.GroupsRecovered = recovered
 
-	// Refresh group cache to reflect all changes
-	_ = groupRefreshCache(ctx)
-
 	return result, nil
 }
 
@@ -238,9 +246,14 @@ func tierVal(isReserve bool) int {
 // configured default_multiplier_cap as policy-blocked and recovers groups when
 // the cap is disabled or the multiplier returns within the limit.
 func EnforceMultiplierCap(ctx context.Context) (int64, int64, error) {
+	multiplierCapMu.Lock()
+	defer multiplierCapMu.Unlock()
 	cap, capEnabled := configuredMultiplierCap()
 	var groups []model.SiteUserGroup
-	if err := db.GetDB().WithContext(ctx).Find(&groups).Error; err != nil {
+	// 只取判定所需列，不拉 raw_payload 等大字段（全表扫描的读取量随账号数放大）。
+	if err := db.GetDB().WithContext(ctx).
+		Select("id", "multiplier", "multiplier_known", "policy_blocked", "policy_block_reason").
+		Find(&groups).Error; err != nil {
 		return 0, 0, fmt.Errorf("load multiplier policy groups: %w", err)
 	}
 	var blocked, recovered int64

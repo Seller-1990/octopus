@@ -17,7 +17,9 @@ func TestMigrateSiteGroupMultiplierKnownBackfill(t *testing.T) {
 		t.Fatalf("create legacy table: %v", err)
 	}
 
-	// 迁移前插入测试数据（legacy 结构，无 multiplier_known 列）
+	// 迁移前插入测试数据（legacy 结构，无 multiplier_known 列）。
+	// 覆盖各类存量形态（真值 / 1x / 无倍率 / 值不匹配 / 空及坏 payload）——
+	// v3 规则下全部标 false（暂定），payload 内容不参与判定。
 	// group_key 互不相同——迁移内 AutoMigrate 会建 idx_site_account_group 唯一索引
 	rows := []legacySiteUserGroupMultiplierKnown{
 		{ID: 1, SiteAccountID: 1, GroupKey: "vip", Multiplier: f64(5), RawPayload: `{"data":{"groups":[{"group_key":"vip","rate_multiplier":5}]}}`},
@@ -31,12 +33,6 @@ func TestMigrateSiteGroupMultiplierKnownBackfill(t *testing.T) {
 	}
 	if err := db.Create(&rows).Error; err != nil {
 		t.Fatalf("seed legacy rows: %v", err)
-	}
-
-	// 正向控制断言（v2 V5）：证明用例 D 的 false 是「值不匹配」而非「解析失败」——
-	// 解析器必须能从 payload 解析出该组倍率 3。
-	if v, ok := model.StoredSiteGroupMultiplier(`{"data":{"groups":[{"group_key":"gold","rate_multiplier":3}]}}`, "gold"); !ok || v != 3 {
-		t.Fatalf("positive control: StoredSiteGroupMultiplier(gold) = (%v, %v), want (3, true)", v, ok)
 	}
 
 	if err := migrateSiteGroupMultiplierKnown(db); err != nil {
@@ -56,35 +52,31 @@ func TestMigrateSiteGroupMultiplierKnownBackfill(t *testing.T) {
 		t.Fatalf("row count changed: got %d want %d", count, len(rows))
 	}
 
-	// 逐行断言 multiplier_known
-	expected := map[string]bool{
-		"vip":    true,  // 真值自证同值（≠1）
-		"std":    false, // S1 编造 1x：multiplier==1 一律 false
-		"none":   false, // 无倍率
-		"gold":   false, // 值不匹配（payload 解析到 3，列 2）
-		"vip2":   false, // 真值 + payload 缺该组（跨源形态）
-		"empty":  false, // payload 空
-		"free":   true,  // 真 0x 保值（0≠1 且自证同值 0）
-		"broken": false, // 坏 payload 不 panic、不阻塞，标 false
-	}
+	// 逐行断言：存量行一律 false（暂定），无残留 NULL
 	var got []model.SiteUserGroup
 	if err := db.Select("group_key", "multiplier_known").Find(&got).Error; err != nil {
 		t.Fatalf("read back: %v", err)
 	}
+	if len(got) != len(rows) {
+		t.Fatalf("read back %d rows, want %d", len(got), len(rows))
+	}
 	for _, g := range got {
-		want, ok := expected[g.GroupKey]
-		if !ok {
-			t.Fatalf("unexpected group %q", g.GroupKey)
-		}
 		if g.MultiplierKnown == nil {
-			t.Fatalf("group %q multiplier_known is nil, want %v", g.GroupKey, want)
+			t.Fatalf("group %q multiplier_known is nil, want false", g.GroupKey)
 		}
-		if *g.MultiplierKnown != want {
-			t.Fatalf("group %q multiplier_known = %v, want %v", g.GroupKey, *g.MultiplierKnown, want)
+		if *g.MultiplierKnown {
+			t.Fatalf("group %q multiplier_known = true, want false", g.GroupKey)
 		}
 	}
 
-	// 幂等：重复运行只补 NULL 行（本次全表无 NULL），值不变不报错
+	// 幂等：重复运行只补 NULL 行（本次全表无 NULL），值不变不报错。
+	// 先把一行升级为 true（模拟阶段 2 写路径），确认重跑不回退真值。
+	knownTrue := true
+	if err := db.Model(&model.SiteUserGroup{}).
+		Where("group_key = ?", "vip").
+		Update("multiplier_known", &knownTrue).Error; err != nil {
+		t.Fatalf("promote vip to known: %v", err)
+	}
 	if err := migrateSiteGroupMultiplierKnown(db); err != nil {
 		t.Fatalf("re-run migration failed: %v", err)
 	}
@@ -93,7 +85,7 @@ func TestMigrateSiteGroupMultiplierKnownBackfill(t *testing.T) {
 		t.Fatalf("read back after re-run: %v", err)
 	}
 	for _, g := range after {
-		want := expected[g.GroupKey]
+		want := g.GroupKey == "vip"
 		if g.MultiplierKnown == nil || *g.MultiplierKnown != want {
 			t.Fatalf("group %q multiplier_known changed after re-run: got %v want %v", g.GroupKey, g.MultiplierKnown, want)
 		}
