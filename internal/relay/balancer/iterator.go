@@ -90,6 +90,38 @@ func (it *Iterator) Next() bool {
 	return it.index < len(it.candidates)
 }
 
+// StablePartition 将满足 pred 的候选稳定移到前段（两段各自保持原有相对顺序），
+// 并跟随重定位粘性候选的索引。只允许在首次 Next() 之前调用，迭代开始后为 no-op。
+// 用途：含图请求把视觉可用通道排到纯文本通道之前（vision bridge 仅兜底）。
+func (it *Iterator) StablePartition(pred func(model.GroupItem) bool) {
+	if it.index >= 0 || len(it.candidates) < 2 {
+		return
+	}
+	stickyChannelID := 0
+	if it.stickyIdx >= 0 {
+		stickyChannelID = it.candidates[it.stickyIdx].ChannelID
+	}
+	front := make([]model.GroupItem, 0, len(it.candidates))
+	var back []model.GroupItem
+	for _, item := range it.candidates {
+		if pred(item) {
+			front = append(front, item)
+		} else {
+			back = append(back, item)
+		}
+	}
+	it.candidates = append(front, back...)
+	if stickyChannelID != 0 {
+		it.stickyIdx = -1
+		for i, item := range it.candidates {
+			if item.ChannelID == stickyChannelID {
+				it.stickyIdx = i
+				break
+			}
+		}
+	}
+}
+
 // Item 返回当前候选的 GroupItem
 func (it *Iterator) Item() model.GroupItem {
 	return it.candidates[it.index]

@@ -53,13 +53,44 @@ type Bootstrap struct {
 	Password string `mapstructure:"password"`
 }
 
+// VisionBridge 含图请求降级桥配置：把发往纯文本通道模型的图片替换为 VLM 文本描述。
+// Step 0a 实测（docs/reviews/vision-bridge-step0a-report.md）：纯文本上游收图 100% 静默降质
+// （200 空 choices / 挂起 / 拒答），bridge 触发不依赖上游状态码，按模型能力位前置判断。
+type VisionBridge struct {
+	Enabled bool `mapstructure:"enabled"`
+	// VisionModel 为空时 bridge 不生效（不硬编码默认 VLM——各部署环境需实测选型）。
+	VisionModel string `mapstructure:"vision_model"`
+	// VisionBaseURL OpenAI 兼容端点根路径（如 https://open.bigmodel.cn/api/paas/v4 或本地 Ollama）。
+	VisionBaseURL string `mapstructure:"vision_base_url"`
+	// VisionAPIKeyEnv 存放 VLM API key 的环境变量名；变量缺失/为空则不带 Authorization（本地 Ollama 场景）。
+	VisionAPIKeyEnv      string   `mapstructure:"vision_api_key_env"`
+	VisionFallbackModels []string `mapstructure:"vision_fallback_models"`
+	// Language 描述语言：zh / en / auto（auto 按用户问题中是否含 CJK 判定）。
+	Language string `mapstructure:"language"`
+	// RequestTimeoutSeconds VLM 阶段总超时；主备模型链公平切分该预算。
+	RequestTimeoutSeconds     int `mapstructure:"request_timeout_seconds"`
+	MaxInflightVisionRequests int `mapstructure:"max_inflight_vision_requests"`
+	MaxImagesPerRequest       int `mapstructure:"max_images_per_request"`
+	MaxRequestBytes           int `mapstructure:"max_request_bytes"`
+	MaxImageReferenceBytes    int `mapstructure:"max_image_reference_bytes"`
+	MaxResultChars            int `mapstructure:"max_result_chars"`
+	// MinResultChars VLM 描述最短长度；短于此视为 VLM 失败（Step 0a：空描述会诱发下游自信幻觉）。
+	MinResultChars             int `mapstructure:"min_result_chars"`
+	AnalysisCacheSize          int `mapstructure:"analysis_cache_size"`
+	AnalysisCacheTTLSeconds    int `mapstructure:"analysis_cache_ttl_seconds"`
+	AnalysisURLCacheTTLSeconds int `mapstructure:"analysis_url_cache_ttl_seconds"`
+	// TargetChannelIDs 空 = 全部通道可走 bridge；非空则仅列出的通道走 bridge。
+	TargetChannelIDs []int `mapstructure:"target_channel_ids"`
+}
+
 type Config struct {
-	Server    Server    `mapstructure:"server"`
-	Log       Log       `mapstructure:"log"`
-	Database  Database  `mapstructure:"database"`
-	Client    Client    `mapstructure:"client"`
-	Startup   Startup   `mapstructure:"startup"`
-	Bootstrap Bootstrap `mapstructure:"bootstrap"`
+	Server       Server       `mapstructure:"server"`
+	Log          Log          `mapstructure:"log"`
+	Database     Database     `mapstructure:"database"`
+	Client       Client       `mapstructure:"client"`
+	Startup      Startup      `mapstructure:"startup"`
+	Bootstrap    Bootstrap    `mapstructure:"bootstrap"`
+	VisionBridge VisionBridge `mapstructure:"vision_bridge"`
 }
 
 var AppConfig Config
@@ -173,4 +204,21 @@ func setDefaults() {
 	viper.SetDefault("client.dial_timeout_seconds", 5)
 	viper.SetDefault("client.tls_handshake_timeout_seconds", 5)
 	viper.SetDefault("bootstrap.password", "")
+	viper.SetDefault("vision_bridge.enabled", false)
+	viper.SetDefault("vision_bridge.vision_model", "")
+	viper.SetDefault("vision_bridge.vision_base_url", "")
+	viper.SetDefault("vision_bridge.vision_api_key_env", "OCTOPUS_VISION_API_KEY")
+	viper.SetDefault("vision_bridge.vision_fallback_models", []string{})
+	viper.SetDefault("vision_bridge.language", "auto")
+	viper.SetDefault("vision_bridge.request_timeout_seconds", 120)
+	viper.SetDefault("vision_bridge.max_inflight_vision_requests", 4)
+	viper.SetDefault("vision_bridge.max_images_per_request", 8)
+	viper.SetDefault("vision_bridge.max_request_bytes", 20*1024*1024)
+	viper.SetDefault("vision_bridge.max_image_reference_bytes", 15*1024*1024)
+	viper.SetDefault("vision_bridge.max_result_chars", 20000)
+	viper.SetDefault("vision_bridge.min_result_chars", 30)
+	viper.SetDefault("vision_bridge.analysis_cache_size", 128)
+	viper.SetDefault("vision_bridge.analysis_cache_ttl_seconds", 900)
+	viper.SetDefault("vision_bridge.analysis_url_cache_ttl_seconds", 120)
+	viper.SetDefault("vision_bridge.target_channel_ids", []int{})
 }

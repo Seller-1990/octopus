@@ -18,6 +18,7 @@ import (
 	"github.com/bestruirui/octopus/internal/outlierwindow"
 	"github.com/bestruirui/octopus/internal/relay/balancer"
 	"github.com/bestruirui/octopus/internal/relay/stream"
+	"github.com/bestruirui/octopus/internal/relay/visionbridge"
 	"github.com/bestruirui/octopus/internal/server/resp"
 	"github.com/bestruirui/octopus/internal/transformer/inbound"
 	"github.com/bestruirui/octopus/internal/transformer/model"
@@ -185,6 +186,19 @@ func Handler(inboundType inbound.InboundType, c *gin.Context) {
 		return
 	}
 
+	// === Vision Bridge ===
+	// 含图请求：视觉可用/能力未知的通道优先（零额外延迟透传），已知纯文本通道退居兜底，
+	// 兜底时把图片替换为 VLM 文本描述。触发不依赖上游状态码——Step 0a 实测纯文本上游
+	// 收图 100% 静默降质（200 空 choices / 挂起 / 拒答），等不到可识别的报错。
+	var canonicalVision *bool
+	if canonicalModel != nil {
+		canonicalVision = canonicalModel.VisionCapable
+	}
+	bridgeState := visionbridge.NewRequestState(internalRequest, canonicalVision)
+	if bridgeState != nil {
+		iter.StablePartition(bridgeState.PreferChannel)
+	}
+
 	// === 早期心跳 ===
 	// 在所有 forward / 重试 / 退避之前启动早期心跳协程，覆盖前置阶段（连接慢、failover、退避叠加）
 	// 期间向客户端发 SSE 注释字节，避免被 Cloudflare 在 120s 零字节阈值上判 524。
@@ -223,6 +237,7 @@ func Handler(inboundType inbound.InboundType, c *gin.Context) {
 
 	var lastErr error
 	var lastResult attemptResult
+	var lastBridgeErr error
 
 	// 同通道重试次数：启用时使用配置值，否则 1 次（不重试）
 	maxSameChannelRetries := 1
@@ -346,6 +361,26 @@ func Handler(inboundType inbound.InboundType, c *gin.Context) {
 			continue
 		}
 
+		// vision bridge：已知纯文本通道 → 换入图片已替换为描述的请求副本；
+		// 替换失败（VLM 链失败/图片非法）则跳过该通道，绝不把原图透传给纯文本模型。
+		// 副本仅对本通道的尝试生效，重试循环结束后恢复共享请求上下文。
+		attemptRequest := internalRequest
+		attemptRawBody := rawBody
+		if bridgeState != nil && bridgeState.ActionFor(channel.ID, item.ModelName) == visionbridge.ActionBridge {
+			bridged, bridgeErr := bridgeState.BridgedRequest(c.Request.Context())
+			if bridgeErr != nil {
+				iter.Skip(channel.ID, usedKey.ID, channel.Name, fmt.Sprintf("vision bridge failed: %v", bridgeErr))
+				lastBridgeErr = bridgeErr
+				lastErr = fmt.Errorf("vision bridge: %w", bridgeErr)
+				continue
+			}
+			bridged.Model = item.ModelName
+			attemptRequest = bridged
+			attemptRawBody = nil // 原始 body 含图，禁用直通路径（bridged 请求必须走 transform）
+		}
+		req.internalRequest = attemptRequest
+		req.rawBody = attemptRawBody
+
 		// 同通道重试循环
 		var result attemptResult
 		for retryNum := 0; retryNum < maxSameChannelRetries; retryNum++ {
@@ -385,6 +420,10 @@ func Handler(inboundType inbound.InboundType, c *gin.Context) {
 				break
 			}
 		}
+
+		// 恢复共享请求上下文（bridge 可能为本通道换入了替换副本）
+		req.internalRequest = internalRequest
+		req.rawBody = rawBody
 
 		// 同通道重试耗尽后记录熔断器失败
 		if !result.Success && !result.Canceled && !result.ResetConversation &&
@@ -483,6 +522,11 @@ func Handler(inboundType inbound.InboundType, c *gin.Context) {
 			c.Header("Retry-After", fmt.Sprintf("%d", int(lastResult.RetryAfter.Seconds())))
 		}
 		hb.FlushOrError(c, lastResult.StatusCode, "channel failed")
+		return
+	}
+	// 含图请求的视觉通道与 bridge 兜底全部失败：给出可区分的错误码（attempts 明细已入 relay log）
+	if lastBridgeErr != nil {
+		hb.FlushOrError(c, http.StatusBadGateway, fmt.Sprintf("vision_fallback_exhausted: %v", lastBridgeErr))
 		return
 	}
 	if lastResult.StatusCode > 0 {
