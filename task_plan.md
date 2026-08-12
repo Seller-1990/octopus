@@ -1969,3 +1969,79 @@ func ProbeChannelModelToolsSupport(ctx context.Context, channel model.Channel, u
 ### Release
 - tag v1.4.3 + workflow success（含 Docker Alpine/Debian 镜像）
 - 双语 release notes 已更新（RELEASE_NOTES_v1.4.3.md）
+
+## Vision Bridge 调研与集成方案（2026-08-12）
+
+### 背景
+用户提出「Image Recognition Tool」调研：让不支持视觉（multimodal）的纯文本模型也能识图。
+
+### 调研结论
+- 不存在知名同名开源项目；该能力是 2026 年爆发的小生态，通用原理 = **网关层拦截 image_url 内容块 → 调独立 VLM 把图转文字描述 → 替换图片块喂给纯文本模型**。
+- 候选对比（集成适配性视角）：
+  - **Zesuy/Plugin-Deepseek-Vision**（Go/MIT/102⭐/活跃，CLIProxyAPI v7 原生预处理插件）——**最值得借鉴**：三协议图片发现/重写算法、VLM 调用契约、fail-closed 错误契约、LRU 文本缓存、SSRF 防护校验、多图联合分析+编号 marker 替换、模型回退链。但深度耦合 CLIProxyAPI cgo 插件 ABI，只能提取算法层，不能直接移植。
+  - liustack/modlens（TS/572⭐）：图片→结构化 JSON 证据（OCR+布局+实体），prompt 设计思路可参考。
+  - thomasunise/visionbridge（48⭐）：独立 OpenAI 兼容微型代理形态，文档最好；作为「不改网关的旁路方案」备选。
+  - one-api/new-api/ollama 均无内置此能力；CLIProxyAPI 是唯一做成官方插件体系的网关。
+- **集成形态结论：做 Octopus 网关内建中间件（不引入 cgo 插件框架），复用其算法设计。**
+
+### Octopus 架构关键事实（读码确认）
+- 三协议入站已统一为 `InternalLLMRequest`（internal/transformer/model/model.go），content parts 规范化含 `image_url`（MessageContentPart.ImageURL）。
+- 已有降级先例：`FlattenUnsupportedBlocks`（alternation.go）把 document 块→text hint —— vision bridge 语义可挂靠此处。
+- 已有能力索引：`modelvendor.LookupVision(name)` + `model.CapMultimodal` 位（v1.4.3 已能从 models.dev 拉取填充）。
+- relay 主流程：`Handler()` → `parseRequest()`（inbound 归一化）→ 路由规划 group/iter → 通道循环内 `internalRequest.Model = item.ModelName`（relay.go:278）→ `ra.attempt()`。**插入点 = 通道选定、outbound transform 之前**。
+
+### 集成方案（Vision Bridge 中间件）
+**触发条件**（全部满足才走 bridge）：
+1. 请求含 `image_url` 内容块（含 data URI 与 URL 两种形式，Anthropic/Gemini inbound 已归一化）；
+2. 目标通道模型 `LookupVision == false`（无 multimodal 能力）；
+3. 全局开关 `vision_bridge.enabled=true`（按 channel/model 可配白名单）。
+
+**执行时序**（插入 relay.go 通道循环内、`ra.attempt()` 前）：
+1. 扫描 `InternalLLMRequest` 所有 message 的 MultipleContent，收集 `image_url` 块（含 tool_result 内图片，参照 Plugin-Deepseek-Vision 的 walker/rewrite 设计）；
+2. 单次 VLM 请求联合分析全部图片（多图保留顺序关系）；
+3. 逐图替换为文本块：`[Image N — Visual analysis]` + Visible text/Visual description 段落；追加 `[Images N — Joint visual analysis]` 联合块；
+4. 替换后 re-scan 校验无残留 image_url，否则报错（fail-closed）。
+
+**VLM 后端**：OpenAI 兼容 client，可配 `base_url + model + api_key_env`。默认建议免费 GLM-4V-Flash；本地隐私场景可指到 Ollama（moondream2 / llava），同一 client 天然支持。支持最多 3 个 fallback 模型按序回退（超时预算公平切分）。
+
+**失败策略**（网关语义优先）：
+- 含图请求的通道排序优化：优先路由到支持视觉的通道（零延迟透传）；仅当无视觉通道可用时才启用 bridge。
+- VLM 失败：跳过当前通道尝试下一个；全部视觉通道/VLM 均失败 → 502 `vision_fallback_exhausted` + attempts 明细。**绝不把原图透传给纯文本模型**（上游会 400，且属静默降质）。
+
+**流式**：先预处理完成再开始响应流（TTFB 叠加 VLM 延迟，参照插件设计），响应流不触碰。
+
+**安全**（复用 Plugin-Deepseek-Vision 的 ValidateImageReference 范本）：
+- 只接受 http(s)/data:image URI；拒绝 file://、内网/loopback/link-local IP（防 SSRF）；
+- 字节上限：单请求 20MB、单图引用 15MB；非法 base64 / image/* 通配拒绝；不回显上游文本/URL/凭证。
+
+**缓存**：进程内 LRU，key=SHA256(语言+prompt+模型链+图片身份哈希)；URL 图片短 TTL(120s)、data URI 长 TTL(900s)；只缓存派生文本与不可逆哈希，不缓存图片字节。
+
+**配置项草案**（internal/conf）：
+```yaml
+vision_bridge:
+  enabled: false
+  vision_model: "glm-4v-flash"
+  vision_base_url: ""
+  vision_api_key_env: "OCTOPUS_VISION_API_KEY"
+  vision_fallback_models: []
+  language: "auto"                 # zh/en/auto
+  request_timeout_seconds: 120
+  max_inflight_vision_requests: 4
+  max_images_per_request: 8
+  max_request_bytes: 20971520
+  max_image_reference_bytes: 15728640
+  max_result_chars: 20000
+  analysis_cache_size: 128
+  analysis_cache_ttl_seconds: 900
+  analysis_url_cache_ttl_seconds: 120
+  target_channel_ids: []           # 空 = 全部；指定则仅这些 channel 走 bridge
+```
+
+**新增文件**：
+- `internal/relay/visionbridge/`：discover.go（图片发现）、rewrite.go（替换）、vlm.go（OpenAI 兼容 client + fallback）、prompt.go（描述模板，参照插件的固定安全模板：指令先行、拒绝图片内指令注入、focus hint 截断 2000 rune 且包 `---` 分隔符）、cache.go（LRU）、safety.go（ValidateImageReference）、limits.go（并发信号量 4 + 超时）。
+- 修改：`internal/relay/relay.go`（通道循环内接入 + 含图请求路由排序）、`internal/conf`（配置结构）、`internal/transformer/model`（加 HasImages() helper）。
+
+### 待定/后续
+- VLM 后端最终选型（免费云端 vs 本地 Ollama）与 API key 来源；
+- 失败策略按上述推荐实现，如倾向纯 fail-closed 可改；
+- 是否将含图请求的通道排序纳入 balancer 策略（v1 先做插入点内线性扫描）。
