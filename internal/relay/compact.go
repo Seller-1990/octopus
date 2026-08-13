@@ -14,9 +14,11 @@ import (
 
 	"github.com/bestruirui/octopus/internal/helper"
 	dbmodel "github.com/bestruirui/octopus/internal/model"
+	"github.com/bestruirui/octopus/internal/modelvendor"
 	"github.com/bestruirui/octopus/internal/op"
 	"github.com/bestruirui/octopus/internal/outlierwindow"
 	"github.com/bestruirui/octopus/internal/relay/balancer"
+	"github.com/bestruirui/octopus/internal/relay/visionbridge"
 	"github.com/bestruirui/octopus/internal/server/resp"
 	transformerModel "github.com/bestruirui/octopus/internal/transformer/model"
 	"github.com/bestruirui/octopus/internal/transformer/outbound"
@@ -29,6 +31,36 @@ type responsesCompactRequest struct {
 	Model              string          `json:"model"`
 	Input              json.RawMessage `json:"input,omitempty"`
 	PreviousResponseID *string         `json:"previous_response_id,omitempty"`
+}
+
+// responsesInputHasImages 探测 Responses input 是否携带 input_image 块（宽松遍历：
+// content 为字符串的 message、无 content 的 item 一律跳过；input 非数组视为无图）。
+// 这是 compact 直通入口的 best-effort 检测——识别不出的形态按无图放行，与主链路
+// 「未知保守直通」方向一致。
+func responsesInputHasImages(input json.RawMessage) bool {
+	if len(input) == 0 {
+		return false
+	}
+	var items []map[string]any
+	if err := json.Unmarshal(input, &items); err != nil {
+		return false
+	}
+	for _, item := range items {
+		content, ok := item["content"].([]any)
+		if !ok {
+			continue
+		}
+		for _, part := range content {
+			m, ok := part.(map[string]any)
+			if !ok {
+				continue
+			}
+			if t, _ := m["type"].(string); t == "input_image" {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 type responsesCompactResponse struct {
@@ -87,8 +119,10 @@ func HandleResponsesCompact(c *gin.Context) {
 	apiKeyID := c.GetInt("api_key_id")
 
 	toolsOnly := false
+	visionBridgeOptIn := false
 	if apiKey, keyErr := op.APIKeyGet(apiKeyID, c.Request.Context()); keyErr == nil {
 		toolsOnly = apiKey.ToolsOnly
+		visionBridgeOptIn = apiKey.VisionBridge
 	}
 	group, err := op.GroupGetEnabledMapForTools(routingModel, c.Request.Context(), toolsOnly)
 	if err != nil {
@@ -123,6 +157,13 @@ func HandleResponsesCompact(c *gin.Context) {
 		resp.ErrorWithCode(c, http.StatusServiceUnavailable, CodeRelayNoAvailableChannel, "no available channel")
 		return
 	}
+
+	// vision bridge 保护（P1-3）：compact 是 raw 直通入口（无 transform，无法换入
+	// bridge 副本），含图输入只能跳过已证实纯文本的通道，维持「原图绝不透传给
+	// 纯文本模型」不变量。生效条件与主链路一致：key 开关 ∧ 全局设置生效。
+	guardTextOnlyChannels := visionBridgeOptIn &&
+		visionbridge.SnapshotSettings().Active() &&
+		responsesInputHasImages(compactReq.Input)
 
 	metricsReq := &transformerModel.InternalLLMRequest{
 		Model:        requestModel,
@@ -175,6 +216,12 @@ func HandleResponsesCompact(c *gin.Context) {
 		if !supportsResponsesCompact(channel.Type) {
 			iter.Skip(channel.ID, 0, channel.Name, "channel type not compatible with responses compact")
 			continue
+		}
+		if guardTextOnlyChannels {
+			if vision, known := modelvendor.LookupVision(item.ModelName); known && !vision {
+				iter.Skip(channel.ID, 0, channel.Name, "vision bridge: image input cannot passthrough to text-only channel (compact)")
+				continue
+			}
 		}
 		decision := protocolDecisions[relayRouteDecisionKey(channel.ID, item.ModelName)]
 		candidateID := decision.RouteCandidateID

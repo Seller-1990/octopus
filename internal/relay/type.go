@@ -135,6 +135,9 @@ type relayAttempt struct {
 	protocolAllowLossy   bool
 	protocolWarnings     []string
 	protocolFailureStage dbmodel.ProtocolFailureStage
+	// visionBridged 本次尝试使用了 bridge 副本（图片已替换为 VLM 描述）——
+	// 写入成功 attempt 的 Msg，让 relay log 能回答「这次回答基于图还是基于描述」。
+	visionBridged bool
 }
 
 // attemptResult 封装单次尝试的结果

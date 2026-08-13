@@ -8,41 +8,28 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
+	"net/url"
 	"strings"
 	"time"
 
+	"github.com/bestruirui/octopus/internal/client"
 	"github.com/bestruirui/octopus/internal/utils/log"
 )
 
 const vlmErrorBodyLimit = 8 * 1024
 
-// vlmClient 面向 OpenAI 兼容端点的最小聊天客户端（非流式）。
-type vlmClient struct {
-	httpClient *http.Client
-	cfg        Config
-}
-
-func newVLMClient(cfg Config) *vlmClient {
-	return &vlmClient{
-		// 单请求超时由调用方 ctx 控制（预算公平切分）；Client 不设全局 Timeout。
-		httpClient: &http.Client{Transport: &http.Transport{Proxy: http.ProxyFromEnvironment}},
-		cfg:        cfg,
-	}
-}
-
-// Analyze 依序尝试主模型与 fallback 模型，返回首个可用描述。
+// analyzeChain 依序尝试主模型与 fallback 模型，返回首个可用描述。
 // 总超时预算在模型链上公平切分（plan：超时预算公平切分）。
-func (c *vlmClient) Analyze(ctx context.Context, refs []ImageRef, prompt string) (string, error) {
-	models := c.modelChain()
+func analyzeChain(ctx context.Context, cfg Config, refs []ImageRef, prompt string) (string, error) {
+	models := modelChain(cfg)
 	if len(models) == 0 {
 		return "", errors.New("vision_model not configured")
 	}
-	perModel := c.cfg.RequestTimeout / time.Duration(len(models))
+	perModel := cfg.RequestTimeout / time.Duration(len(models))
 	var errs []string
 	for _, modelName := range models {
 		attemptCtx, cancel := context.WithTimeout(ctx, perModel)
-		text, err := c.analyzeWithModel(attemptCtx, modelName, refs, prompt)
+		text, err := analyzeWithModel(attemptCtx, cfg, modelName, refs, prompt)
 		cancel()
 		if err == nil {
 			return text, nil
@@ -56,35 +43,46 @@ func (c *vlmClient) Analyze(ctx context.Context, refs []ImageRef, prompt string)
 	return "", fmt.Errorf("all vlm models failed: %s", strings.Join(errs, "; "))
 }
 
-func (c *vlmClient) modelChain() []string {
+// modelChain 返回主模型 + 备选模型的去重有序列表（主模型被重复写进备选是常见配置，
+// 去重避免同一模型白跑一次真实调用，也避免探测结果按模型名渲染时撞 key）。
+func modelChain(cfg Config) []string {
 	var models []string
-	if m := strings.TrimSpace(c.cfg.VisionModel); m != "" {
-		models = append(models, m)
-	}
-	for _, m := range c.cfg.VisionFallbackModels {
-		if m = strings.TrimSpace(m); m != "" {
-			models = append(models, m)
+	seen := make(map[string]bool)
+	appendModel := func(name string) {
+		name = strings.TrimSpace(name)
+		if name == "" || seen[name] {
+			return
 		}
+		seen[name] = true
+		models = append(models, name)
+	}
+	appendModel(cfg.VisionModel)
+	for _, m := range cfg.VisionFallbackModels {
+		appendModel(m)
 	}
 	return models
 }
 
-func (c *vlmClient) analyzeWithModel(ctx context.Context, modelName string, refs []ImageRef, prompt string) (string, error) {
+func analyzeWithModel(ctx context.Context, cfg Config, modelName string, refs []ImageRef, prompt string) (string, error) {
 	payload, err := json.Marshal(buildVLMPayload(modelName, refs, prompt))
 	if err != nil {
 		return "", fmt.Errorf("marshal vlm request: %w", err)
 	}
-	endpoint := strings.TrimSuffix(c.cfg.VisionBaseURL, "/") + "/chat/completions"
+	endpoint := strings.TrimSuffix(cfg.VisionBaseURL, "/") + "/chat/completions"
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(payload))
 	if err != nil {
 		return "", fmt.Errorf("build vlm request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
-	if key := os.Getenv(c.cfg.VisionAPIKeyEnv); c.cfg.VisionAPIKeyEnv != "" && key != "" {
-		req.Header.Set("Authorization", "Bearer "+key)
+	if cfg.VisionAPIKey != "" {
+		req.Header.Set("Authorization", "Bearer "+cfg.VisionAPIKey)
 	}
 
-	resp, err := c.httpClient.Do(req)
+	httpClient, err := vlmHTTPClient(cfg.VisionBaseURL)
+	if err != nil {
+		return "", fmt.Errorf("build vlm http client: %w", err)
+	}
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("vlm request failed: %w", err)
 	}
@@ -93,7 +91,19 @@ func (c *vlmClient) analyzeWithModel(ctx context.Context, modelName string, refs
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, vlmErrorBodyLimit))
 		return "", fmt.Errorf("vlm upstream error: %d: %s", resp.StatusCode, string(body))
 	}
-	return c.extractText(resp.Body)
+	return extractText(resp.Body, cfg)
+}
+
+// vlmHTTPClient 沿用全局代理策略（price.go P0-1：有代理走代理、无代理直连）；
+// 本地/内网 VLM（如局域网 Ollama）强制直连，避免 loopback 流量被推给代理。
+func vlmHTTPClient(baseURL string) (*http.Client, error) {
+	useProxy := client.ResolveSystemProxyURL() != ""
+	if useProxy {
+		if u, err := url.Parse(baseURL); err == nil && isForbiddenHost(strings.ToLower(u.Hostname())) {
+			useProxy = false
+		}
+	}
+	return client.GetHTTPClientSystemProxy(useProxy)
 }
 
 func buildVLMPayload(modelName string, refs []ImageRef, prompt string) map[string]any {
@@ -114,11 +124,11 @@ func buildVLMPayload(modelName string, refs []ImageRef, prompt string) map[strin
 
 // extractText 解析响应并做输出校验。Step 0a 实测两类必须拦截的退化响应：
 // ① HTTP 200 + choices 为空；② 描述为空/超短（下游会基于空描述自信幻觉）。
-func (c *vlmClient) extractText(body io.Reader) (string, error) {
+func extractText(body io.Reader, cfg Config) (string, error) {
 	var parsed struct {
 		Choices []struct {
 			Message struct {
-				Content string `json:"content"`
+				Content json.RawMessage `json:"content"`
 			} `json:"message"`
 		} `json:"choices"`
 	}
@@ -128,9 +138,35 @@ func (c *vlmClient) extractText(body io.Reader) (string, error) {
 	if len(parsed.Choices) == 0 {
 		return "", errors.New("vlm returned no choices (silent-degradation response)")
 	}
-	text := strings.TrimSpace(parsed.Choices[0].Message.Content)
-	if runeCount := len([]rune(text)); runeCount < c.cfg.MinResultChars {
-		return "", fmt.Errorf("vlm description too short (%d < %d chars)", runeCount, c.cfg.MinResultChars)
+	text := strings.TrimSpace(decodeVLMContent(parsed.Choices[0].Message.Content))
+	if runeCount := len([]rune(text)); runeCount < cfg.MinResultChars {
+		return "", fmt.Errorf("vlm description too short (%d < %d chars)", runeCount, cfg.MinResultChars)
 	}
-	return truncateRunes(text, c.cfg.MaxResultChars), nil
+	return truncateRunes(text, cfg.MaxResultChars), nil
+}
+
+// decodeVLMContent 兼容两类 OpenAI 兼容实现：content 为 string，
+// 或为 [{type:"text",text:...}] 内容块数组（部分 vLLM/网关）。
+func decodeVLMContent(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	var s string
+	if err := json.Unmarshal(raw, &s); err == nil {
+		return s
+	}
+	var parts []struct {
+		Type string `json:"type"`
+		Text string `json:"text"`
+	}
+	if err := json.Unmarshal(raw, &parts); err != nil {
+		return ""
+	}
+	var texts []string
+	for _, p := range parts {
+		if p.Text != "" {
+			texts = append(texts, p.Text)
+		}
+	}
+	return strings.Join(texts, "\n")
 }

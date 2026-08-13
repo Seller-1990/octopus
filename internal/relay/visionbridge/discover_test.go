@@ -21,16 +21,10 @@ func multiContentMsg(role string, parts ...model.MessageContentPart) model.Messa
 }
 
 func testConfig() Config {
-	return Config{
-		MaxImagesPerRequest:    8,
-		MaxRequestBytes:        20 * 1024 * 1024,
-		MaxImageReferenceBytes: 15 * 1024 * 1024,
-		MaxResultChars:         20000,
-		MinResultChars:         30,
-		CacheSize:              16,
-		CacheTTL:               15 * time.Minute,
-		URLCacheTTL:            2 * time.Minute,
-	}
+	cfg := defaultConfig()
+	cfg.CacheTTL = 15 * time.Minute
+	cfg.URLCacheTTL = 2 * time.Minute
+	return cfg
 }
 
 func TestDiscoverOrderAndToolMessages(t *testing.T) {
@@ -52,11 +46,31 @@ func TestDiscoverOrderAndToolMessages(t *testing.T) {
 	if refs[2].MessageIndex != 2 || refs[2].URL != "https://example.com/b.png" {
 		t.Fatalf("tool message image missed: %+v", refs[2])
 	}
-	if !strings.HasPrefix(refs[0].Identity, "sha256:") {
-		t.Fatalf("data URI identity should be hashed, got %q", refs[0].Identity)
+	// 缓存身份惰性计算（不再存 ImageRef 字段）：data URI 取 payload sha256，URL 取 URL 本身
+	if id := imageIdentity(refs[0].URL); !strings.HasPrefix(id, "sha256:") {
+		t.Fatalf("data URI identity should be hashed, got %q", id)
 	}
-	if refs[1].Identity != "https://example.com/a.png" {
-		t.Fatalf("URL identity should be the URL itself, got %q", refs[1].Identity)
+	if id := imageIdentity(refs[1].URL); id != "https://example.com/a.png" {
+		t.Fatalf("URL identity should be the URL itself, got %q", id)
+	}
+}
+
+// Message.Images 是客户端可写旁路字段：藏在里面的图必须 fail-closed 整体报错，
+// 不给绕过 bridge 的旁路（纯文本通道被跳过，vision 通道不受影响）。
+func TestDiscoverRejectsImagesField(t *testing.T) {
+	url := validDataURI(16)
+	req := &model.InternalLLMRequest{Messages: []model.Message{
+		{
+			Role:    "user",
+			Content: model.MessageContent{MultipleContent: []model.MessageContentPart{textPart("看图")}},
+			Images:  []model.MessageContentPart{imagePart(url)},
+		},
+	}}
+	if !req.HasImages() {
+		t.Fatal("HasImages must scan Message.Images")
+	}
+	if _, err := Discover(req, testConfig()); err == nil || !strings.Contains(err.Error(), "images field") {
+		t.Fatalf("expected fail-closed error for images field, got %v", err)
 	}
 }
 

@@ -7,8 +7,8 @@ import (
 )
 
 // RewriteRequest 返回把全部图片块替换为文本描述后的新请求。
-// 原请求不被修改（跨通道共享，vision 通道仍需原图）：请求结构浅拷贝、
-// Messages 切片重建、含图消息按 copy-on-write 深拷贝其内容块。
+// 原请求不被修改（跨通道共享，vision 通道仍需原图）：请求结构浅拷贝，
+// Tools 与全部消息的内容块数组重建（隔离出站转换的就地压缩）。
 //
 // 替换规则（Step 0a 验证的格式）：每个图片块原位替换为 "[Image N]" 标记，
 // 联合分析文本追加在最后一个图片块的位置之后，编号与 VLM 提示词中的顺序一致。
@@ -28,15 +28,40 @@ func RewriteRequest(req *model.InternalLLMRequest, refs []ImageRef, analysis str
 	last := refs[len(refs)-1]
 
 	rewritten := *req
+	// 出站转换会就地压缩切片（Normalize / FlattenUnsupportedBlocks 的 [:0] 复用），
+	// 副本与原请求不得共享任何会被压缩的底层数组：Tools 与每条消息的内容块全部重建，
+	// 否则对副本的转换会把原请求（vision 通道仍要用）改出重复元素。
+	rewritten.Tools = append([]model.Tool(nil), req.Tools...)
 	rewritten.Messages = make([]model.Message, len(req.Messages))
 	copy(rewritten.Messages, req.Messages)
 
-	for msgIdx, partNos := range partNosByMsg {
+	// Responses 出站以 RawInputItems / 扩展 RawResponseItems 为权威输入源（优先于
+	// Messages），它们携带原图——副本必须清空两级，让上游载荷从改写后的 Messages 重建。
+	// ProviderExtensions 是共享指针，先克隆容器再清，不得动原请求（vision 通道仍需原图）。
+	rewritten.RawInputItems = nil
+	if req.ProviderExtensions != nil {
+		extCopy := *req.ProviderExtensions
+		if extCopy.OpenAI != nil {
+			openaiCopy := *extCopy.OpenAI
+			openaiCopy.RawResponseItems = nil
+			extCopy.OpenAI = &openaiCopy
+		}
+		rewritten.ProviderExtensions = &extCopy
+	}
+
+	for i := range rewritten.Messages {
+		partNos, hasImage := partNosByMsg[i]
+		if !hasImage {
+			if parts := rewritten.Messages[i].Content.MultipleContent; parts != nil {
+				rewritten.Messages[i].Content.MultipleContent = append([]model.MessageContentPart(nil), parts...)
+			}
+			continue
+		}
 		joint := ""
-		if msgIdx == last.MessageIndex {
+		if i == last.MessageIndex {
 			joint = jointAnalysisBlock(len(refs), analysis)
 		}
-		rewritten.Messages[msgIdx] = rewriteMessage(req.Messages[msgIdx], partNos, last, joint)
+		rewritten.Messages[i] = rewriteMessage(req.Messages[i], partNos, last, joint)
 	}
 
 	if rewritten.HasImages() {

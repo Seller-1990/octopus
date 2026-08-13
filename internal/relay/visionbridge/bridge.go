@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"io"
 	"strings"
 	"sync"
@@ -15,21 +16,20 @@ import (
 	"github.com/bestruirui/octopus/internal/utils/log"
 )
 
-// Action 是 bridge 对单个候选通道的处置决定。
+// Action 是 bridge 对单个候选通道模型的处置决定。
 type Action int
 
 const (
-	// ActionPassthrough 原样转发：视觉通道、能力未知（保守不误替换）、或通道不在 bridge 白名单。
+	// ActionPassthrough 原样转发：视觉通道或能力未知（保守不误替换）。
 	ActionPassthrough Action = iota
 	// ActionBridge 已知纯文本通道：图片必须替换为描述，替换失败则跳过该通道（绝不原图透传）。
 	ActionBridge
 )
 
+// service 持有跨请求单例：描述缓存与 VLM 并发信号量（尺寸为编译期常量，与运行时设置解耦）。
 type service struct {
-	cfg     Config
 	cache   *analysisCache
 	limiter *inflightLimiter
-	client  *vlmClient
 }
 
 var (
@@ -37,76 +37,80 @@ var (
 	svc     *service
 )
 
-func newService(cfg Config) *service {
-	return &service{
-		cfg:     cfg,
-		cache:   newAnalysisCache(cfg.CacheSize),
-		limiter: newInflightLimiter(cfg.MaxInflight),
-		client:  newVLMClient(cfg),
-	}
-}
-
 func getService() *service {
 	svcOnce.Do(func() {
-		s := newService(loadConfig())
-		if s.cfg.Enabled && !s.active() {
-			log.Warnf("vision bridge enabled but vision_model/vision_base_url not configured; bridge stays inactive")
+		svc = &service{
+			cache:   newAnalysisCache(cacheSize),
+			limiter: newInflightLimiter(maxInflight),
 		}
-		svc = s
 	})
 	return svc
 }
 
-func (s *service) active() bool {
-	return s.cfg.Enabled && strings.TrimSpace(s.cfg.VisionModel) != "" &&
-		strings.TrimSpace(s.cfg.VisionBaseURL) != ""
+// Active 报告 bridge 全局配置是否生效（总开关 + 必填项齐备）。
+// compact 等 raw 直通入口用它决定是否需要对纯文本通道做保护性跳过。
+func (c Config) Active() bool {
+	return c.Enabled && c.VisionModel != "" && c.VisionBaseURL != ""
 }
 
 // RequestState 承载单个 relay 请求的 bridge 生命周期：
-// 图片发现结果 + 跨通道 memoize 的 VLM 描述与重写请求。
+// 配置快照 + 图片发现结果 + 跨通道 memoize 的 VLM 描述与重写请求。
 type RequestState struct {
 	svc             *service
+	cfg             Config
 	origReq         *model.InternalLLMRequest
 	refs            []ImageRef
 	discoverErr     error
 	focusHint       string
+	canonicalName   string
 	canonicalVision *bool
 
 	mu       sync.Mutex
 	done     bool
 	prepared *model.InternalLLMRequest
 	prepErr  error
+	// capMemo 缓存每个上游模型名的能力判定：一次请求内 PreferChannel（分区）与
+	// ActionFor（换入判定）必须看到同一结论——modelvendor 索引可被同步任务热替换，
+	// 两次读取间不一致会让「分区判纯文本、换入判未知」把原图直通给纯文本模型。
+	capMemo map[string]visionCap
 }
 
-// NewRequestState 在请求含图且 bridge 生效时返回状态对象，否则返回 nil（零开销路径）。
-// canonicalVision 是请求解析出的 CanonicalModel.VisionCapable（nil=未解析/未知），
-// 作为上游模型名能力查询未命中时的兜底证据。
-func NewRequestState(req *model.InternalLLMRequest, canonicalVision *bool) *RequestState {
-	s := getService()
-	if !s.active() || req == nil || !req.HasImages() {
+type visionCap struct {
+	vision bool
+	known  bool
+}
+
+// NewRequestState 在「key 级开关 ∧ 全局设置生效 ∧ 请求含图」时返回状态对象，
+// 否则返回 nil（零开销路径）。canonicalName/canonicalVision 是请求解析出的
+// CanonicalModel 名称与能力位（nil=未解析/未知），仅当上游模型与 canonical
+// 同名时才作为能力查询未命中的兜底证据——不同名映射的能力不可传染。
+func NewRequestState(req *model.InternalLLMRequest, canonicalName string, canonicalVision *bool, keyOptIn bool) *RequestState {
+	if !keyOptIn || req == nil || !req.HasImages() {
 		return nil
 	}
-	refs, err := Discover(req, s.cfg)
+	cfg := snapshotSettings()
+	if !cfg.Active() {
+		return nil
+	}
+	refs, err := Discover(req, cfg)
 	if err == nil && len(refs) == 0 {
 		return nil
 	}
 	return &RequestState{
-		svc:             s,
+		svc:             getService(),
+		cfg:             cfg,
 		origReq:         req,
 		refs:            refs,
 		discoverErr:     err,
 		focusHint:       lastUserText(req),
+		canonicalName:   strings.TrimSpace(canonicalName),
 		canonicalVision: canonicalVision,
+		capMemo:         make(map[string]visionCap),
 	}
 }
 
-// ActionFor 决定候选通道的处置：仅当模型被证实无视觉能力且通道在 bridge 范围内才替换。
-func (st *RequestState) ActionFor(channelID int, upstreamModel string) Action {
-	if st.svc.cfg.TargetChannelIDs != nil {
-		if _, ok := st.svc.cfg.TargetChannelIDs[channelID]; !ok {
-			return ActionPassthrough
-		}
-	}
+// ActionFor 决定候选通道模型的处置：仅当模型被证实无视觉能力才替换。
+func (st *RequestState) ActionFor(upstreamModel string) Action {
 	if vision, known := st.visionCapability(upstreamModel); known && !vision {
 		return ActionBridge
 	}
@@ -121,13 +125,20 @@ func (st *RequestState) PreferChannel(item dbmodel.GroupItem) bool {
 }
 
 func (st *RequestState) visionCapability(upstreamModel string) (vision, known bool) {
-	if vision, known = modelvendor.LookupVision(upstreamModel); known {
-		return vision, true
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	if cached, ok := st.capMemo[upstreamModel]; ok {
+		return cached.vision, cached.known
 	}
-	if st.canonicalVision != nil {
-		return *st.canonicalVision, true
+	vision, known = modelvendor.LookupVision(upstreamModel)
+	if !known && st.canonicalVision != nil &&
+		strings.EqualFold(strings.TrimSpace(upstreamModel), st.canonicalName) {
+		// canonical 能力位只对同名模型作证据：item.ModelName 是通道上游模型，
+		// 可与客户端请求的 canonical 模型毫无关系（管理员自由映射）。
+		vision, known = *st.canonicalVision, true
 	}
-	return false, false
+	st.capMemo[upstreamModel] = visionCap{vision: vision, known: known}
+	return vision, known
 }
 
 // BridgedRequest 返回图片替换为 VLM 描述后的请求副本；VLM 调用与重写结果
@@ -147,7 +158,7 @@ func (st *RequestState) prepare(ctx context.Context) (*model.InternalLLMRequest,
 	if st.discoverErr != nil {
 		return nil, st.discoverErr
 	}
-	prompt := BuildPrompt(st.svc.cfg.Language, st.focusHint, len(st.refs))
+	prompt := BuildPrompt("auto", st.focusHint, len(st.refs))
 	key := st.cacheKey(prompt)
 	if text, ok := st.svc.cache.Get(key); ok {
 		log.Debugf("vision bridge: analysis cache hit (%d images)", len(st.refs))
@@ -159,7 +170,7 @@ func (st *RequestState) prepare(ctx context.Context) (*model.InternalLLMRequest,
 	defer st.svc.limiter.Release()
 
 	start := time.Now()
-	text, err := st.svc.client.Analyze(ctx, st.refs, prompt)
+	text, err := analyzeChain(ctx, st.cfg, st.refs, prompt)
 	if err != nil {
 		return nil, err
 	}
@@ -173,14 +184,15 @@ func (st *RequestState) prepare(ctx context.Context) (*model.InternalLLMRequest,
 }
 
 // cacheKey = SHA256(prompt 版本 + 完整提示词 + VLM 模型链 + 全部图片身份)。
+// 每段先写长度前缀：prompt 含用户可控文本，禁止靠分隔符划界（注入分隔符可制造边界歧义）。
 func (st *RequestState) cacheKey(prompt string) string {
 	h := sha256.New()
 	for _, field := range append(
-		[]string{promptVersion, prompt, strings.Join(st.svc.client.modelChain(), ",")},
+		[]string{promptVersion, prompt, strings.Join(modelChain(st.cfg), ",")},
 		identities(st.refs)...,
 	) {
+		fmt.Fprintf(h, "%d:", len(field))
 		io.WriteString(h, field)
-		h.Write([]byte{0})
 	}
 	return hex.EncodeToString(h.Sum(nil))
 }
@@ -189,16 +201,18 @@ func (st *RequestState) cacheKey(prompt string) string {
 func (st *RequestState) cacheTTL() time.Duration {
 	for _, ref := range st.refs {
 		if !ref.IsDataURI {
-			return st.svc.cfg.URLCacheTTL
+			return st.cfg.URLCacheTTL
 		}
 	}
-	return st.svc.cfg.CacheTTL
+	return st.cfg.CacheTTL
 }
 
+// identities 惰性计算图片缓存身份（data URI 全量 SHA256 有感知成本，
+// 只在真正要查/写缓存的 prepare 路径上算，纯透传请求不付这笔开销）。
 func identities(refs []ImageRef) []string {
 	out := make([]string, len(refs))
 	for i, ref := range refs {
-		out[i] = ref.Identity
+		out[i] = imageIdentity(ref.URL)
 	}
 	return out
 }

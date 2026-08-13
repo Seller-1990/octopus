@@ -30,7 +30,7 @@ func SettingForClient(setting model.Setting) (model.Setting, bool) {
 	switch setting.Key {
 	case model.SettingKeyJWTSecret:
 		return model.Setting{}, false
-	case model.SettingKeyWebDAVPassword:
+	case model.SettingKeyWebDAVPassword, model.SettingKeyVisionBridgeAPIKey:
 		setting.Value = ""
 	}
 	return setting, true

@@ -30,6 +30,33 @@ type extendedBackupSeed struct {
 	quote      model.SiteModelPriceQuote
 }
 
+// 机密设置绝不进备份（含 WebDAV 自动上传路径）：新增机密 key 必须加进剔除表，
+// 本用例是防回归锁——vision_bridge_api_key 曾漏在表外被明文导出。
+func TestSanitizeSettingsForBackupStripsSecrets(t *testing.T) {
+	secretKeys := []model.SettingKey{
+		model.SettingKeyJWTSecret,
+		model.SettingKeyWebDAVPassword,
+		model.SettingKeyVisionBridgeAPIKey,
+	}
+	settings := []model.Setting{
+		{Key: model.SettingKeyCORSAllowOrigins, Value: "*"},
+	}
+	for _, key := range secretKeys {
+		settings = append(settings, model.Setting{Key: key, Value: "secret-value"})
+	}
+	sanitized := sanitizeSettingsForBackup(settings)
+	for _, s := range sanitized {
+		for _, key := range secretKeys {
+			if s.Key == key {
+				t.Fatalf("secret setting %q leaked into backup", key)
+			}
+		}
+	}
+	if len(sanitized) != 1 || sanitized[0].Key != model.SettingKeyCORSAllowOrigins {
+		t.Fatalf("non-secret settings must survive sanitize, got %+v", sanitized)
+	}
+}
+
 func TestSanitizeSiteAccountsForBackupRemovesLegacyPlaintextCookie(t *testing.T) {
 	accounts := []model.SiteAccount{
 		{AccessToken: "session=legacy-cookie"},

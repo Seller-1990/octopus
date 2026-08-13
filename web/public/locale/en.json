@@ -57,7 +57,8 @@
     "log": "Log",
     "apikey": "API Key",
     "setting": "Setting",
-    "circuit": "Circuit"
+    "circuit": "Circuit",
+    "visionbridge": "Vision Bridge"
   },
   "toolbar": {
     "search": {
@@ -398,7 +399,10 @@
         "save": "Save",
         "confirm": "Confirm",
         "toolsOnly": "Tools only",
-        "toolsOnlyHint": "When enabled, all requests for this key only use channel models that support tool/function calling. Apps that do not need tools should leave this off (it narrows available channels and does not guarantee vision)."
+        "toolsOnlyHint": "When enabled, all requests for this key only use channel models that support tool/function calling. Apps that do not need tools should leave this off (it narrows available channels and does not guarantee vision).",
+        "visionBridge": "Vision bridge",
+        "visionBridgeHint": "Image requests sent to models without vision get their images replaced by VLM text descriptions first (configure and enable globally on the Vision Bridge page).",
+        "visionBridgeGoto": "Open Vision bridge settings"
       },
       "stats": {
         "noData": "No statistics available",
@@ -422,7 +426,9 @@
         "deleteError": "Failed to delete API key"
       },
       "badge": {
-        "toolsOnly": "Tools only"
+        "toolsOnly": "Tools only",
+        "visionBridge": "Vision bridge",
+        "visionBridgeInactive": "Not enabled globally"
       }
     },
     "account": {
@@ -2110,5 +2116,49 @@
       "unknown": "Unknown"
     },
     "channel": "Ch"
+  },
+  "visionBridge": {
+    "title": "Vision Bridge",
+    "description": "When an image-bearing request is routed to a text-only model, a VLM first converts the images into text descriptions to avoid silent image loss upstream. Only applies to models proven to lack vision, and must also be enabled per API key. WebSocket inbound requests currently bypass the bridge.",
+    "enabled": {
+      "label": "Enable Vision Bridge",
+      "description": "Global switch. To take effect it also requires: the API key's vision bridge toggle + a target model proven to lack vision capability."
+    },
+    "model": {
+      "label": "VLM model",
+      "description": "Vision-language model used to describe images. Availability varies a lot between deployments — always run the test below after configuring.",
+      "placeholder": "e.g. glm-4v-flash"
+    },
+    "baseUrl": {
+      "label": "Base URL",
+      "description": "OpenAI-compatible endpoint root (without /chat/completions).",
+      "placeholder": "https://open.bigmodel.cn/api/paas/v4"
+    },
+    "apiKey": {
+      "label": "API key",
+      "description": "Key for the VLM service; leave empty for unauthenticated services like local Ollama. The saved key is never echoed back — type a new value to overwrite.",
+      "placeholder": "Enter a new key to update",
+      "show": "Show key",
+      "hide": "Hide key",
+      "clear": "Clear saved key",
+      "cleared": "Saved key cleared"
+    },
+    "fallbackModels": {
+      "label": "Fallback models",
+      "description": "Tried in order when the primary model fails (comma-separated). At least one fallback is recommended.",
+      "placeholder": "model-a, model-b"
+    },
+    "test": {
+      "title": "Connectivity test",
+      "description": "Makes real calls to each model in the chain above with a built-in test image, using the same validation as the production path (rejects empty responses and too-short descriptions).",
+      "hint": "Test the values currently in the form (fields save on blur)",
+      "button": "Test",
+      "testing": "Testing…",
+      "missingConfig": "Fill in the VLM model and base URL first",
+      "allPassed": "All models passed",
+      "partialPassed": "Some models passed",
+      "allFailed": "All models failed",
+      "requestFailed": "Test request failed"
+    }
   }
 }

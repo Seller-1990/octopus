@@ -15,8 +15,7 @@ type ImageRef struct {
 	PartIndex    int
 	URL          string // 原始引用（data URI 或 http(s) URL）
 	IsDataURI    bool
-	Bytes        int    // 估算字节数（data URI 解码后大小；URL 计引用长度）
-	Identity     string // 缓存身份：data URI 取 payload 的 sha256，URL 取 URL 本身
+	Bytes        int // 估算字节数（data URI 解码后大小；URL 计引用长度）
 }
 
 // Discover 扫描请求全部消息（含 tool 角色）收集 image_url 块，逐个做安全校验，
@@ -28,6 +27,15 @@ func Discover(req *model.InternalLLMRequest, cfg Config) ([]ImageRef, error) {
 	var refs []ImageRef
 	totalBytes := 0
 	for i := range req.Messages {
+		// Message.Images 是客户端可写字段（inbound 直接反序列化、OpenAI 出站原样带出），
+		// 但 rewrite 只处理 MultipleContent——藏在 Images 里的图无法替换，fail-closed 整体报错
+		// （纯文本通道被跳过，vision 通道不受影响），不给绕过 bridge 的旁路。
+		for j := range req.Messages[i].Images {
+			part := &req.Messages[i].Images[j]
+			if part.Type == "image_url" && part.ImageURL != nil && part.ImageURL.URL != "" {
+				return nil, fmt.Errorf("message %d carries image in unsupported images field (fail-closed)", i)
+			}
+		}
 		parts := req.Messages[i].Content.MultipleContent
 		for j := range parts {
 			if parts[j].Type != "image_url" || parts[j].ImageURL == nil || parts[j].ImageURL.URL == "" {
@@ -44,7 +52,6 @@ func Discover(req *model.InternalLLMRequest, cfg Config) ([]ImageRef, error) {
 				URL:          raw,
 				IsDataURI:    strings.HasPrefix(raw, "data:"),
 				Bytes:        size,
-				Identity:     imageIdentity(raw),
 			})
 			totalBytes += size
 		}
@@ -61,6 +68,7 @@ func Discover(req *model.InternalLLMRequest, cfg Config) ([]ImageRef, error) {
 	return refs, nil
 }
 
+// imageIdentity 计算缓存身份：data URI 取 payload 的 sha256（内容寻址），URL 取 URL 本身。
 func imageIdentity(raw string) string {
 	if _, payload, ok := strings.Cut(raw, ","); ok && strings.HasPrefix(raw, "data:") {
 		sum := sha256.Sum256([]byte(payload))

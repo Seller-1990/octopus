@@ -55,6 +55,11 @@ const (
 	SettingKeyWebDAVBackupInterval             SettingKey = "webdav_backup_interval"               // WebDAV 自动备份间隔(小时)，0=禁用
 	SettingKeyWebDAVRetentionCount             SettingKey = "webdav_retention_count"               // WebDAV 保留备份份数
 	SettingKeyWebDAVIncludeStats               SettingKey = "webdav_include_stats"                 // WebDAV 备份是否包含统计数据
+	SettingKeyVisionBridgeEnabled              SettingKey = "vision_bridge_enabled"                // 视觉桥总开关（还需 API key 级开关同时打开才生效）
+	SettingKeyVisionBridgeModel                SettingKey = "vision_bridge_model"                  // 视觉桥 VLM 模型名（空=未配置，bridge 不生效）
+	SettingKeyVisionBridgeBaseURL              SettingKey = "vision_bridge_base_url"               // 视觉桥 OpenAI 兼容端点根路径
+	SettingKeyVisionBridgeAPIKey               SettingKey = "vision_bridge_api_key"                // 视觉桥 VLM API key（本地 Ollama 可为空）
+	SettingKeyVisionBridgeFallbackModels       SettingKey = "vision_bridge_fallback_models"        // 视觉桥备选模型（逗号分隔，按序回退）
 )
 
 const (
@@ -114,6 +119,11 @@ func DefaultSettings() []Setting {
 		{Key: SettingKeyWebDAVBackupInterval, Value: "0"},            // 默认禁用自动备份
 		{Key: SettingKeyWebDAVRetentionCount, Value: "10"},           // 默认保留10份
 		{Key: SettingKeyWebDAVIncludeStats, Value: "true"},           // 默认包含统计数据
+		{Key: SettingKeyVisionBridgeEnabled, Value: "false"},         // 视觉桥默认关闭
+		{Key: SettingKeyVisionBridgeModel, Value: ""},                // 不硬编码默认 VLM——各部署环境需实测选型（Step 0a 结论）
+		{Key: SettingKeyVisionBridgeBaseURL, Value: ""},
+		{Key: SettingKeyVisionBridgeAPIKey, Value: ""},
+		{Key: SettingKeyVisionBridgeFallbackModels, Value: ""},
 	}
 }
 
@@ -148,7 +158,7 @@ func (s *Setting) Validate() error {
 		return validateIntRange(s.Value, 1, maxRetentionDays)
 	case SettingKeySSEHeartbeatInterval, SettingKeySSEPreStreamHeartbeatDelay, SettingKeyWebDAVBackupInterval:
 		return validateIntRange(s.Value, 0, maxIntervalHours)
-	case SettingKeyRelayLogKeepEnabled, SettingKeyResponsesWSEnabled, SettingKeyGroupHealthEnabled, SettingKeyStatsSiteModelBackfilled, SettingKeyOutlierRetireEnabled, SettingKeyWebDAVIncludeStats:
+	case SettingKeyRelayLogKeepEnabled, SettingKeyResponsesWSEnabled, SettingKeyGroupHealthEnabled, SettingKeyStatsSiteModelBackfilled, SettingKeyOutlierRetireEnabled, SettingKeyWebDAVIncludeStats, SettingKeyVisionBridgeEnabled:
 		if s.Value != "true" && s.Value != "false" {
 			return fmt.Errorf("setting value must be true or false")
 		}
@@ -218,6 +228,21 @@ func (s *Setting) Validate() error {
 		}
 		if parsedURL.Host == "" {
 			return fmt.Errorf("WebDAV URL must have a host")
+		}
+		return nil
+	case SettingKeyVisionBridgeBaseURL:
+		if s.Value == "" {
+			return nil
+		}
+		parsedURL, err := url.Parse(s.Value)
+		if err != nil {
+			return fmt.Errorf("vision bridge base URL is invalid: %w", err)
+		}
+		if parsedURL.Scheme != "http" && parsedURL.Scheme != "https" {
+			return fmt.Errorf("vision bridge base URL scheme must be http or https")
+		}
+		if parsedURL.Host == "" {
+			return fmt.Errorf("vision bridge base URL must have a host")
 		}
 		return nil
 	}

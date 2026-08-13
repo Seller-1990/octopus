@@ -90,6 +90,62 @@ func TestRewriteDoesNotMutateOriginal(t *testing.T) {
 	}
 }
 
+// 副本与原请求不得共享底层数组：出站转换（Normalize / FlattenUnsupportedBlocks）
+// 会对副本的 MultipleContent / Tools 做 [:0] 就地压缩，共享数组会把原请求改出重复元素
+// （原请求随后被 replay 状态与 relay log 使用）。
+func TestRewriteCopyIsolatedFromInPlaceTransforms(t *testing.T) {
+	empty := ""
+	req := &model.InternalLLMRequest{
+		Tools: []model.Tool{{Type: "server_search"}, {Type: "function"}},
+		Messages: []model.Message{
+			multiContentMsg("user", model.MessageContentPart{Type: "text", Text: &empty}, textPart("A"), textPart("B")),
+			multiContentMsg("user", textPart("看图"), imagePart(validDataURI(64))),
+		},
+	}
+	refs, _ := Discover(req, testConfig())
+	out, err := RewriteRequest(req, refs, "desc")
+	if err != nil {
+		t.Fatalf("RewriteRequest: %v", err)
+	}
+	// 模拟出站转换的就地压缩：对副本做空文本清理与 Tools 过滤
+	for i := range out.Messages {
+		out.Messages[i].Normalize()
+	}
+	out.FlattenUnsupportedBlocks(model.AlternationProviderOpenAI)
+
+	got := req.Messages[0].Content.MultipleContent
+	if len(got) != 3 || *got[1].Text != "A" || *got[2].Text != "B" {
+		t.Fatalf("original no-image message corrupted by transform on copy: %+v", got)
+	}
+	if len(req.Tools) != 2 || req.Tools[0].Type != "server_search" {
+		t.Fatalf("original Tools corrupted by transform on copy: %+v", req.Tools)
+	}
+}
+
+// Responses 出站以 RawInputItems / 扩展 RawResponseItems 为权威输入源（优先于 Messages）——
+// 副本若原样携带会把原图直接送进纯文本上游；原请求的 raw items 必须原封不动（vision 通道仍需）。
+func TestRewriteClearsRawInputItemsOnCopyOnly(t *testing.T) {
+	rawItems := []byte(`[{"type":"message","role":"user","content":[{"type":"input_image","image_url":"data:image/png;base64,AAAA"}]}]`)
+	req := &model.InternalLLMRequest{Messages: []model.Message{
+		multiContentMsg("user", textPart("看图"), imagePart(validDataURI(64))),
+	}}
+	req.SetOpenAIRawInputItems(rawItems)
+	refs, _ := Discover(req, testConfig())
+	out, err := RewriteRequest(req, refs, "desc")
+	if err != nil {
+		t.Fatalf("RewriteRequest: %v", err)
+	}
+	if len(out.OpenAIRawInputItems()) != 0 {
+		t.Fatal("bridged copy must not carry raw input items (they contain original images)")
+	}
+	if len(out.GetOpenAIExtensions().RawResponseItems) != 0 {
+		t.Fatal("bridged copy must not carry extension raw response items")
+	}
+	if len(req.OpenAIRawInputItems()) == 0 || len(req.GetOpenAIExtensions().RawResponseItems) == 0 {
+		t.Fatal("original request raw items must stay intact for vision channels")
+	}
+}
+
 func TestRewriteAssistantAndToolMessagesPreserved(t *testing.T) {
 	req := &model.InternalLLMRequest{Messages: []model.Message{
 		multiContentMsg("user", textPart("看图")),

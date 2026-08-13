@@ -31,9 +31,10 @@ func chatResponse(content string) string {
 
 func TestVLMAnalyzeSuccess(t *testing.T) {
 	longDesc := strings.Repeat("图中是一段测试描述。", 10)
-	var gotPath, gotModel string
+	var gotPath, gotModel, gotAuth string
 	_, cfg := vlmTestServer(t, func(w http.ResponseWriter, r *http.Request) {
 		gotPath = r.URL.Path
+		gotAuth = r.Header.Get("Authorization")
 		var payload struct {
 			Model    string `json:"model"`
 			Stream   bool   `json:"stream"`
@@ -51,11 +52,11 @@ func TestVLMAnalyzeSuccess(t *testing.T) {
 		}
 		fmt.Fprint(w, chatResponse(longDesc))
 	})
-	client := newVLMClient(cfg)
+	cfg.VisionAPIKey = "sk-test-vlm"
 	refs := []ImageRef{{URL: validDataURI(32)}}
-	text, err := client.Analyze(t.Context(), refs, "prompt")
+	text, err := analyzeChain(t.Context(), cfg, refs, "prompt")
 	if err != nil {
-		t.Fatalf("Analyze: %v", err)
+		t.Fatalf("analyzeChain: %v", err)
 	}
 	if text != longDesc {
 		t.Fatalf("unexpected text: %q", text)
@@ -66,6 +67,23 @@ func TestVLMAnalyzeSuccess(t *testing.T) {
 	if gotModel != "vlm-a" {
 		t.Fatalf("unexpected model %q", gotModel)
 	}
+	if gotAuth != "Bearer sk-test-vlm" {
+		t.Fatalf("api key from settings not applied, got %q", gotAuth)
+	}
+}
+
+func TestVLMAnalyzeNoAuthHeaderWhenKeyEmpty(t *testing.T) {
+	var gotAuth atomic.Value
+	_, cfg := vlmTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		gotAuth.Store(r.Header.Get("Authorization"))
+		fmt.Fprint(w, chatResponse(strings.Repeat("local ollama description ", 3)))
+	})
+	if _, err := analyzeChain(t.Context(), cfg, []ImageRef{{URL: validDataURI(32)}}, "p"); err != nil {
+		t.Fatalf("analyzeChain: %v", err)
+	}
+	if gotAuth.Load() != "" {
+		t.Fatalf("empty key must not send Authorization, got %q", gotAuth.Load())
+	}
 }
 
 // Step 0a 实测的静默降质形态：HTTP 200 + choices 为空，必须判失败。
@@ -73,8 +91,7 @@ func TestVLMAnalyzeEmptyChoicesRejected(t *testing.T) {
 	_, cfg := vlmTestServer(t, func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprint(w, `{"choices":[],"id":"","model":""}`)
 	})
-	client := newVLMClient(cfg)
-	_, err := client.Analyze(t.Context(), []ImageRef{{URL: validDataURI(32)}}, "p")
+	_, err := analyzeChain(t.Context(), cfg, []ImageRef{{URL: validDataURI(32)}}, "p")
 	if err == nil || !strings.Contains(err.Error(), "no choices") {
 		t.Fatalf("expected no-choices error, got %v", err)
 	}
@@ -85,8 +102,7 @@ func TestVLMAnalyzeShortOutputRejected(t *testing.T) {
 	_, cfg := vlmTestServer(t, func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprint(w, chatResponse("太短"))
 	})
-	client := newVLMClient(cfg)
-	_, err := client.Analyze(t.Context(), []ImageRef{{URL: validDataURI(32)}}, "p")
+	_, err := analyzeChain(t.Context(), cfg, []ImageRef{{URL: validDataURI(32)}}, "p")
 	if err == nil || !strings.Contains(err.Error(), "too short") {
 		t.Fatalf("expected too-short error, got %v", err)
 	}
@@ -109,8 +125,7 @@ func TestVLMAnalyzeFallbackChain(t *testing.T) {
 		fmt.Fprint(w, chatResponse(longDesc))
 	})
 	cfg.VisionFallbackModels = []string{"vlm-b"}
-	client := newVLMClient(cfg)
-	text, err := client.Analyze(t.Context(), []ImageRef{{URL: validDataURI(32)}}, "p")
+	text, err := analyzeChain(t.Context(), cfg, []ImageRef{{URL: validDataURI(32)}}, "p")
 	if err != nil {
 		t.Fatalf("fallback should succeed: %v", err)
 	}
@@ -127,8 +142,7 @@ func TestVLMAnalyzeAllModelsFailed(t *testing.T) {
 		w.WriteHeader(http.StatusInternalServerError)
 	})
 	cfg.VisionFallbackModels = []string{"vlm-b"}
-	client := newVLMClient(cfg)
-	_, err := client.Analyze(t.Context(), []ImageRef{{URL: validDataURI(32)}}, "p")
+	_, err := analyzeChain(t.Context(), cfg, []ImageRef{{URL: validDataURI(32)}}, "p")
 	if err == nil || !strings.Contains(err.Error(), "all vlm models failed") {
 		t.Fatalf("expected aggregate failure, got %v", err)
 	}
@@ -139,12 +153,38 @@ func TestVLMAnalyzeTruncatesLongOutput(t *testing.T) {
 		fmt.Fprint(w, chatResponse(strings.Repeat("长", 500)))
 	})
 	cfg.MaxResultChars = 100
-	client := newVLMClient(cfg)
-	text, err := client.Analyze(t.Context(), []ImageRef{{URL: validDataURI(32)}}, "p")
+	text, err := analyzeChain(t.Context(), cfg, []ImageRef{{URL: validDataURI(32)}}, "p")
 	if err != nil {
-		t.Fatalf("Analyze: %v", err)
+		t.Fatalf("analyzeChain: %v", err)
 	}
 	if got := len([]rune(text)); got != 100 {
 		t.Fatalf("expected truncation to 100 runes, got %d", got)
+	}
+}
+
+func TestProbeReportsPerModelResults(t *testing.T) {
+	desc := strings.Repeat("红色圆形与蓝色三角形。", 4)
+	_, cfg := vlmTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		var payload struct {
+			Model string `json:"model"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&payload)
+		if payload.Model == "vlm-bad" {
+			w.WriteHeader(http.StatusNotFound)
+			fmt.Fprint(w, `{"message":"channel failed"}`)
+			return
+		}
+		fmt.Fprint(w, chatResponse(desc))
+	})
+	cfg.VisionFallbackModels = []string{"vlm-bad"}
+	results := Probe(t.Context(), cfg)
+	if len(results) != 2 {
+		t.Fatalf("expected 2 probe results, got %d", len(results))
+	}
+	if !results[0].OK || results[0].Model != "vlm-a" || results[0].Preview == "" {
+		t.Fatalf("primary model probe unexpected: %+v", results[0])
+	}
+	if results[1].OK || !strings.Contains(results[1].Error, "404") {
+		t.Fatalf("bad model probe should fail with 404: %+v", results[1])
 	}
 }

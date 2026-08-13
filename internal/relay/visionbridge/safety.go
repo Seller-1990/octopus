@@ -38,6 +38,9 @@ func validateDataURI(ref string, maxBytes int) (int, error) {
 	if !found || subtype == "" || strings.ContainsAny(subtype, "*;") {
 		return 0, fmt.Errorf("unsupported media type %q (require concrete image/*)", mediaType)
 	}
+	if payload == "" {
+		return 0, fmt.Errorf("empty data URI payload")
+	}
 	// 只按长度估算并抽样解码头部校验合法性，避免为超限图分配整块内存
 	estimated := base64.StdEncoding.DecodedLen(len(payload))
 	if maxBytes > 0 && estimated > maxBytes {
@@ -47,6 +50,15 @@ func validateDataURI(ref string, maxBytes int) (int, error) {
 	if len(sample) > 4096 {
 		sample = sample[:4096]
 	}
+	// 部分客户端按 RFC 2045 折行，base64 里夹换行/空白；标准解码器不接受，
+	// 校验样本先剥离空白，避免合法图被 fail-closed 误杀（VLM 侧能否消费由 VLM 决定）。
+	sample = strings.Map(func(r rune) rune {
+		switch r {
+		case '\n', '\r', '\t', ' ':
+			return -1
+		}
+		return r
+	}, sample)
 	sample = sample[:len(sample)-len(sample)%4]
 	if _, err := base64.StdEncoding.DecodeString(sample); err != nil {
 		return 0, fmt.Errorf("invalid base64 payload: %w", err)
@@ -75,6 +87,9 @@ func validateHTTPURL(ref string) (int, error) {
 	return len(ref), nil
 }
 
+// cgnatNet 100.64.0.0/10（CGNAT）：net.IP 无内置谓词，单独列出。
+var cgnatNet = &net.IPNet{IP: net.IPv4(100, 64, 0, 0), Mask: net.CIDRMask(10, 32)}
+
 func isForbiddenHost(host string) bool {
 	if host == "localhost" || strings.HasSuffix(host, ".localhost") || strings.HasSuffix(host, ".local") {
 		return true
@@ -84,5 +99,5 @@ func isForbiddenHost(host string) bool {
 		return false
 	}
 	return ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() ||
-		ip.IsLinkLocalMulticast() || ip.IsUnspecified()
+		ip.IsLinkLocalMulticast() || ip.IsUnspecified() || cgnatNet.Contains(ip)
 }

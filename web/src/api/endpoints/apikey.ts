@@ -18,6 +18,7 @@ export interface APIKey {
     max_rpm?: number; // 不传表示无限制
     supported_models?: string; // 不传表示支持所有模型
     tools_only?: boolean; // 仅 tools：勾选后该 Key 全部请求只走支持 tools 的渠道模型
+    vision_bridge?: boolean; // 视觉桥：允许该 Key 的含图请求在纯文本模型上替换为 VLM 描述（还需全局开关）
     quota_limit: number; // 费用额度上限，0 表示不限制
     quota_period: 'daily' | 'weekly' | 'monthly';
     quota_used: number;
@@ -164,12 +165,27 @@ export function useUpdateAPIKey() {
         mutationFn: async (data: UpdateAPIKeyRequest) => {
             return apiClient.post<APIKey>('/api/v1/apikey/update', data);
         },
+        // 乐观更新：行内三个开关共用整对象 spread（后端 Save 全量覆盖），
+        // 若等 refetch 才回写缓存，连续点击会基于旧对象把彼此的改动清零。
+        onMutate: async (data) => {
+            await queryClient.cancelQueries({ queryKey: ['apikeys', 'list'] });
+            const previous = queryClient.getQueryData<APIKey[]>(['apikeys', 'list']);
+            queryClient.setQueryData<APIKey[]>(['apikeys', 'list'], (old) =>
+                old?.map((key) => (key.id === data.id ? { ...key, ...data } : key)),
+            );
+            return { previous };
+        },
+        onError: (error, _data, context) => {
+            if (context?.previous) {
+                queryClient.setQueryData(['apikeys', 'list'], context.previous);
+            }
+            logger.error('API Key 更新失败:', error);
+        },
         onSuccess: (data) => {
             logger.log('API Key 更新成功:', data);
-            queryClient.invalidateQueries({ queryKey: ['apikeys', 'list'] });
         },
-        onError: (error) => {
-            logger.error('API Key 更新失败:', error);
+        onSettled: () => {
+            queryClient.invalidateQueries({ queryKey: ['apikeys', 'list'] });
         },
     });
 }

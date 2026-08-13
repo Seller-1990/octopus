@@ -94,8 +94,10 @@ func Handler(inboundType inbound.InboundType, c *gin.Context) {
 
 	// 获取通道分组（toolsOnly key 过滤不支持 tools 的渠道模型，v3）
 	toolsOnly := false
+	visionBridgeOptIn := false
 	if apiKey, keyErr := op.APIKeyGet(apiKeyID, c.Request.Context()); keyErr == nil {
 		toolsOnly = apiKey.ToolsOnly
+		visionBridgeOptIn = apiKey.VisionBridge
 	}
 	group, err := op.GroupGetEnabledMapForTools(routingModel, c.Request.Context(), toolsOnly)
 	if err != nil {
@@ -190,12 +192,17 @@ func Handler(inboundType inbound.InboundType, c *gin.Context) {
 	// 含图请求：视觉可用/能力未知的通道优先（零额外延迟透传），已知纯文本通道退居兜底，
 	// 兜底时把图片替换为 VLM 文本描述。触发不依赖上游状态码——Step 0a 实测纯文本上游
 	// 收图 100% 静默降质（200 空 choices / 挂起 / 拒答），等不到可识别的报错。
+	// 生效条件 = key 级开关 ∧ 全局设置 ∧ 模型被证实无视觉能力。
+	var canonicalName string
 	var canonicalVision *bool
 	if canonicalModel != nil {
+		canonicalName = canonicalModel.Name
 		canonicalVision = canonicalModel.VisionCapable
 	}
-	bridgeState := visionbridge.NewRequestState(internalRequest, canonicalVision)
-	if bridgeState != nil {
+	bridgeState := visionbridge.NewRequestState(internalRequest, canonicalName, canonicalVision, visionBridgeOptIn)
+	// 续接请求未被改写为自包含时（replay 未命中/合并失败）被钉在发出 response id 的
+	// 通道上，重排会把请求先送到不认识该 id 的通道；replay 改写成功后该字段已移除，正常分区。
+	if bridgeState != nil && internalRequest.OpenAIPreviousResponseID() == "" {
 		iter.StablePartition(bridgeState.PreferChannel)
 	}
 
@@ -366,7 +373,7 @@ func Handler(inboundType inbound.InboundType, c *gin.Context) {
 		// 副本仅对本通道的尝试生效，重试循环结束后恢复共享请求上下文。
 		attemptRequest := internalRequest
 		attemptRawBody := rawBody
-		if bridgeState != nil && bridgeState.ActionFor(channel.ID, item.ModelName) == visionbridge.ActionBridge {
+		if bridgeState != nil && bridgeState.ActionFor(item.ModelName) == visionbridge.ActionBridge {
 			bridged, bridgeErr := bridgeState.BridgedRequest(c.Request.Context())
 			if bridgeErr != nil {
 				iter.Skip(channel.ID, usedKey.ID, channel.Name, fmt.Sprintf("vision bridge failed: %v", bridgeErr))
@@ -413,6 +420,7 @@ func Handler(inboundType inbound.InboundType, c *gin.Context) {
 				protocolPolicy:       protocolPolicy,
 				protocolAllowLossy:   decision.AllowLossy,
 				protocolWarnings:     append([]string(nil), decision.Warnings...),
+				visionBridged:        attemptRequest != internalRequest,
 			}
 
 			result = ra.attempt()
@@ -473,7 +481,9 @@ func Handler(inboundType inbound.InboundType, c *gin.Context) {
 							ChannelKeyID: usedKey.ID,
 						}
 					}
-					newState.ApplySuccessfulTurn(req.internalRequest, internalResponse)
+					// replay 状态必须存上游实际看到的请求（bridged 时为描述副本）：
+					// 存原图会让后续轮次经历史合并把图片再次送进已证实纯文本的通道。
+					newState.ApplySuccessfulTurn(attemptRequest, internalResponse)
 					if newState.LastResponseID != "" {
 						ttl := wsConversationStateTTL(group.SessionKeepTime)
 						storeResponsesReplayState(apiKeyID, group.ID, requestModel, newState, ttl)
@@ -524,9 +534,12 @@ func Handler(inboundType inbound.InboundType, c *gin.Context) {
 		hb.FlushOrError(c, lastResult.StatusCode, "channel failed")
 		return
 	}
-	// 含图请求的视觉通道与 bridge 兜底全部失败：给出可区分的错误码（attempts 明细已入 relay log）
+	// 含图请求的视觉通道与 bridge 兜底全部失败：给出可区分的错误码。
+	// 详情只入日志与 relay log（attempts 明细）——lastBridgeErr 内含 VLM 内网地址
+	// 与上游原始错误体，不得回显给 API 调用方（与其余路径的 "channel failed" 约定一致）。
 	if lastBridgeErr != nil {
-		hb.FlushOrError(c, http.StatusBadGateway, fmt.Sprintf("vision_fallback_exhausted: %v", lastBridgeErr))
+		log.Warnf("vision bridge fallback exhausted: %v", lastBridgeErr)
+		hb.FlushOrError(c, http.StatusBadGateway, "vision_fallback_exhausted")
 		return
 	}
 	if lastResult.StatusCode > 0 {
@@ -541,6 +554,14 @@ func circuitFailureKind(retryEnabled bool, statusCode int) balancer.FailureKind 
 		return balancer.FailureSoftRateLimit
 	}
 	return balancer.FailureHard
+}
+
+// successAttemptMsg 成功 attempt 的 Msg：bridge 副本尝试打 vision_bridged 标记，其余为空。
+func (ra *relayAttempt) successAttemptMsg() string {
+	if ra.visionBridged {
+		return "vision_bridged"
+	}
+	return ""
 }
 
 // attempt 统一管理一次通道尝试的完整生命周期
@@ -601,7 +622,7 @@ func (ra *relayAttempt) attempt() attemptResult {
 		span.EndDetailed(
 			dbmodel.AttemptSuccess,
 			statusCode,
-			"",
+			ra.successAttemptMsg(),
 			outcome,
 			dbmodel.AttemptAttributionNone,
 			evidence,
@@ -646,7 +667,7 @@ func (ra *relayAttempt) attempt() attemptResult {
 		span.EndDetailed(
 			dbmodel.AttemptSuccess,
 			statusCode,
-			"",
+			ra.successAttemptMsg(),
 			outcome,
 			dbmodel.AttemptAttributionNone,
 			evidence,

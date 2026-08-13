@@ -55,6 +55,11 @@ export const SettingKey = {
     DefaultGroupLoadBalance: 'default_group_load_balance',
     DefaultGroupSortStrategy: 'default_group_sort_strategy',
     DefaultMultiplierCap: 'default_multiplier_cap',
+    VisionBridgeEnabled: 'vision_bridge_enabled',
+    VisionBridgeModel: 'vision_bridge_model',
+    VisionBridgeBaseURL: 'vision_bridge_base_url',
+    VisionBridgeAPIKey: 'vision_bridge_api_key',
+    VisionBridgeFallbackModels: 'vision_bridge_fallback_models',
 } as const;
 
 /**
