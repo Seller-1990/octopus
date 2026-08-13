@@ -35,3 +35,5 @@
 - 已知边界（记录）：WS 入站不走 bridge（UI 已标注）；relay.Handler 级端到端测试仍缺（backend-adversary 测试缺口清单，后续补）；十进制/短格式 IP SSRF 形态未拦（内网自用接受）。
 - Vision Bridge Step 3（收尾）完成：relay_logs 请求内容 base64 脱敏（无锚点长串模式 + 256KB 硬上限兜底，仅日志层，响应侧沿用既有 filterResponseForLog）；Handler 级集成测试 4 用例锁定核心不变量（bridged 替换/视觉通道优先压过 priority/VLM 失败 fail-closed 不回显/key 未开启基线不变）；handlers 校验与探测截断单测、safety（CGNAT/空 payload/折行 base64）与 vlm（数组 content/modelChain 去重）回归锁；README + README_zh「视觉桥使用说明」小节；Step 0a 报告随分支提交（修复引用悬空）。
 - Step 3 对抗审查（1 agent，全部实测验证）：P1 = 首版脱敏对 Anthropic 入站（source.data 无 data URI 前缀）完全失效 → 改无锚点 base64 长串模式 + 硬上限，PHP \/ 转义、折行、大写 BASE64 等绕过一并关闭；P2 = -count=2 下集成测试因包级 analysis cache 复用必挂（已实跑复现）→ 加 ResetServiceForTest 钩子；README 延迟口径改端到端 57s vs 9s（约 6 倍）。记录项：脱敏同步扫描约 0.5s/15MB（内网接受，硬上限后自然收敛）；op channelRefreshCache 不清 channelCache（既有疑似问题，未触发）。全量 32 包 EXIT=0，-count=2 集成复跑通过。
+- 本地起真实实例（worktree + 独立 SQLite）供用户实机查看设置页与 Key 卡片 UI，验证后停止。
+- **v1.5.0 发布**：feat/vision-bridge（3 个阶段提交）合并入 dev（41f1fe5），合并后全量 32 包 EXIT=0；版本号 v1.4.3 → v1.5.0（conf + package.json）+ 双语 RELEASE_NOTES_v1.5.0.md；tag v1.5.0；已推送 origin。
