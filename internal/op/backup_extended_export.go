@@ -90,7 +90,7 @@ func sanitizeSettingsForBackup(settings []model.Setting) []model.Setting {
 	result := make([]model.Setting, 0, len(settings))
 	for _, setting := range settings {
 		switch setting.Key {
-		case model.SettingKeyJWTSecret, model.SettingKeyWebDAVPassword:
+		case model.SettingKeyJWTSecret, model.SettingKeyWebDAVPassword, model.SettingKeyVisionBridgeAPIKey:
 			continue
 		default:
 			result = append(result, setting)

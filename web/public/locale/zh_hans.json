@@ -57,7 +57,8 @@
     "log": "日志",
     "apikey": "密钥",
     "setting": "设置",
-    "circuit": "熔断"
+    "circuit": "熔断",
+    "visionbridge": "视觉桥"
   },
   "toolbar": {
     "search": {
@@ -398,7 +399,10 @@
         "save": "保存",
         "confirm": "确认",
         "toolsOnly": "仅 tools",
-        "toolsOnlyHint": "勾选后该 Key 的全部请求只使用支持工具调用（function calling）的渠道模型；不需要工具的应用请勿勾选（会收窄可用渠道且不保证识图）。"
+        "toolsOnlyHint": "勾选后该 Key 的全部请求只使用支持工具调用（function calling）的渠道模型；不需要工具的应用请勿勾选（会收窄可用渠道且不保证识图）。",
+        "visionBridge": "视觉桥",
+        "visionBridgeHint": "含图请求发往无视觉能力的模型时，先把图片转为 VLM 文字描述再转发（需在「视觉桥」页完成全局配置并启用）。",
+        "visionBridgeGoto": "前往视觉桥设置"
       },
       "stats": {
         "noData": "暂无统计数据",
@@ -422,7 +426,9 @@
         "deleteError": "API 密钥删除失败"
       },
       "badge": {
-        "toolsOnly": "仅 tools"
+        "toolsOnly": "仅 tools",
+        "visionBridge": "视觉桥",
+        "visionBridgeInactive": "未全局启用"
       }
     },
     "account": {
@@ -2110,5 +2116,49 @@
       "unknown": "未知"
     },
     "channel": "渠道"
+  },
+  "visionBridge": {
+    "title": "视觉桥接",
+    "description": "含图请求发往不支持视觉的纯文本模型时，先由 VLM 把图片转成文字描述再转发，避免上游静默丢图。仅对「已证实无视觉能力」的模型生效，且需要在 API 密钥卡片上单独开启。WebSocket 入站请求暂不经过视觉桥。",
+    "enabled": {
+      "label": "启用视觉桥",
+      "description": "全局总开关。实际生效还需要：API 密钥卡片开启视觉桥 + 目标模型被证实无视觉能力。"
+    },
+    "model": {
+      "label": "VLM 模型",
+      "description": "用于描述图片的视觉语言模型名称。不同部署环境可用性差异很大，配置后请务必点击下方「测试」验证。",
+      "placeholder": "如 glm-4v-flash"
+    },
+    "baseUrl": {
+      "label": "接口地址",
+      "description": "OpenAI 兼容端点根路径（不含 /chat/completions）。",
+      "placeholder": "https://open.bigmodel.cn/api/paas/v4"
+    },
+    "apiKey": {
+      "label": "API 密钥",
+      "description": "VLM 服务的密钥；本地 Ollama 等无鉴权服务可留空。出于安全已保存的密钥不回显，输入新值即覆盖。",
+      "placeholder": "输入新密钥以更新",
+      "show": "显示密钥",
+      "hide": "隐藏密钥",
+      "clear": "清除已保存密钥",
+      "cleared": "已清除保存的密钥"
+    },
+    "fallbackModels": {
+      "label": "备选模型",
+      "description": "主模型失败时按顺序回退（逗号分隔）。建议至少配置一个备选。",
+      "placeholder": "model-a, model-b"
+    },
+    "test": {
+      "title": "连通性测试",
+      "description": "用内置测试图逐个真实调用上方配置的模型链，校验规则与生产路径一致（拦截空响应与超短描述）。",
+      "hint": "测试当前填写的配置（字段失焦即已保存并生效）",
+      "button": "测试",
+      "testing": "测试中…",
+      "missingConfig": "请先填写 VLM 模型和接口地址",
+      "allPassed": "全部模型测试通过",
+      "partialPassed": "部分模型测试通过",
+      "allFailed": "全部模型测试失败",
+      "requestFailed": "测试请求失败"
+    }
   }
 }

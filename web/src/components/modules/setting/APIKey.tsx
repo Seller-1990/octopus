@@ -29,6 +29,7 @@ import { useGroupList } from '@/api/endpoints/group';
 import { useStatsAPIKey } from '@/api/endpoints/stats';
 import type { StatsAPIKeyFormatted } from '@/api/endpoints/stats';
 import { useSettingValue, SettingKey } from '@/api/endpoints/setting';
+import { useNavStore } from '@/components/modules/navbar/nav-store';
 import { APIKeyExportOverlay } from './APIKeyExport';
 import { OverlayPortal } from './OverlayPortal';
 import { cn } from '@/lib/utils';
@@ -97,6 +98,7 @@ function APIKeyForm({ apiKey, isPending, submitLabel, onSubmit, onClose }: APIKe
         max_rpm: apiKey?.max_rpm,
         supported_models: apiKey?.supported_models,
         tools_only: apiKey?.tools_only ?? false,
+        vision_bridge: apiKey?.vision_bridge ?? false,
         quota_limit: apiKey?.quota_limit ?? 0,
         quota_period: apiKey?.quota_period ?? 'monthly',
         quota_used: apiKey?.quota_used ?? 0,
@@ -461,6 +463,30 @@ function APIKeyForm({ apiKey, isPending, submitLabel, onSubmit, onClose }: APIKe
                 <div className="text-[11px] text-muted-foreground/80">{t('apiKey.form.toolsOnlyHint')}</div>
             </div>
 
+            <div className="grid gap-1.5 pt-1">
+                <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-1.5">
+                        <span className="text-xs text-muted-foreground">{t('apiKey.form.visionBridge')}</span>
+                        <Info className="size-3.5 text-muted-foreground/70" />
+                    </div>
+                    <Switch
+                        checked={form.vision_bridge ?? false}
+                        onCheckedChange={(checked) => updateForm({ vision_bridge: checked })}
+                        disabled={isPending}
+                    />
+                </div>
+                <div className="text-[11px] text-muted-foreground/80">
+                    {t('apiKey.form.visionBridgeHint')}{' '}
+                    <button
+                        type="button"
+                        onClick={() => useNavStore.getState().setActiveItem('visionbridge')}
+                        className="underline underline-offset-2 hover:text-foreground"
+                    >
+                        {t('apiKey.form.visionBridgeGoto')}
+                    </button>
+                </div>
+            </div>
+
             <div className="flex gap-2 pt-2 mt-3">
                 <button
                     type="button"
@@ -638,6 +664,7 @@ function APIKeyKeyItem({
     isDeleting,
     onToggleEnabled,
     onToggleToolsOnly,
+    onToggleVisionBridge,
 }: {
     apiKey: APIKey;
     stats?: StatsAPIKeyFormatted;
@@ -654,8 +681,14 @@ function APIKeyKeyItem({
     onToggleEnabled: () => void;
     /** 卡片内联开关：仅 tools（不用进编辑）。 */
     onToggleToolsOnly: () => void;
+    /** 卡片内联开关：视觉桥（不用进编辑）。 */
+    onToggleVisionBridge: () => void;
 }) {
     const t = useTranslations('setting');
+    // key 开关只是三个生效条件之一（全局开关 ∧ key 开关 ∧ 模型已证实无视觉），
+    // 全局未开时徽章灰化提示，避免暗示该 key 已具备视觉桥能力
+    const { value: visionBridgeGlobal } = useSettingValue(SettingKey.VisionBridgeEnabled);
+    const visionBridgeGloballyEnabled = visionBridgeGlobal === 'true';
     const [confirmDelete, setConfirmDelete] = useState(false);
     const quotaPercent = apiKey.quota_limit > 0
         ? Math.min(100, (apiKey.quota_used / apiKey.quota_limit) * 100)
@@ -679,6 +712,20 @@ function APIKeyKeyItem({
                     {apiKey.tools_only && (
                         <Badge variant="outline" className="shrink-0 text-[10px] border-sky-500/40 text-sky-700 dark:text-sky-300">
                             {t('apiKey.badge.toolsOnly')}
+                        </Badge>
+                    )}
+                    {apiKey.vision_bridge && (
+                        <Badge
+                            variant="outline"
+                            className={cn(
+                                'shrink-0 text-[10px]',
+                                visionBridgeGloballyEnabled
+                                    ? 'border-violet-500/40 text-violet-700 dark:text-violet-300'
+                                    : 'border-border text-muted-foreground',
+                            )}
+                            title={visionBridgeGloballyEnabled ? undefined : t('apiKey.badge.visionBridgeInactive')}
+                        >
+                            {t('apiKey.badge.visionBridge')}
                         </Badge>
                     )}
                 </div>
@@ -709,7 +756,11 @@ function APIKeyKeyItem({
                     </label>
                     <label className="flex cursor-pointer items-center gap-1.5" title={t('apiKey.form.toolsOnly')}>
                         <span className="text-[10px] text-muted-foreground">{t('apiKey.form.toolsOnly')}</span>
-                        <Switch checked={apiKey.tools_only} onCheckedChange={onToggleToolsOnly} aria-label={t('apiKey.form.toolsOnly')} />
+                        <Switch checked={apiKey.tools_only ?? false} onCheckedChange={onToggleToolsOnly} aria-label={t('apiKey.form.toolsOnly')} />
+                    </label>
+                    <label className="flex cursor-pointer items-center gap-1.5" title={t('apiKey.form.visionBridge')}>
+                        <span className="text-[10px] text-muted-foreground">{t('apiKey.form.visionBridge')}</span>
+                        <Switch checked={apiKey.vision_bridge ?? false} onCheckedChange={onToggleVisionBridge} aria-label={t('apiKey.form.visionBridge')} />
                     </label>
                 </div>
                 <motion.button
@@ -1021,6 +1072,7 @@ export function APIKeyPanelBase({
                                     isDeleting={deleteAPIKey.isPending && deletingId === apiKey.id}
                                     onToggleEnabled={() => updateAPIKey.mutate({ ...apiKey, enabled: !apiKey.enabled })}
                                     onToggleToolsOnly={() => updateAPIKey.mutate({ ...apiKey, tools_only: !apiKey.tools_only })}
+                                    onToggleVisionBridge={() => updateAPIKey.mutate({ ...apiKey, vision_bridge: !apiKey.vision_bridge })}
                                 />
                             );
                         })}

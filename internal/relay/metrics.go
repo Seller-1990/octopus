@@ -3,6 +3,8 @@ package relay
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"regexp"
 	"time"
 
 	"github.com/bestruirui/octopus/internal/conf"
@@ -13,6 +15,35 @@ import (
 	"github.com/bestruirui/octopus/internal/utils/log"
 	"github.com/bestruirui/octopus/internal/utils/tokenizer"
 )
+
+// logBase64PayloadKeepChars：日志内保留的 base64 连续串长度上限，超过即以占位符替换。
+// 阈值取「够肉眼确认是哪张图/什么内容开头」的量级，正常文本请求不受影响。
+const logBase64PayloadKeepChars = 1024
+
+// logRequestContentMaxBytes：请求内容入库硬上限（兜底闸）。模式匹配覆盖不了的形态
+// （Anthropic source.data 之外的未知格式、PHP \/ 转义、RFC 2045 折行等）由它兜住，
+// 15MB 级图片体绝不原样入库；256KB 对正常长 prompt 几乎无感。
+const logRequestContentMaxBytes = 256 * 1024
+
+// logBase64RunPattern 匹配任意位置的 base64 连续串（无锚点：OpenAI data URI 的 payload、
+// Anthropic source.data 的纯 base64 串都命中；data URI 的 media type 前缀含 `:`/`;`，
+// 天然断在串外得以保留）。是否替换由回调按长度判定——RE2 的 {n,} 重复上限 1000，
+// 阈值无法写进模式。JSON 字符串内 base64 字母表不含引号，不会跨字符串边界。
+var logBase64RunPattern = regexp.MustCompile(`[A-Za-z0-9+/=]{600,}`)
+
+// redactBase64PayloadsForLog 把写入 relay_logs 的内容中超长 base64 串替换为占位符，
+// 再施加硬上限截断。只作用于日志副本，不影响转发链路（转发用独立的 rawBody/请求对象）。
+func redactBase64PayloadsForLog(content string) string {
+	if len(content) > logBase64PayloadKeepChars {
+		content = logBase64RunPattern.ReplaceAllStringFunc(content, func(run string) string {
+			if len(run) <= logBase64PayloadKeepChars {
+				return run
+			}
+			return fmt.Sprintf("[%d chars omitted]", len(run))
+		})
+	}
+	return truncateString(content, logRequestContentMaxBytes)
+}
 
 // RelayMetrics 负责最终的日志收集与持久化
 type RelayMetrics struct {
@@ -528,12 +559,13 @@ func (m *RelayMetrics) saveLog(ctx context.Context, outcome model.RequestOutcome
 	relayLog.WSExecMode = m.WSExecMode
 	relayLog.WSRecovery = m.WSRecovery
 
-	// 请求内容：优先原始请求体，保留 provider 专有字段（如 Anthropic cache_control）
+	// 请求内容：优先原始请求体，保留 provider 专有字段（如 Anthropic cache_control）；
+	// 超长 base64 图片只留占位符（15MB data URI 原样入库会撑爆 relay_logs，图片也不属于日志数据）
 	if len(m.RawRequest) > 0 {
-		relayLog.RequestContent = string(m.RawRequest)
+		relayLog.RequestContent = redactBase64PayloadsForLog(string(m.RawRequest))
 	} else if m.InternalRequest != nil {
 		if reqJSON, jsonErr := json.Marshal(m.InternalRequest); jsonErr == nil {
-			relayLog.RequestContent = string(reqJSON)
+			relayLog.RequestContent = redactBase64PayloadsForLog(string(reqJSON))
 		}
 	}
 
