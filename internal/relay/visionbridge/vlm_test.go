@@ -188,3 +188,28 @@ func TestProbeReportsPerModelResults(t *testing.T) {
 		t.Fatalf("bad model probe should fail with 404: %+v", results[1])
 	}
 }
+
+// 部分 vLLM/网关把 content 返回为内容块数组而非 string——解析必须两者兼容。
+func TestVLMAnalyzeContentArrayCompat(t *testing.T) {
+	desc := strings.Repeat("数组形态的视觉描述。", 6)
+	_, cfg := vlmTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprintf(w, `{"choices":[{"message":{"content":[{"type":"text","text":%q},{"type":"text","text":"补充"}]}}]}`, desc)
+	})
+	text, err := analyzeChain(t.Context(), cfg, []ImageRef{{URL: validDataURI(32)}}, "prompt")
+	if err != nil {
+		t.Fatalf("content array response rejected: %v", err)
+	}
+	if !strings.Contains(text, "数组形态") || !strings.Contains(text, "补充") {
+		t.Fatalf("array content parts lost: %q", text)
+	}
+}
+
+// 主模型被重复写进备选列表是常见配置：链路必须去重（避免重复真实调用与重复 UI key）。
+func TestModelChainDeduplicates(t *testing.T) {
+	cfg := Config{VisionModel: "glm-4v", VisionFallbackModels: []string{" glm-4v ", "kimi-vl", "kimi-vl", ""}}
+	got := modelChain(cfg)
+	want := []string{"glm-4v", "kimi-vl"}
+	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+		t.Fatalf("modelChain = %v, want %v", got, want)
+	}
+}

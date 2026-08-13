@@ -158,3 +158,15 @@ The `default_multiplier_cap` setting limits the **group (key) multiplier** only;
 - **Block reasons are English** (e.g. "multiplier exceeds cap (5 > 4)") in a Chinese UI; not yet translated.
 
 Full technical notes: see `docs/group-multiplier-policy-analysis.md`.
+
+## 👁️ Vision Bridge — Usage Notes
+
+When an image-bearing request is routed to a model **proven to lack vision**, a configured VLM first converts the images into text descriptions before forwarding. Text-only upstreams do not error on images — they silently degrade (measured 100%: empty content / hang / refusal); the bridge covers exactly that path.
+
+**Activation requires all three**: the global toggle on the Vision Bridge settings page ∧ the per-key toggle on the API key card ∧ the channel model being proven non-vision (capability index; unknown models pass through untouched). Off by default — no existing key changes routing behavior.
+
+- **Privacy**: once enabled, images hitting the fallback path are sent to the VLM endpoint you configured (`base_url`). A cloud VLM means images leave your machine — privacy-sensitive deployments should use a local VLM (e.g. LAN Ollama; `api_key` may be empty).
+- **Latency**: the fallback path measures ~57s median end-to-end (VLM description stage ~38s of that) vs ~9s on native vision channels — roughly 6×. Vision-capable channels are **always routed first** (zero added latency); the VLM fallback only runs when no vision channel is available.
+- **Test before use**: VLM availability varies wildly across gateways/deployments. The settings page has a Test button (probes the full model chain with a built-in image, reporting availability/latency/preview per model).
+- **Billing**: VLM calls are billed by your configured endpoint; descriptions are cached (same image + same question: 15 minutes for inline images, 2 minutes for URL references).
+- **Known boundaries**: WebSocket inbound requests bypass the bridge; the `/responses/compact` passthrough endpoint skips text-only channels for image inputs (best-effort detection); oversized base64 content (images etc.) in relay logs is replaced with a placeholder plus a 256KB hard cap — this log redaction applies to all requests, independent of the bridge toggles.

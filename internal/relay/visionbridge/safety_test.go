@@ -77,3 +77,37 @@ func TestValidateImageReferenceErrorMentionsLimit(t *testing.T) {
 		t.Fatalf("expected size limit error, got: %v", err)
 	}
 }
+
+// Step 2 审查修复的回归锁：空 payload 拒收、折行 base64 容错、CGNAT 网段拦截。
+func TestValidateImageReferenceEmptyPayloadRejected(t *testing.T) {
+	if _, err := ValidateImageReference("data:image/png;base64,", 4096); err == nil {
+		t.Fatal("empty data URI payload accepted")
+	}
+}
+
+func TestValidateImageReferenceWhitespaceTolerantBase64(t *testing.T) {
+	encoded := base64.StdEncoding.EncodeToString(make([]byte, 512))
+	// RFC 2045 折行形态：每 76 字符插入 CRLF
+	var folded strings.Builder
+	for i := 0; i < len(encoded); i += 76 {
+		end := min(i+76, len(encoded))
+		folded.WriteString(encoded[i:end])
+		folded.WriteString("\r\n")
+	}
+	if _, err := ValidateImageReference("data:image/png;base64,"+folded.String(), 4096); err != nil {
+		t.Fatalf("folded base64 rejected (fail-closed would kill legal requests): %v", err)
+	}
+}
+
+func TestValidateImageReferenceCGNATBlocked(t *testing.T) {
+	if _, err := ValidateImageReference("http://100.64.0.1/cat.jpg", 0); err == nil {
+		t.Fatal("CGNAT address accepted")
+	}
+	if _, err := ValidateImageReference("http://100.127.255.254/cat.jpg", 0); err == nil {
+		t.Fatal("CGNAT upper bound accepted")
+	}
+	// 100.128.0.0 起不属于 CGNAT，公网地址放行
+	if _, err := ValidateImageReference("http://100.128.0.1/cat.jpg", 0); err != nil {
+		t.Fatalf("public address just above CGNAT range rejected: %v", err)
+	}
+}

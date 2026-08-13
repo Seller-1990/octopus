@@ -47,6 +47,14 @@ func getService() *service {
 	return svc
 }
 
+// ResetServiceForTest 重建单例缓存与信号量——仅测试隔离用：analysis cache 跨请求
+// 存活（TTL 900s）且 cacheKey 无 per-run 熵，-count>1 重复跑会命中上一轮缓存，
+// 破坏「VLM 恰好调用 N 次」类断言。
+func ResetServiceForTest() {
+	svcOnce = sync.Once{}
+	svc = nil
+}
+
 // Active 报告 bridge 全局配置是否生效（总开关 + 必填项齐备）。
 // compact 等 raw 直通入口用它决定是否需要对纯文本通道做保护性跳过。
 func (c Config) Active() bool {
