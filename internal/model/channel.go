@@ -76,6 +76,7 @@ type Channel struct {
 	CustomHeader   []CustomHeader        `json:"custom_header" gorm:"serializer:json"`
 	WSMode         ChannelWSMode         `json:"ws_mode" gorm:"type:varchar(16);not null;default:'inherit'"`
 	ProtocolPolicy ProtocolPolicy        `json:"protocol_policy" gorm:"type:varchar(32);not null;default:'auto'"`
+	TLSFingerprint string                `json:"tls_fingerprint" gorm:"type:varchar(32);not null;default:''"`
 	AllowLossy     bool                  `json:"allow_lossy" gorm:"not null;default:false"`
 	IsReserve      bool                  `json:"is_reserve" gorm:"not null;default:false"`
 	ParamOverride  *string               `json:"param_override"`
@@ -155,6 +156,7 @@ type ChannelUpdateRequest struct {
 	CustomHeader   *[]CustomHeader        `json:"custom_header,omitempty"`
 	WSMode         *ChannelWSMode         `json:"ws_mode,omitempty"`
 	ProtocolPolicy *ProtocolPolicy        `json:"protocol_policy,omitempty"`
+	TLSFingerprint *string                `json:"tls_fingerprint,omitempty"`
 	AllowLossy     *bool                  `json:"allow_lossy,omitempty"`
 	IsReserve      *bool                  `json:"is_reserve,omitempty"`
 	ChannelProxy   *string                `json:"-"`

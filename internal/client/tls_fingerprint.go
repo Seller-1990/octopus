@@ -1,6 +1,7 @@
 package client
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"net/http"
@@ -69,9 +70,18 @@ func NewFingerprintedClient(fingerprint string, proxyURL string) (tls_client.Htt
 // header ordering in a Chrome-like sequence to avoid Cloudflare bot detection.
 // The headers map is applied with deterministic browser-like ordering.
 func DoFingerprintedRequest(client tls_client.HttpClient, method, url string, body io.Reader, headers map[string]string) (*http.Response, error) {
+	return DoFingerprintedRequestContext(context.Background(), client, method, url, body, headers)
+}
+
+// DoFingerprintedRequestContext is DoFingerprintedRequest with request context support,
+// so cancellation and first-token budgets propagate to the fingerprinted transport.
+func DoFingerprintedRequestContext(ctx context.Context, client tls_client.HttpClient, method, url string, body io.Reader, headers map[string]string) (*http.Response, error) {
 	fReq, err := fhttp.NewRequest(method, url, body)
 	if err != nil {
 		return nil, err
+	}
+	if ctx != nil {
+		fReq = fReq.WithContext(ctx)
 	}
 
 	// Build header with explicit ordering

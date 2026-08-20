@@ -28,6 +28,7 @@ export enum AutoGroupType {
 
 export type ChannelWSMode = 'inherit' | 'off' | 'passthrough' | 'transform';
 export type ChannelProtocolPolicy = 'auto' | 'passthrough-only' | 'transform-allowed';
+export type ChannelTLSFingerprint = '' | 'chrome' | 'firefox';
 
 export type BaseUrl = {
     url: string;
@@ -76,6 +77,7 @@ export type Channel = {
     custom_header: CustomHeader[];
     ws_mode: ChannelWSMode;
     protocol_policy: ChannelProtocolPolicy;
+    tls_fingerprint: ChannelTLSFingerprint;
     allow_lossy: boolean;
     is_reserve: boolean;
     param_override?: string | null;
@@ -110,6 +112,7 @@ export type CreateChannelRequest = {
     custom_header?: CustomHeader[];
     ws_mode?: ChannelWSMode;
     protocol_policy?: ChannelProtocolPolicy;
+    tls_fingerprint?: ChannelTLSFingerprint;
     allow_lossy?: boolean;
     is_reserve?: boolean;
     param_override?: string | null;
@@ -134,6 +137,7 @@ export type UpdateChannelRequest = {
     custom_header?: CustomHeader[];
     ws_mode?: ChannelWSMode;
     protocol_policy?: ChannelProtocolPolicy;
+    tls_fingerprint?: ChannelTLSFingerprint;
     allow_lossy?: boolean;
     is_reserve?: boolean;
     param_override?: string | null;
@@ -180,6 +184,7 @@ export function useChannelList() {
                 custom_header: item.custom_header ?? [],
                 ws_mode: item.ws_mode ?? 'inherit',
                 protocol_policy: item.protocol_policy ?? 'auto',
+                tls_fingerprint: item.tls_fingerprint ?? '',
                 allow_lossy: item.allow_lossy ?? false,
                 is_reserve: item.is_reserve ?? false,
                 keys: item.keys ?? [],

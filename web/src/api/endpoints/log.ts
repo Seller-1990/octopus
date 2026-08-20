@@ -162,6 +162,7 @@ export interface UseLogsOptions {
     pageSize?: number;
     filters?: Omit<LogListParams, 'page' | 'page_size'>;
     mode?: 'stream' | 'paged';
+    enabled?: boolean;
 }
 
 const logFiltersKey = (filters?: UseLogsOptions['filters']) => ({
@@ -315,8 +316,8 @@ const logsInfiniteQueryKey = (pageSize: number, filters?: UseLogsOptions['filter
  * if (hasMore && !isLoadingMore) loadMore();
  */
 export function useLogs(options: UseLogsOptions = {}) {
-    const { pageSize = 20, filters, mode = 'stream' } = options;
-    const streamEnabled = mode === 'stream';
+    const { pageSize = 20, filters, mode = 'stream', enabled = true } = options;
+    const streamEnabled = mode === 'stream' && enabled;
     const t = useTranslations('log.list');
 
     const [isConnected, setIsConnected] = useState(false);
@@ -359,6 +360,7 @@ export function useLogs(options: UseLogsOptions = {}) {
         staleTime: 0,
         refetchOnMount: 'always',
         refetchOnWindowFocus: streamEnabled,
+        enabled,
     });
 
     const logs = useMemo(() => {
@@ -478,7 +480,7 @@ export function useLogs(options: UseLogsOptions = {}) {
             eventSourceRef.current = null;
             setIsConnected(false);
         };
-    }, [pageSize, filters, queryClient, streamEnabled, t]);
+    }, [pageSize, filters, queryClient, streamEnabled, enabled, t]);
 
     const clear = useCallback(() => {
         queryClient.removeQueries({ queryKey: logsInfiniteQueryKey(pageSize, filters) });
@@ -498,4 +500,188 @@ export function useLogs(options: UseLogsOptions = {}) {
         warning: logsQuery.data?.pages?.[0]?.warning ?? null,
         searchMode: logsQuery.data?.pages?.[0]?.search_mode ?? null,
     };
+}
+
+export type LiveRequestState = 'running' | 'success' | 'failed' | 'canceled';
+
+export interface LiveAttempt {
+    attempt_index: number;
+    channel_name: string;
+    model_name: string;
+    error: string;
+}
+
+export interface LiveLogOverview {
+    id: number;
+    state: LiveRequestState;
+    started_at: string;
+    completed_at?: string;
+    duration_ms: number;
+    request_model_name: string;
+    actual_model_name: string;
+    channel_name: string;
+    input_tokens: number;
+    output_tokens: number;
+    cache_read_tokens: number;
+    cache_write_tokens: number;
+    total_cost: number;
+    error?: string;
+}
+
+function isLiveFinished(state: LiveRequestState) {
+    return state === 'success' || state === 'failed' || state === 'canceled';
+}
+
+async function fetchLogStreamToken() {
+    const { token } = await apiClient.get<{ token: string }>('/api/v1/log/stream-token');
+    return token;
+}
+
+// useLiveLogs 订阅实时日志概览流（快照 + 增量）。
+export function useLiveLogs(enabled = true) {
+    const [logs, setLogs] = useState<LiveLogOverview[]>([]);
+    const [isLoading, setIsLoading] = useState(true);
+    const [error, setError] = useState<Error | null>(null);
+
+    useEffect(() => {
+        if (!enabled) {
+            setIsLoading(false);
+            return;
+        }
+        let cancelled = false;
+        let retryTimer: ReturnType<typeof setTimeout> | null = null;
+        let eventSource: EventSource | null = null;
+
+        const scheduleReconnect = () => {
+            if (cancelled) return;
+            retryTimer = setTimeout(() => {
+                retryTimer = null;
+                void connect(true);
+            }, 2000);
+        };
+
+        const connect = async (isReconnect = false) => {
+            try {
+                const token = await fetchLogStreamToken();
+                if (cancelled) return;
+
+                eventSource = new EventSource(`${API_BASE_URL}/api/v1/log/overview/stream?token=${token}`);
+                eventSource.onopen = () => {
+                    if (cancelled) return;
+                    setError(null);
+                    if (!isReconnect) setIsLoading(false);
+                };
+                eventSource.addEventListener('log', (event) => {
+                    try {
+                        const next = JSON.parse((event as MessageEvent<string>).data) as LiveLogOverview;
+                        setLogs((current) => {
+                            const rest = current.filter((item) => item.id !== next.id);
+                            return [...rest, next].sort((a, b) => b.id - a.id);
+                        });
+                        setIsLoading(false);
+                        setError(null);
+                    } catch {
+                        setError(new Error('Invalid live log update'));
+                    }
+                });
+                eventSource.onerror = () => {
+                    if (cancelled) return;
+                    setIsLoading(false);
+                    setError(new Error('Live log stream disconnected'));
+                    eventSource?.close();
+                    eventSource = null;
+                    scheduleReconnect();
+                };
+            } catch (e) {
+                if (cancelled) return;
+                setIsLoading(false);
+                setError(e instanceof Error ? e : new Error('Failed to open live log stream'));
+                scheduleReconnect();
+            }
+        };
+
+        void connect(false);
+
+        return () => {
+            cancelled = true;
+            if (retryTimer) clearTimeout(retryTimer);
+            eventSource?.close();
+        };
+    }, [enabled]);
+
+    return { logs, isLoading, error };
+}
+
+// useLiveLogDetail 订阅运行中请求的尝试级详情流。
+export function useLiveLogDetail(id: number, state: LiveRequestState, enabled: boolean) {
+    const [attempts, setAttempts] = useState<LiveAttempt[]>([]);
+    const [runningAttempt, setRunningAttempt] = useState<LiveAttempt | null>(null);
+
+    useEffect(() => {
+        if (!enabled || isLiveFinished(state)) return;
+
+        setAttempts([]);
+        setRunningAttempt(null);
+        let cancelled = false;
+        let eventSource: EventSource | null = null;
+
+        const connect = async () => {
+            try {
+                const token = await fetchLogStreamToken();
+                if (cancelled) return;
+
+                eventSource = new EventSource(`${API_BASE_URL}/api/v1/log/${id}/stream?token=${token}`);
+                eventSource.addEventListener('attempt.started', (event) => {
+                    try {
+                        const next = JSON.parse((event as MessageEvent<string>).data) as LiveAttempt;
+                        setRunningAttempt(next);
+                        setAttempts((current) => {
+                            const rest = current.filter((item) => item.attempt_index !== next.attempt_index);
+                            return [...rest, next].slice(-50);
+                        });
+                    } catch {
+                        return;
+                    }
+                });
+                eventSource.addEventListener('attempt.finished', (event) => {
+                    try {
+                        const next = JSON.parse((event as MessageEvent<string>).data) as LiveAttempt;
+                        setRunningAttempt((current) =>
+                            current?.attempt_index === next.attempt_index ? null : current
+                        );
+                        setAttempts((current) => {
+                            const rest = current.filter((item) => item.attempt_index !== next.attempt_index);
+                            return [...rest, next].slice(-50);
+                        });
+                    } catch {
+                        return;
+                    }
+                });
+                eventSource.onerror = () => {
+                    if (cancelled) return;
+                    eventSource?.close();
+                    eventSource = null;
+                };
+            } catch {
+                return;
+            }
+        };
+
+        void connect();
+
+        return () => {
+            cancelled = true;
+            eventSource?.close();
+        };
+    }, [enabled, id, state]);
+
+    return { attempts, runningAttempt };
+}
+
+// useStopAttempt 中止指定请求当前序号匹配的上游尝试。
+export function useStopAttempt() {
+    return useMutation({
+        mutationFn: ({ requestId, attemptIndex }: { requestId: number; attemptIndex: number }) =>
+            apiClient.post<unknown>(`/api/v1/log/${requestId}/${attemptIndex}/stop`),
+    });
 }

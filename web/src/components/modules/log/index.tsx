@@ -2,8 +2,17 @@
 
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { useLogs, useLogSiteActionTargets, type LogKeywordMode, type LogKeywordScope } from '@/api/endpoints/log';
+import {
+    useLiveLogs,
+    useLogs,
+    useLogSiteActionTargets,
+    type LiveLogOverview,
+    type LogKeywordMode,
+    type LogKeywordScope,
+    type RelayLog,
+} from '@/api/endpoints/log';
 import type { UsageAnalyticsFilters, UsageBreakdownItem } from '@/api/endpoints/log-analytics';
+import { LiveLogCard } from './LiveLogCard';
 import { LogCard, type LogSiteActionTargets } from './Item';
 import { Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -126,17 +135,23 @@ function LogDetailList() {
         start_time: debouncedFilters.startTime,
         end_time: debouncedFilters.endTime,
     }), [debouncedFilters]);
-    const liveLogsQuery = useLogs({ pageSize: LOG_PAGE_SIZE, filters: logFilters, mode: filterMode ? 'paged' : 'stream' });
-    const logs = liveLogsQuery.logs;
-    const hasMore = liveLogsQuery.hasMore;
-    const isLoading = liveLogsQuery.isLoading;
-    const isLoadingMore = liveLogsQuery.isLoadingMore;
-    const loadMore = liveLogsQuery.loadMore;
-    const warning = liveLogsQuery.warning;
-    const logsError = liveLogsQuery.error;
+    const liveLogsQuery = useLiveLogs(!filterMode);
+    const dbLogsQuery = useLogs({
+        pageSize: LOG_PAGE_SIZE,
+        filters: logFilters,
+        mode: filterMode ? 'paged' : 'stream',
+        enabled: filterMode,
+    });
+    const logs = filterMode ? dbLogsQuery.logs : liveLogsQuery.logs;
+    const hasMore = filterMode ? dbLogsQuery.hasMore : false;
+    const isLoading = filterMode ? dbLogsQuery.isLoading : liveLogsQuery.isLoading;
+    const isLoadingMore = filterMode ? dbLogsQuery.isLoadingMore : false;
+    const loadMore = filterMode ? dbLogsQuery.loadMore : () => {};
+    const warning = filterMode ? dbLogsQuery.warning : null;
+    const logsError = filterMode ? dbLogsQuery.error : liveLogsQuery.error;
 
     const logIDs = useMemo(() => logs.map((log) => log.id), [logs]);
-    const siteActionTargetsQuery = useLogSiteActionTargets(logIDs, logs.length > 0);
+    const siteActionTargetsQuery = useLogSiteActionTargets(logIDs, filterMode && logs.length > 0);
     const siteActionTargets = useMemo(() => {
         const next = new Map<number, LogSiteActionTargets>();
         const data = siteActionTargetsQuery.data ?? {};
@@ -159,7 +174,7 @@ function LogDetailList() {
         setRefreshing(true);
         const startedAt = Date.now();
         try {
-            await liveLogsQuery.refetch();
+            if (filterMode) await dbLogsQuery.refetch();
         } finally {
             const elapsed = Date.now() - startedAt;
             const remaining = Math.max(0, 500 - elapsed);
@@ -167,7 +182,7 @@ function LogDetailList() {
                 if (refreshIdRef.current === myId) setRefreshing(false);
             }, remaining);
         }
-    }, [liveLogsQuery, setRefreshing]);
+    }, [dbLogsQuery, filterMode, setRefreshing]);
 
     useEffect(() => {
         if (refreshRequestId === lastHandledRefreshRequestIdRef.current) return;
@@ -176,14 +191,14 @@ function LogDetailList() {
     }, [handleRefresh, refreshRequestId]);
 
     const footer = useMemo(() => {
-        if (hasMore) {
+        if (filterMode && hasMore) {
             return (
                 <div className="flex justify-center py-4">
                     <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
                 </div>
             );
         }
-        if (logs.length > 0) {
+        if (filterMode && logs.length > 0) {
             return (
                 <div className="flex justify-center py-4">
                     <span className="text-sm text-muted-foreground">{t('list.noMore')}</span>
@@ -191,7 +206,23 @@ function LogDetailList() {
             );
         }
         return null;
-    }, [hasMore, logs.length, t]);
+    }, [filterMode, hasMore, logs.length, t]);
+
+    if (isLoading && logs.length === 0) {
+        return (
+            <div className="flex h-full items-center justify-center">
+                <Loader2 className="size-6 animate-spin text-muted-foreground" />
+            </div>
+        );
+    }
+
+    if (!filterMode && logs.length === 0 && !logsError) {
+        return (
+            <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
+                {t('list.noMore')}
+            </div>
+        );
+    }
 
     return (
         <div className="flex h-full min-h-0 flex-col gap-3">
@@ -206,25 +237,39 @@ function LogDetailList() {
                     className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive"
                 >
                     <span>{t('list.loadFailed', { message: logsError.message })}</span>
-                    <Button type="button" variant="outline" size="sm" onClick={() => void liveLogsQuery.refetch()}>
-                        {t('list.retry')}
-                    </Button>
+                    {filterMode ? (
+                        <Button type="button" variant="outline" size="sm" onClick={() => void dbLogsQuery.refetch()}>
+                            {t('list.retry')}
+                        </Button>
+                    ) : null}
                 </div>
             ) : null}
             <div className="relative min-h-0 flex-1">
-                <VirtualizedGrid
-                    items={logs}
-                    layout="list"
-                    columns={{ default: 1 }}
-                    estimateItemHeight={80}
-                    overscan={8}
-                    getItemKey={(log) => `log-${log.id}`}
-                    renderItem={(log) => <LogCard log={log} siteTargets={siteActionTargets.get(log.id) ?? null} />}
-                    footer={footer}
-                    onReachEnd={handleReachEnd}
-                    reachEndEnabled={canLoadMore}
-                    reachEndOffset={2}
-                />
+                {filterMode ? (
+                    <VirtualizedGrid
+                        items={logs as RelayLog[]}
+                        layout="list"
+                        columns={{ default: 1 }}
+                        estimateItemHeight={80}
+                        overscan={8}
+                        getItemKey={(log) => `log-${log.id}`}
+                        renderItem={(log) => <LogCard log={log} siteTargets={siteActionTargets.get(log.id) ?? null} />}
+                        footer={footer}
+                        onReachEnd={handleReachEnd}
+                        reachEndEnabled={canLoadMore}
+                        reachEndOffset={2}
+                    />
+                ) : (
+                    <VirtualizedGrid
+                        items={logs as LiveLogOverview[]}
+                        layout="list"
+                        columns={{ default: 1 }}
+                        estimateItemHeight={120}
+                        overscan={8}
+                        getItemKey={(log) => `live-log-${log.id}`}
+                        renderItem={(log) => <LiveLogCard log={log} />}
+                    />
+                )}
             </div>
         </div>
     );

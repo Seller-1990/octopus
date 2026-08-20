@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/bestruirui/octopus/internal/client"
 	"github.com/bestruirui/octopus/internal/helper"
 	dbmodel "github.com/bestruirui/octopus/internal/model"
 	"github.com/bestruirui/octopus/internal/op"
@@ -25,6 +26,7 @@ import (
 	"github.com/bestruirui/octopus/internal/transformer/outbound"
 	openaiOutbound "github.com/bestruirui/octopus/internal/transformer/outbound/openai"
 	"github.com/bestruirui/octopus/internal/utils/log"
+	"github.com/bestruirui/octopus/internal/utils/snowflake"
 	"github.com/gin-gonic/gin"
 	"github.com/tmaxmax/go-sse"
 )
@@ -60,16 +62,22 @@ func writeSSEHeartbeat(writer streamHeartbeatWriter) error {
 }
 
 func Handler(inboundType inbound.InboundType, c *gin.Context) {
+	liveID := snowflake.GenerateID()
+
 	// 解析请求
 	rawBody, internalRequest, inAdapter, err := parseRequest(inboundType, c)
 	if err != nil {
 		return
 	}
+	startLiveLog(liveID, time.Now(), internalRequest.Model)
+	defer finishLiveLogIfRunning(liveID, "relay terminated before completion")
+
 	requestModel := internalRequest.Model
 	routingModel := requestModel
 	var canonicalModel *dbmodel.CanonicalModel
 	if canonical, ok := op.CatalogResolveIdentity(requestModel); ok {
 		if !canonical.Enabled {
+			failLiveLog(liveID, errors.New("model disabled"))
 			resp.ErrorWithCode(c, http.StatusServiceUnavailable, CodeRelayNoAvailableChannel, "model disabled")
 			return
 		}
@@ -80,6 +88,7 @@ func Handler(inboundType inbound.InboundType, c *gin.Context) {
 	if supportedModels != "" {
 		supportedModelsArray := strings.Split(supportedModels, ",")
 		if !slices.Contains(supportedModelsArray, requestModel) && !slices.Contains(supportedModelsArray, routingModel) {
+			failLiveLog(liveID, errors.New("model not supported"))
 			resp.ErrorWithCode(c, http.StatusBadRequest, CodeRelayModelNotSupported, "model not supported")
 			return
 		}
@@ -101,6 +110,7 @@ func Handler(inboundType inbound.InboundType, c *gin.Context) {
 	}
 	group, err := op.GroupGetEnabledMapForTools(routingModel, c.Request.Context(), toolsOnly)
 	if err != nil {
+		failLiveLog(liveID, err)
 		resp.ErrorWithCode(c, http.StatusNotFound, CodeRelayModelNotFound, "model not found")
 		return
 	}
@@ -111,6 +121,7 @@ func Handler(inboundType inbound.InboundType, c *gin.Context) {
 		group,
 	)
 	if err != nil {
+		failLiveLog(liveID, err)
 		resp.ErrorWithCode(c, http.StatusInternalServerError, CodeRelayNoAvailableChannel, "route planning failed")
 		return
 	}
@@ -124,6 +135,7 @@ func Handler(inboundType inbound.InboundType, c *gin.Context) {
 			routeErr = fmt.Errorf("key is tools-only and no tools-capable channel available")
 		}
 		metrics := NewRelayMetrics(apiKeyID, requestModel, rawBody, internalRequest)
+		metrics.LiveRequestID = liveID
 		if canonicalModel != nil {
 			metrics.SetRouting(*canonicalModel, 0, inboundProtocol, dbmodel.ProtocolUnknown, "")
 		}
@@ -184,6 +196,7 @@ func Handler(inboundType inbound.InboundType, c *gin.Context) {
 	}
 	iter := balancer.NewIteratorWithPreference(group, apiKeyID, requestModel, preferredSticky)
 	if iter.Len() == 0 {
+		failLiveLog(liveID, errors.New("no available channel"))
 		resp.ErrorWithCode(c, http.StatusServiceUnavailable, CodeRelayNoAvailableChannel, "no available channel")
 		return
 	}
@@ -217,6 +230,7 @@ func Handler(inboundType inbound.InboundType, c *gin.Context) {
 
 	// 初始化 Metrics
 	metrics := NewRelayMetrics(apiKeyID, requestModel, rawBody, internalRequest)
+	metrics.LiveRequestID = liveID
 	if canonicalModel != nil {
 		metrics.SetRouting(*canonicalModel, 0, inboundProtocol, dbmodel.ProtocolUnknown, "")
 	}
@@ -254,6 +268,8 @@ func Handler(inboundType inbound.InboundType, c *gin.Context) {
 			maxSameChannelRetries = 3
 		}
 	}
+
+	liveAttemptIndex := 0
 
 	for iter.Next() {
 		select {
@@ -410,8 +426,11 @@ func Handler(inboundType inbound.InboundType, c *gin.Context) {
 			}
 
 			// 构造尝试级上下文
+			liveAttemptIndex++
+			attemptCtx, cancelAttempt := context.WithCancel(c.Request.Context())
 			ra := &relayAttempt{
 				relayRequest:         req,
+				attemptCtx:           attemptCtx,
 				outAdapter:           outAdapter,
 				channel:              channel,
 				usedKey:              usedKey,
@@ -423,7 +442,23 @@ func Handler(inboundType inbound.InboundType, c *gin.Context) {
 				visionBridged:        attemptRequest != internalRequest,
 			}
 
+			liveLogAttemptStarted(liveID, liveAttemptIndex, channel.Name, item.ModelName, cancelAttempt)
 			result = ra.attempt()
+			stopped := !clearLiveAttempt(liveID, liveAttemptIndex)
+			cancelAttempt()
+			if stopped {
+				if !result.Success && !result.Written {
+					result = attemptResult{
+						Success:              false,
+						Err:                  errors.New("relay attempt interrupted"),
+						StatusCode:           result.StatusCode,
+						Outcome:              dbmodel.RequestOutcomeFailed,
+						Attribution:          dbmodel.AttemptAttributionRelay,
+						TransportTermination: dbmodel.TransportTerminationClientCanceled,
+					}
+				}
+			}
+			liveLogAttemptFinished(liveID, liveAttemptIndex, channel.Name, item.ModelName, result.Err)
 			if result.Success || result.Written || result.Canceled || result.ResetConversation || result.FirstTokenTimeout || !isRetryableStatus(result.StatusCode) {
 				break
 			}
@@ -864,7 +899,7 @@ func parseRequest(inboundType inbound.InboundType, c *gin.Context) ([]byte, *mod
 
 // forward 转发请求到上游服务
 func (ra *relayAttempt) forward() (int, error) {
-	ctx := ra.requestContext()
+	ctx := ra.attemptContext()
 
 	// 尝试上游 WebSocket（仅 OpenAI Response outbound 类型；必须是客户端 WS 入站且新开关显式启用）
 	if ra.channel.Type == outbound.OutboundTypeOpenAIResponse &&
@@ -1418,6 +1453,10 @@ func (ra *relayAttempt) recordHeaderPolicyTrace(policy dbmodel.ResolvedHeaderPol
 
 // sendRequest 发送 HTTP 请求
 func (ra *relayAttempt) sendRequest(req *http.Request) (*http.Response, error) {
+	if ra.channel.TLSFingerprint != "" {
+		return ra.sendFingerprintedRequest(req)
+	}
+
 	httpClient, err := helper.ChannelHTTPClientWithContext(req.Context(), ra.channel)
 	if err != nil {
 		log.Warnf("failed to get http client: %v", err)
@@ -1436,6 +1475,56 @@ func (ra *relayAttempt) sendRequest(req *http.Request) (*http.Response, error) {
 			log.Infof("request canceled before upstream response: %v", err)
 		} else {
 			log.Warnf("failed to send request: %v", err)
+		}
+		ra.closeFirstTokenBudget()
+		return nil, err
+	}
+
+	if response != nil && response.Body != nil && ra.firstTokenBudget != nil {
+		response.Body = &closeWithFuncReadCloser{
+			ReadCloser: response.Body,
+			onClose:    ra.closeFirstTokenBudget,
+		}
+	}
+
+	return response, nil
+}
+
+// sendFingerprintedRequest 使用浏览器 TLS 指纹客户端发送请求，
+// 用于绕过 Cloudflare 对默认 Go HTTP 客户端的浏览器签名封禁。
+func (ra *relayAttempt) sendFingerprintedRequest(req *http.Request) (*http.Response, error) {
+	fpClient, err := helper.ChannelFingerprintedClient(req.Context(), ra.channel)
+	if err != nil {
+		log.Warnf("failed to get fingerprinted http client: %v", err)
+		return nil, err
+	}
+
+	req = ra.attachFirstTokenBudget(req)
+
+	flatHeaders := make(map[string]string, len(req.Header))
+	for key, values := range req.Header {
+		if len(values) > 0 {
+			flatHeaders[key] = values[0]
+		}
+	}
+
+	response, err := client.DoFingerprintedRequestContext(
+		req.Context(),
+		fpClient,
+		req.Method,
+		req.URL.String(),
+		req.Body,
+		flatHeaders,
+	)
+	if err != nil {
+		if timeoutErr := ra.firstTokenTimeoutIfNeeded(req.Context(), err); timeoutErr != nil {
+			ra.closeFirstTokenBudget()
+			return nil, timeoutErr
+		}
+		if isClientCancellation(req.Context(), err) {
+			log.Infof("request canceled before upstream response: %v", err)
+		} else {
+			log.Warnf("failed to send fingerprinted request: %v", err)
 		}
 		ra.closeFirstTokenBudget()
 		return nil, err

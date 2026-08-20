@@ -179,6 +179,14 @@ func rewriteRawChatRequestModel(rawBody []byte, modelName string) ([]byte, error
 		return nil, fmt.Errorf("failed to decode raw chat request: %w", err)
 	}
 	payload["model"] = strings.TrimSpace(modelName)
+	// 同协议透传时若客户端流式请求未显式配置 stream_options，
+	// 注入 include_usage 以便上游返回 usage 块，保证 token 统计不缺失。
+	// 显式配置了 stream_options 的请求保持原样（尊重调用方意图）。
+	if stream, _ := payload["stream"].(bool); stream {
+		if _, ok := payload["stream_options"]; !ok {
+			payload["stream_options"] = map[string]any{"include_usage": true}
+		}
+	}
 	rewrittenBody, err := json.Marshal(payload)
 	if err != nil {
 		return nil, fmt.Errorf("failed to encode raw chat request: %w", err)

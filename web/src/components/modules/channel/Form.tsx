@@ -40,6 +40,7 @@ export interface ChannelFormData {
     custom_header: Channel['custom_header'];
     ws_mode: ChannelWSMode;
     protocol_policy: ChannelProtocolPolicy;
+    tls_fingerprint: Channel['tls_fingerprint'];
     allow_lossy: boolean;
     proxy_mode: Channel['proxy_mode'];
     proxy_config_id: number | null;
@@ -509,6 +510,33 @@ export function ChannelForm({
                                         <SelectItem className="rounded-xl" value="auto">{t('protocolPolicyAuto')}</SelectItem>
                                         <SelectItem className="rounded-xl" value="passthrough-only">{t('protocolPolicyPassthrough')}</SelectItem>
                                         <SelectItem className="rounded-xl" value="transform-allowed">{t('protocolPolicyTransform')}</SelectItem>
+                                    </SelectContent>
+                                </Select>
+                            </div>
+
+                            <div className="space-y-2">
+                                <label htmlFor={`${idPrefix}-tls-fingerprint`} className="text-sm font-medium text-card-foreground">
+                                    {t('tlsFingerprint')}
+                                </label>
+                                <Select
+                                    value={formData.tls_fingerprint}
+                                    onValueChange={(value) =>
+                                        onFormDataChange({
+                                            ...formData,
+                                            tls_fingerprint: value as Channel['tls_fingerprint'],
+                                        })
+                                    }
+                                >
+                                    <SelectTrigger
+                                        id={`${idPrefix}-tls-fingerprint`}
+                                        className="w-full rounded-xl border border-border px-4 py-2 text-foreground"
+                                    >
+                                        <SelectValue />
+                                    </SelectTrigger>
+                                    <SelectContent className="rounded-xl">
+                                        <SelectItem className="rounded-xl" value="">{t('tlsFingerprintNone')}</SelectItem>
+                                        <SelectItem className="rounded-xl" value="chrome">{t('tlsFingerprintChrome')}</SelectItem>
+                                        <SelectItem className="rounded-xl" value="firefox">{t('tlsFingerprintFirefox')}</SelectItem>
                                     </SelectContent>
                                 </Select>
                             </div>

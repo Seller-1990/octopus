@@ -44,6 +44,7 @@ export function CardContent({ channel, stats }: { channel: Channel; stats: Stats
         custom_header: channel.custom_header ?? [],
         ws_mode: channel.ws_mode ?? 'inherit',
         protocol_policy: channel.protocol_policy ?? 'auto',
+        tls_fingerprint: channel.tls_fingerprint ?? '',
         allow_lossy: channel.allow_lossy ?? false,
         proxy_mode: channel.proxy_mode ?? 'direct',
         proxy_config_id: channel.proxy_config_id ?? null,
@@ -103,6 +104,7 @@ export function CardContent({ channel, stats }: { channel: Channel; stats: Stats
         if (formData.auto_group !== channel.auto_group) req.auto_group = formData.auto_group;
         if ((formData.ws_mode ?? 'inherit') !== (channel.ws_mode ?? 'inherit')) req.ws_mode = formData.ws_mode;
         if (formData.protocol_policy !== channel.protocol_policy) req.protocol_policy = formData.protocol_policy;
+        if (formData.tls_fingerprint !== channel.tls_fingerprint) req.tls_fingerprint = formData.tls_fingerprint;
         if (formData.allow_lossy !== channel.allow_lossy) req.allow_lossy = formData.allow_lossy;
 
         if (!headersEqual(formData.custom_header, channel.custom_header)) {

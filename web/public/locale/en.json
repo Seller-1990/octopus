@@ -1363,6 +1363,16 @@
       "next": "Next",
       "page": "Page {page}",
       "pagesRange": "Pages {from}–{to}"
+    },
+    "live": {
+      "running": "Running",
+      "success": "Success",
+      "failed": "Failed",
+      "canceled": "Canceled",
+      "stopAttempt": "Stop attempt",
+      "stopping": "Stopping",
+      "attempts": "Attempts",
+      "attemptIndex": "Attempt #{index}"
     }
   },
   "channel": {
@@ -1483,7 +1493,11 @@
       "allowLossy": "Allow lossy conversion",
       "matchRegex": "Match Regex",
       "matchRegexPlaceholder": "Optional: regex pattern to match request model names",
-      "remark": "Remark"
+      "remark": "Remark",
+      "tlsFingerprint": "TLS Fingerprint",
+      "tlsFingerprintNone": "None (default)",
+      "tlsFingerprintChrome": "Chrome",
+      "tlsFingerprintFirefox": "Firefox"
     }
   },
   "siteChannel": {

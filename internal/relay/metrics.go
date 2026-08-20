@@ -47,9 +47,10 @@ func redactBase64PayloadsForLog(content string) string {
 
 // RelayMetrics 负责最终的日志收集与持久化
 type RelayMetrics struct {
-	APIKeyID     int
-	RequestModel string
-	StartTime    time.Time
+	APIKeyID      int
+	LiveRequestID int64
+	RequestModel  string
+	StartTime     time.Time
 
 	// 首 Token 时间
 	FirstTokenTime time.Time
@@ -457,6 +458,25 @@ func (m *RelayMetrics) SaveOutcomeWithChannelStats(
 	}
 
 	m.saveLog(ctx, outcome, err, duration, attempts, channelID, channelName)
+
+	if m.LiveRequestID != 0 {
+		actualModel := m.ActualModel
+		if actualModel == "" {
+			actualModel = m.RequestModel
+		}
+		liveLogOutcome(
+			m.LiveRequestID,
+			outcome,
+			err,
+			channelName,
+			actualModel,
+			m.Stats.InputToken,
+			m.Stats.OutputToken,
+			intPointerValue(m.CacheReadTokens),
+			intPointerValue(m.CacheWriteTokens),
+			m.Stats.InputCost+m.Stats.OutputCost,
+		)
+	}
 }
 
 func finalChannel(attempts []model.ChannelAttempt) (int, string) {
@@ -582,6 +602,9 @@ func (m *RelayMetrics) saveLog(ctx context.Context, outcome model.RequestOutcome
 		relayLog.Error = err.Error()
 	}
 	relayLog.Success = outcome == model.RequestOutcomeSuccess
+	if m.LiveRequestID != 0 {
+		relayLog.ID = m.LiveRequestID
+	}
 
 	if logErr := op.RelayLogAdd(ctx, relayLog); logErr != nil {
 		log.Warnf("failed to save relay log: %v", logErr)

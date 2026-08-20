@@ -119,10 +119,19 @@ func (r *relayRequest) requestContext() context.Context {
 	return r.ctx
 }
 
+// attemptContext returns the cancellable attempt context when set, otherwise the request context.
+func (r *relayAttempt) attemptContext() context.Context {
+	if r.attemptCtx != nil {
+		return r.attemptCtx
+	}
+	return r.requestContext()
+}
+
 // relayAttempt 尝试级上下文
 type relayAttempt struct {
 	*relayRequest // 嵌入请求级上下文
 
+	attemptCtx           context.Context
 	outAdapter           model.Outbound
 	channel              *dbmodel.Channel
 	usedKey              dbmodel.ChannelKey

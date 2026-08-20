@@ -7,8 +7,10 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/bestruirui/octopus/internal/op"
+	"github.com/bestruirui/octopus/internal/relay"
 	"github.com/bestruirui/octopus/internal/server/middleware"
 	"github.com/bestruirui/octopus/internal/server/resp"
 	"github.com/bestruirui/octopus/internal/server/router"
@@ -46,12 +48,24 @@ func init() {
 		AddRoute(
 			router.NewRoute("/stream-token", http.MethodGet).
 				Handle(getStreamToken),
+		).
+		AddRoute(
+			router.NewRoute("/:request_id/:attempt_index/stop", http.MethodPost).
+				Handle(stopAttempt),
 		)
 
 	router.NewGroupRouter("/api/v1/log").
 		AddRoute(
 			router.NewRoute("/stream", http.MethodGet).
 				Handle(streamLog),
+		).
+		AddRoute(
+			router.NewRoute("/overview/stream", http.MethodGet).
+				Handle(streamLiveOverview),
+		).
+		AddRoute(
+			router.NewRoute("/:id/stream", http.MethodGet).
+				Handle(streamLiveDetail),
 		)
 }
 
@@ -370,6 +384,140 @@ func streamLog(c *gin.Context) {
 				continue
 			}
 			c.Writer.Write([]byte(fmt.Sprintf("data: %s\n\n", data)))
+			c.Writer.Flush()
+		}
+	}
+}
+
+func requireLogStreamToken(c *gin.Context) bool {
+	token := c.Query("token")
+	if token == "" || !op.RelayLogStreamTokenVerify(token) {
+		resp.Error(c, http.StatusUnauthorized, "invalid stream token")
+		return false
+	}
+	op.RelayLogStreamTokenRevoke(token)
+	return true
+}
+
+func prepareLiveSSE(c *gin.Context) {
+	c.Header("Content-Type", "text/event-stream")
+	c.Header("Cache-Control", "no-cache")
+	c.Header("Connection", "keep-alive")
+	c.Header("X-Accel-Buffering", "no")
+}
+
+func writeLiveSSE(c *gin.Context, event string, data any) error {
+	payload, err := json.Marshal(data)
+	if err != nil {
+		return err
+	}
+	if event != "" {
+		if _, err := fmt.Fprintf(c.Writer, "event: %s\n", event); err != nil {
+			return err
+		}
+	}
+	_, err = fmt.Fprintf(c.Writer, "data: %s\n\n", payload)
+	return err
+}
+
+func writeLiveSSEHeartbeat(c *gin.Context) error {
+	_, err := c.Writer.Write([]byte(": ping\n\n"))
+	if err == nil {
+		c.Writer.Flush()
+	}
+	return err
+}
+
+// stopAttempt 中止指定请求当前序号匹配的上游尝试。
+func stopAttempt(c *gin.Context) {
+	requestID, err := strconv.ParseInt(c.Param("request_id"), 10, 64)
+	if err != nil || requestID <= 0 {
+		resp.InvalidParam(c)
+		return
+	}
+	attemptIndex, err := strconv.Atoi(c.Param("attempt_index"))
+	if err != nil || attemptIndex < 1 {
+		resp.InvalidParam(c)
+		return
+	}
+	relay.InterruptLiveAttempt(requestID, attemptIndex)
+	c.Status(http.StatusNoContent)
+}
+
+// streamLiveOverview 发送实时日志快照与后续更新。
+func streamLiveOverview(c *gin.Context) {
+	if !requireLogStreamToken(c) {
+		return
+	}
+	prepareLiveSSE(c)
+
+	snapshot, updates := relay.OpenLiveOverview()
+	defer relay.CloseLiveOverview(updates)
+
+	for _, overview := range snapshot {
+		if err := writeLiveSSE(c, "log", overview); err != nil {
+			return
+		}
+		c.Writer.Flush()
+	}
+
+	heartbeat := time.NewTicker(15 * time.Second)
+	defer heartbeat.Stop()
+	for {
+		select {
+		case <-c.Request.Context().Done():
+			return
+		case <-heartbeat.C:
+			if err := writeLiveSSEHeartbeat(c); err != nil {
+				return
+			}
+		case overview, ok := <-updates:
+			if !ok {
+				return
+			}
+			if err := writeLiveSSE(c, "log", overview); err != nil {
+				return
+			}
+			c.Writer.Flush()
+		}
+	}
+}
+
+// streamLiveDetail 发送运行中请求的尝试级实时更新。
+func streamLiveDetail(c *gin.Context) {
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil || id <= 0 {
+		resp.InvalidParam(c)
+		return
+	}
+	if !requireLogStreamToken(c) {
+		return
+	}
+	updates, found := relay.OpenLiveDetail(id)
+	if !found {
+		resp.NotFound(c)
+		return
+	}
+	prepareLiveSSE(c)
+	defer relay.CloseLiveDetail(updates)
+
+	heartbeat := time.NewTicker(15 * time.Second)
+	defer heartbeat.Stop()
+	for {
+		select {
+		case <-c.Request.Context().Done():
+			return
+		case <-heartbeat.C:
+			if err := writeLiveSSEHeartbeat(c); err != nil {
+				return
+			}
+		case update, ok := <-updates:
+			if !ok {
+				return
+			}
+			if err := writeLiveSSE(c, string(update.Type), update); err != nil {
+				return
+			}
 			c.Writer.Flush()
 		}
 	}

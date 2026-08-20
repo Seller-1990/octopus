@@ -48,6 +48,15 @@ func normalizeChannelProxyFields(channel *model.Channel) {
 	channel.ChannelProxy = nil
 }
 
+func normalizeChannelTLSFingerprint(value string) string {
+	switch value {
+	case "chrome", "firefox":
+		return value
+	default:
+		return ""
+	}
+}
+
 func ChannelCreate(channel *model.Channel, ctx context.Context) error {
 	if channel == nil {
 		return fmt.Errorf("channel is nil")
@@ -68,6 +77,7 @@ func ChannelCreate(channel *model.Channel, ctx context.Context) error {
 	} else {
 		channel.ProxyConfigID = nil
 	}
+	channel.TLSFingerprint = normalizeChannelTLSFingerprint(channel.TLSFingerprint)
 	if err := db.GetDB().WithContext(ctx).Create(channel).Error; err != nil {
 		return err
 	}
@@ -272,6 +282,10 @@ func ChannelUpdate(req *model.ChannelUpdateRequest, ctx context.Context) (*model
 	if req.ProtocolPolicy != nil {
 		selectFields = append(selectFields, "protocol_policy")
 		updates.ProtocolPolicy = req.ProtocolPolicy.Normalize(model.ProtocolPolicyAuto)
+	}
+	if req.TLSFingerprint != nil {
+		selectFields = append(selectFields, "tls_fingerprint")
+		updates.TLSFingerprint = normalizeChannelTLSFingerprint(*req.TLSFingerprint)
 	}
 	if req.AllowLossy != nil {
 		selectFields = append(selectFields, "allow_lossy")
