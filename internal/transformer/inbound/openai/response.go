@@ -253,6 +253,7 @@ func (i *ResponseInbound) processStreamEvents(ctx context.Context, events []mode
 			if len(out) == 0 {
 				return []byte("data: [DONE]\n\n"), nil
 			}
+			out = append(out, []byte("data: [DONE]\n\n"))
 
 		case model.StreamEventKindError:
 			if event.Error == nil {

@@ -1171,7 +1171,7 @@ func (ra *relayAttempt) handleWSStreamResponseV2(ctx context.Context, reader *ws
 	}
 
 	// Handle first token timeout specifically
-	if err != nil && strings.Contains(err.Error(), "first token timeout") {
+	if err != nil && errors.Is(err, errFirstTokenTimeout) {
 		return ra.firstTokenTimeoutError()
 	}
 
@@ -1615,7 +1615,7 @@ func (ra *relayAttempt) handleStreamResponseV2(ctx context.Context, response *ht
 	}
 
 	// Handle first token timeout specifically
-	if err != nil && strings.Contains(err.Error(), "first token timeout") {
+	if err != nil && errors.Is(err, errFirstTokenTimeout) {
 		_ = response.Body.Close()
 		return ra.firstTokenTimeoutError()
 	}
@@ -1698,7 +1698,7 @@ func (ra *relayAttempt) handleStreamResponsePassthroughV2(ctx context.Context, r
 	}
 
 	// Handle first token timeout specifically
-	if err != nil && strings.Contains(err.Error(), "first token timeout") {
+	if err != nil && errors.Is(err, errFirstTokenTimeout) {
 		_ = response.Body.Close()
 		return ra.firstTokenTimeoutError()
 	}

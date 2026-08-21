@@ -3,11 +3,13 @@ package relay
 import (
 	"context"
 	"errors"
+
+	"github.com/bestruirui/octopus/internal/relay/stream"
 )
 
 var (
 	errLocalRelayBudgetExceeded = errors.New("local relay budget exceeded")
-	errFirstTokenTimeout        = errors.New("first token timeout")
+	errFirstTokenTimeout        = stream.ErrFirstTokenTimeout
 	errUpstreamWSDialTimeout    = errors.New("upstream websocket dial timeout")
 	errWSClientMaxAge           = errors.New("websocket client max age reached")
 )

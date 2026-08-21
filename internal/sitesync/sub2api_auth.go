@@ -128,11 +128,14 @@ func coordinateSub2APIRefresh(ctx context.Context, key string, refresh func() su
 	sub2APIRefreshCalls.calls[key] = call
 	sub2APIRefreshCalls.Unlock()
 
+	defer func() {
+		sub2APIRefreshCalls.Lock()
+		delete(sub2APIRefreshCalls.calls, key)
+		close(call.done)
+		sub2APIRefreshCalls.Unlock()
+	}()
+
 	call.result = refresh()
-	sub2APIRefreshCalls.Lock()
-	delete(sub2APIRefreshCalls.calls, key)
-	close(call.done)
-	sub2APIRefreshCalls.Unlock()
 	return call.result, false
 }
 

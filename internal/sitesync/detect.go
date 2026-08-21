@@ -81,6 +81,9 @@ func detectByPageTitle(ctx context.Context, baseURL string) (model.SitePlatform,
 	client := &http.Client{Timeout: 10 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
+		if resp != nil {
+			resp.Body.Close()
+		}
 		return "", err
 	}
 	defer resp.Body.Close()
@@ -107,6 +110,9 @@ func detectByStatusEndpoint(ctx context.Context, baseURL string) (model.SitePlat
 	client := &http.Client{Timeout: 10 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
+		if resp != nil {
+			resp.Body.Close()
+		}
 		return "", err
 	}
 	defer resp.Body.Close()

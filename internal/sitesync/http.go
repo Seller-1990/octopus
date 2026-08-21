@@ -208,6 +208,9 @@ func requestJSON(ctx context.Context, siteRecord *model.Site, method string, req
 		}
 		resp, err := httpClient.Do(req)
 		if err != nil {
+			if resp != nil {
+				resp.Body.Close()
+			}
 			if !shouldRetrySiteReadTransport(ctx, method, attempt, err) {
 				return nil, err
 			}

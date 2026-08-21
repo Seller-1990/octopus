@@ -20,6 +20,10 @@ import (
 // Relay should fail over to another channel.
 var ErrEmptyUpstreamStream = errors.New("upstream stream ended without forwarding any payload")
 
+// ErrFirstTokenTimeout marks a first-token timeout. Relay detects it with
+// errors.Is and converts it into a channel-switch decision.
+var ErrFirstTokenTimeout = errors.New("first token timeout")
+
 // StreamSource abstracts different event sources (SSE, WebSocket, raw bytes).
 type StreamSource interface {
 	// ReadEvent blocks until the next event is available or returns an error.
@@ -327,7 +331,7 @@ func (p *StreamProcessor) handleDisconnect() error {
 // handleFirstTokenTimeout returns first token timeout error.
 func (p *StreamProcessor) handleFirstTokenTimeout() error {
 	log.Warnf("first token timeout (%v), switching channel", p.config.FirstTokenTimeout)
-	return fmt.Errorf("first token timeout after %v", p.config.FirstTokenTimeout)
+	return fmt.Errorf("first token timeout after %v: %w", p.config.FirstTokenTimeout, ErrFirstTokenTimeout)
 }
 
 // finalize completes the stream and calls OnFinish callback.

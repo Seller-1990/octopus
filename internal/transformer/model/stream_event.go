@@ -193,11 +193,15 @@ func InternalResponseFromStreamEvents(events []StreamEvent) *InternalLLMResponse
 		case StreamEventKindTextDelta:
 			if event.Delta != nil {
 				if event.Delta.Text != "" {
-					text := event.Delta.Text
-					choice.Delta.Content.Content = &text
+					if choice.Delta.Content.Content == nil {
+						text := event.Delta.Text
+						choice.Delta.Content.Content = &text
+					} else {
+						*choice.Delta.Content.Content += event.Delta.Text
+					}
 				}
 				if event.Delta.Refusal != "" {
-					choice.Delta.Refusal = event.Delta.Refusal
+					choice.Delta.Refusal += event.Delta.Refusal
 				}
 			}
 		case StreamEventKindThinkingDelta:

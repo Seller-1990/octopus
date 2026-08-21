@@ -96,7 +96,9 @@ func RegisterAll(engine *gin.Engine) error {
 			handlers = append(handlers, route.Middlewares...)
 			handlers = append(handlers, route.Handlers...)
 
-			registerRoute(group, route.Method, route.Path, handlers)
+			if err := registerRoute(group, route.Method, route.Path, handlers); err != nil {
+				return fmt.Errorf("invalid route in group %s: %w", router.Path, err)
+			}
 		}
 	}
 	registeredRouters = nil
@@ -104,9 +106,9 @@ func RegisterAll(engine *gin.Engine) error {
 }
 
 // registerRoute registers a single route to a Gin route group.
-func registerRoute(group *gin.RouterGroup, method string, path string, handlers []gin.HandlerFunc) {
+func registerRoute(group *gin.RouterGroup, method string, path string, handlers []gin.HandlerFunc) error {
 	if len(handlers) == 0 {
-		return
+		return nil
 	}
 
 	if path != "" {
@@ -131,6 +133,7 @@ func registerRoute(group *gin.RouterGroup, method string, path string, handlers 
 	case http.MethodPatch:
 		group.PATCH(path, handlers...)
 	default:
-		group.GET(path, handlers...)
+		return fmt.Errorf("unsupported method %q", method)
 	}
+	return nil
 }
