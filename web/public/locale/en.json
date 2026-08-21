@@ -1924,7 +1924,13 @@
       "minCheckinInterval": "Minimum check-in interval (hours)",
       "randomDelayWindow": "Random delay window (minutes)",
       "proxyHint": "Used for this account's sync, check-in, and model fetches. Automatically projected channels follow the resolved proxy.",
-      "createAccount": "Create account"
+      "createAccount": "Create account",
+      "tlsFingerprint": "TLS Fingerprint",
+      "tlsFingerprintNone": "None (default)",
+      "tlsFingerprintChrome": "Chrome",
+      "tlsFingerprintFirefox": "Firefox",
+      "uaPreset": "User-Agent Preset",
+      "uaPresetCustom": "Custom / None"
     },
     "batchEdit": {
       "selectSiteRequired": "Select at least one site",

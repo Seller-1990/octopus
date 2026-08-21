@@ -40,6 +40,7 @@ import {
 } from '@/api/endpoints/site';
 import type { ProxyMode } from '@/api/endpoints/proxy-pool';
 import { translateSiteMessage } from './site-message';
+import { CHANNEL_UA_PRESETS } from '@/lib/ua-presets';
 
 type SiteAccountFormState = {
     site_id: number;
@@ -52,6 +53,8 @@ type SiteAccountFormState = {
     refresh_token: string;
     token_expires_at: string;
     platform_user_id: string;
+    tls_fingerprint: string;
+    user_agent: string;
     proxy_mode: ProxyMode;
     proxy_config_id: number | null;
     auto_proxy_recovery: boolean | null;
@@ -151,6 +154,8 @@ function createEmptyAccountForm(site: SiteRecord): SiteAccountFormState {
         refresh_token: '',
         token_expires_at: '',
         platform_user_id: '',
+        tls_fingerprint: '',
+        user_agent: '',
         proxy_mode: 'inherit',
         proxy_config_id: null,
         auto_proxy_recovery: null,
@@ -178,6 +183,8 @@ function createAccountForm(account: SiteAccount): SiteAccountFormState {
         platform_user_id: account.platform_user_id
             ? String(account.platform_user_id)
             : '',
+        tls_fingerprint: account.tls_fingerprint ?? '',
+        user_agent: account.user_agent ?? '',
         proxy_mode: account.proxy_mode ?? 'inherit',
         proxy_config_id: account.proxy_config_id ?? null,
         auto_proxy_recovery: account.auto_proxy_recovery ?? null,
@@ -389,6 +396,8 @@ export function AccountEditDialog({ open, onOpenChange, site, account }: Account
                 refresh_token: isAccessToken ? accountForm.refresh_token.trim() : '',
                 token_expires_at: isAccessToken ? parsedTokenExpiresAt : 0,
                 platform_user_id: shouldIncludePlatformUserID ? parsedPlatformUserID : null,
+                tls_fingerprint: accountForm.tls_fingerprint,
+                user_agent: accountForm.user_agent.trim(),
                 proxy_mode: accountForm.proxy_mode,
                 proxy_config_id:
                     accountForm.proxy_mode === 'pool' ? accountForm.proxy_config_id : null,
@@ -889,6 +898,63 @@ export function AccountEditDialog({ open, onOpenChange, site, account }: Account
                             <span className="text-xs text-muted-foreground">
                                 {tForm('proxyHint')}
                             </span>
+                        </div>
+
+                        <div className="grid gap-3 text-sm">
+                            <div className="grid gap-2">
+                                <span className="font-medium">{tForm('tlsFingerprint')}</span>
+                                <Select
+                                    value={accountForm.tls_fingerprint || 'none'}
+                                    onValueChange={(value) =>
+                                        setAccountForm((current) =>
+                                            current
+                                                ? {
+                                                      ...current,
+                                                      tls_fingerprint: value === 'none' ? '' : value,
+                                                  }
+                                                : current,
+                                        )
+                                    }
+                                >
+                                    <SelectTrigger className="w-full rounded-xl">
+                                        <SelectValue />
+                                    </SelectTrigger>
+                                    <SelectContent className="rounded-xl">
+                                        <SelectItem className="rounded-xl" value="none">{tForm('tlsFingerprintNone')}</SelectItem>
+                                        <SelectItem className="rounded-xl" value="chrome">{tForm('tlsFingerprintChrome')}</SelectItem>
+                                        <SelectItem className="rounded-xl" value="firefox">{tForm('tlsFingerprintFirefox')}</SelectItem>
+                                    </SelectContent>
+                                </Select>
+                            </div>
+
+                            <div className="grid gap-2">
+                                <span className="font-medium">{tForm('uaPreset')}</span>
+                                <Select
+                                    value={CHANNEL_UA_PRESETS.includes(accountForm.user_agent) ? accountForm.user_agent : 'custom'}
+                                    onValueChange={(value) =>
+                                        setAccountForm((current) =>
+                                            current
+                                                ? {
+                                                      ...current,
+                                                      user_agent: value === 'custom' ? '' : value,
+                                                  }
+                                                : current,
+                                        )
+                                    }
+                                >
+                                    <SelectTrigger className="w-full rounded-xl">
+                                        <SelectValue />
+                                    </SelectTrigger>
+                                    <SelectContent className="rounded-xl">
+                                        <SelectItem className="rounded-xl" value="custom">{tForm('uaPresetCustom')}</SelectItem>
+                                        {CHANNEL_UA_PRESETS.map((preset) => (
+                                            <SelectItem key={preset} className="rounded-xl" value={preset}>
+                                                {preset}
+                                            </SelectItem>
+                                        ))}
+                                    </SelectContent>
+                                </Select>
+                            </div>
                         </div>
 
                         <label className="grid gap-2 text-sm">

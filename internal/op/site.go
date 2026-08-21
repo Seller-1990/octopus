@@ -9,6 +9,7 @@ import (
 
 	"github.com/bestruirui/octopus/internal/db"
 	"github.com/bestruirui/octopus/internal/model"
+	"github.com/bestruirui/octopus/internal/utils/log"
 	"gorm.io/gorm"
 )
 
@@ -644,6 +645,14 @@ func SiteAccountUpdate(req *model.SiteAccountUpdateRequest, ctx context.Context)
 		merged.PlatformUserID = req.PlatformUserID
 		selectFields = append(selectFields, "platform_user_id")
 	}
+	if req.TLSFingerprint != nil {
+		merged.TLSFingerprint = *req.TLSFingerprint
+		selectFields = append(selectFields, "tls_fingerprint")
+	}
+	if req.UserAgent != nil {
+		merged.UserAgent = strings.TrimSpace(*req.UserAgent)
+		selectFields = append(selectFields, "user_agent")
+	}
 	if req.ProxyMode != nil {
 		merged.ProxyMode = *req.ProxyMode
 		selectFields = append(selectFields, "proxy_mode")
@@ -761,6 +770,12 @@ func SiteAccountUpdate(req *model.SiteAccountUpdateRequest, ctx context.Context)
 	if req.PlatformUserIDSet {
 		updates.PlatformUserID = merged.PlatformUserID
 	}
+	if req.TLSFingerprint != nil {
+		updates.TLSFingerprint = merged.TLSFingerprint
+	}
+	if req.UserAgent != nil {
+		updates.UserAgent = merged.UserAgent
+	}
 	if req.ProxyMode != nil {
 		updates.ProxyMode = merged.ProxyMode
 	}
@@ -840,6 +855,14 @@ func SiteAccountUpdate(req *model.SiteAccountUpdateRequest, ctx context.Context)
 		revokedVerificationSessionIDs,
 		fmt.Errorf("verification account credentials were updated"),
 	)
+
+	if req.TLSFingerprint != nil || req.UserAgent != nil {
+		if updated, getErr := SiteAccountGet(req.ID, ctx); getErr == nil {
+			if propagateErr := PropagateAccountRelaySettings(ctx, updated); propagateErr != nil {
+				log.Warnf("failed to propagate account relay settings (account=%d): %v", updated.ID, propagateErr)
+			}
+		}
+	}
 	return SiteAccountGet(req.ID, ctx)
 }
 

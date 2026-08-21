@@ -1924,7 +1924,13 @@
       "minCheckinInterval": "最小簽到間隔（小時）",
       "randomDelayWindow": "隨機延遲視窗（分鐘）",
       "proxyHint": "用於此帳號的同步、簽到和模型拉取；自動投影的渠道會跟隨此處解析後的代理。",
-      "createAccount": "建立帳號"
+      "createAccount": "建立帳號",
+      "tlsFingerprint": "TLS 指紋",
+      "tlsFingerprintNone": "不偽裝（默認）",
+      "tlsFingerprintChrome": "Chrome",
+      "tlsFingerprintFirefox": "Firefox",
+      "uaPreset": "UA 偽裝預設",
+      "uaPresetCustom": "自定義 / 不設置"
     },
     "batchEdit": {
       "selectSiteRequired": "請先選擇站點",

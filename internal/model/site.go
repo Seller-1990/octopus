@@ -231,6 +231,8 @@ type SiteAccount struct {
 	LastAuthFailureClass        string             `json:"last_auth_failure_class,omitempty" gorm:"size:64"`
 	LastAuthFailureAt           *time.Time         `json:"last_auth_failure_at,omitempty"`
 	PlatformUserID              *int               `json:"platform_user_id"`
+	TLSFingerprint              string             `json:"tls_fingerprint" gorm:"type:varchar(32);not null;default:''"`
+	UserAgent                   string             `json:"user_agent" gorm:"size:256;not null;default:''"`
 	ProxyMode                   ProxyUsageMode     `json:"proxy_mode" gorm:"type:varchar(16);not null;default:'inherit'"`
 	ProxyConfigID               *int               `json:"proxy_config_id"`
 	AutoProxyRecovery           *bool              `json:"auto_proxy_recovery,omitempty"`
@@ -463,6 +465,8 @@ type SiteAccountUpdateRequest struct {
 	TokenExpiresAt             *int64              `json:"token_expires_at,omitempty"`
 	PlatformUserID             *int                `json:"platform_user_id,omitempty"`
 	PlatformUserIDSet          bool                `json:"-"`
+	TLSFingerprint             *string             `json:"tls_fingerprint,omitempty"`
+	UserAgent                  *string             `json:"user_agent,omitempty"`
 	ProxyMode                  *ProxyUsageMode     `json:"proxy_mode,omitempty"`
 	ProxyConfigID              *int                `json:"proxy_config_id,omitempty"`
 	ProxyConfigIDSet           bool                `json:"-"`
@@ -958,6 +962,7 @@ func (s *Site) Normalize() {
 			s.ExternalCheckinURL = &trimmed
 		}
 	}
+	s.TLSFingerprint = normalizeSiteTLSFingerprint(s.TLSFingerprint)
 	if strings.TrimSpace(string(s.ProxyMode)) == "" {
 		s.ProxyMode = ProxyUsageModeDirect
 	}
@@ -1066,6 +1071,8 @@ func (a *SiteAccount) Normalize() {
 	if a.PlatformUserID != nil && *a.PlatformUserID <= 0 {
 		a.PlatformUserID = nil
 	}
+	a.TLSFingerprint = normalizeSiteTLSFingerprint(a.TLSFingerprint)
+	a.UserAgent = strings.TrimSpace(a.UserAgent)
 	if a.AccountProxy != nil {
 		trimmed := strings.TrimSpace(*a.AccountProxy)
 		if trimmed == "" {
@@ -1145,4 +1152,13 @@ func (a *SiteAccount) Validate() error {
 		}
 	}
 	return nil
+}
+
+func normalizeSiteTLSFingerprint(value string) string {
+	switch value {
+	case "chrome", "firefox":
+		return value
+	default:
+		return ""
+	}
 }

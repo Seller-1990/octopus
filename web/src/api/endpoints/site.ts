@@ -97,6 +97,8 @@ export type SiteAccount = {
   refresh_token: string;
   token_expires_at: number;
   platform_user_id?: number | null;
+  tls_fingerprint: string;
+  user_agent: string;
   proxy_mode: ProxyMode;
   proxy_config_id?: number | null;
   auto_proxy_recovery?: boolean | null;

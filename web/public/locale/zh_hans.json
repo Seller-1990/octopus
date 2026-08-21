@@ -1924,7 +1924,13 @@
       "minCheckinInterval": "最小签到间隔（小时）",
       "randomDelayWindow": "随机延迟窗口（分钟）",
       "proxyHint": "用于该账号的同步、签到和模型拉取；自动投影的渠道会跟随这里解析后的代理。",
-      "createAccount": "创建账号"
+      "createAccount": "创建账号",
+      "tlsFingerprint": "TLS 指纹",
+      "tlsFingerprintNone": "不伪装（默认）",
+      "tlsFingerprintChrome": "Chrome",
+      "tlsFingerprintFirefox": "Firefox",
+      "uaPreset": "UA 伪装预设",
+      "uaPresetCustom": "自定义 / 不设置"
     },
     "batchEdit": {
       "selectSiteRequired": "请先选择站点",
