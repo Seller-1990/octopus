@@ -134,6 +134,11 @@ func SyncAccount(ctx context.Context, accountID int) (*model.SiteSyncResult, err
 }
 
 func CheckinAccount(ctx context.Context, accountID int) (*model.SiteCheckinResult, error) {
+	return checkinAccount(ctx, accountID, "manual")
+}
+
+func checkinAccount(ctx context.Context, accountID int, source string) (*model.SiteCheckinResult, error) {
+	startedAt := time.Now()
 	siteRecord, account, err := loadSiteAccount(ctx, accountID)
 	if err != nil {
 		return nil, sanitizeSiteError(err)
@@ -151,6 +156,7 @@ func CheckinAccount(ctx context.Context, accountID int) (*model.SiteCheckinResul
 		if updateErr != nil {
 			return nil, sanitizeSiteError(updateErr)
 		}
+		persistCheckinLog(ctx, siteRecord.ID, account.ID, status, message, "", source, time.Since(startedAt))
 		return &model.SiteCheckinResult{AccountID: account.ID, SiteID: siteRecord.ID, Status: status, Message: message}, nil
 	}
 
@@ -160,7 +166,23 @@ func CheckinAccount(ctx context.Context, accountID int) (*model.SiteCheckinResul
 	if err := updateAccountCheckinState(ctx, account, result.Status, result.Message, result.Status == model.SiteExecutionStatusSuccess, resolvedAccessToken); err != nil {
 		return nil, sanitizeSiteError(err)
 	}
+	persistCheckinLog(ctx, siteRecord.ID, account.ID, result.Status, result.Message, result.Reward, source, time.Since(startedAt))
 	return result, nil
+}
+
+func persistCheckinLog(ctx context.Context, siteID, accountID int, status model.SiteExecutionStatus, message, reward, source string, elapsed time.Duration) {
+	logEntry := model.SiteCheckinLog{
+		SiteID:        siteID,
+		SiteAccountID: accountID,
+		Status:        status,
+		Message:       message,
+		Reward:        reward,
+		LatencyMS:     elapsed.Milliseconds(),
+		Source:        source,
+	}
+	if err := op.SiteCheckinLogAdd(ctx, logEntry); err != nil {
+		log.Warnf("failed to persist checkin log (account=%d): %v", accountID, err)
+	}
 }
 
 // 全量同步/签到的上次执行时间（含定时与手动触发），仅内存记录，重启后清零
@@ -285,7 +307,7 @@ func CheckinAllWithOptions(ctx context.Context, opts SiteBatchOptions) SiteBatch
 			recordBatchCanceledSkips(summary, items[i:])
 			return *summary
 		}
-		result, err := CheckinAccount(ctx, item.account.ID)
+		result, err := checkinAccount(ctx, item.account.ID, string(trigger))
 		if err != nil {
 			summary.recordFailure(item.site.ID, item.site.Platform, item.account.ID, err)
 			if IsCloudflareProtectionError(err) || siteBatchReason(err) == SiteBatchReasonCloudflareProtection {

@@ -48,6 +48,9 @@ func checkinAccountState(ctx context.Context, siteRecord *model.Site, account *m
 	if siteRecord == nil || account == nil {
 		return nil, "", fmt.Errorf("site or account is nil")
 	}
+	if siteRecord.ExternalCheckinURL != nil && strings.TrimSpace(*siteRecord.ExternalCheckinURL) != "" {
+		return checkinExternal(ctx, siteRecord, account)
+	}
 
 	switch siteRecord.Platform {
 	case model.SitePlatformDoneHub, model.SitePlatformSub2API, model.SitePlatformAPI:
@@ -76,6 +79,39 @@ func checkinAccountState(ctx context.Context, siteRecord *model.Site, account *m
 	default:
 		return nil, "", newUnsupportedSitePlatformError(siteRecord.Platform)
 	}
+}
+
+// checkinExternal 使用站点配置的外部签到 URL 执行通用 JSON 签到。
+// 适用于未内置支持的新 API 类站点：POST 到自定义地址，解析 success/message/data.reward。
+func checkinExternal(ctx context.Context, siteRecord *model.Site, account *model.SiteAccount) (*model.SiteCheckinResult, string, error) {
+	endpoint := strings.TrimRight(strings.TrimSpace(*siteRecord.ExternalCheckinURL), "/")
+	if endpoint == "" {
+		return nil, "", fmt.Errorf("external checkin url is empty")
+	}
+
+	accessToken, err := resolveManagedAccessToken(ctx, siteRecord, account)
+	if err != nil {
+		accessToken = resolveDirectToken(account)
+		if strings.TrimSpace(accessToken) == "" {
+			return nil, "", fmt.Errorf("external check-in requires a usable credential")
+		}
+	}
+
+	payload, err := requestJSONWithManagedAccessToken(ctx, siteRecord, http.MethodPost, endpoint, nil, accessToken, account)
+	if err != nil {
+		lowered := strings.ToLower(err.Error())
+		if strings.Contains(lowered, "404") || strings.Contains(lowered, "not found") {
+			return &model.SiteCheckinResult{Status: model.SiteExecutionStatusSkipped, Message: "checkin endpoint not found"}, accessToken, nil
+		}
+		return nil, accessToken, err
+	}
+
+	success := jsonBool(payload["success"])
+	message := firstNonEmptyString(jsonString(payload["message"]), "checkin success")
+	if success || isAlreadyCheckedInMessage(message) {
+		return &model.SiteCheckinResult{Status: model.SiteExecutionStatusSuccess, Message: message, Reward: jsonString(nestedValue(payload, "data", "reward"))}, accessToken, nil
+	}
+	return &model.SiteCheckinResult{Status: model.SiteExecutionStatusFailed, Message: message}, accessToken, nil
 }
 
 func syncManagementPlatform(ctx context.Context, siteRecord *model.Site, account *model.SiteAccount) (*syncSnapshot, error) {

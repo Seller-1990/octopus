@@ -1497,7 +1497,9 @@
       "tlsFingerprint": "TLS Fingerprint",
       "tlsFingerprintNone": "None (default)",
       "tlsFingerprintChrome": "Chrome",
-      "tlsFingerprintFirefox": "Firefox"
+      "tlsFingerprintFirefox": "Firefox",
+      "uaPreset": "User-Agent Preset",
+      "uaPresetCustom": "Custom / None"
     }
   },
   "siteChannel": {
@@ -1954,7 +1956,8 @@
         "failureRisk": "CF protection",
         "failureTransient": "Upstream errors",
         "failureOther": "Other errors",
-        "partial": "Partial"
+        "partial": "Partial",
+        "skipped": "Skipped"
       },
       "overview": "Check-in Overview",
       "totalStats": "{siteCount} sites · {accountCount} check-in accounts",
@@ -1968,7 +1971,10 @@
       "clearFilters": "Clear filters",
       "openManualCheckin": "Open manual check-ins ({count})",
       "removeTagFilter": "Stop filtering by \"{tag}\"",
-      "addTagFilter": "Filter by \"{tag}\""
+      "addTagFilter": "Filter by \"{tag}\"",
+      "history": "Check-in history",
+      "historyEmpty": "No check-in records",
+      "reward": "Reward"
     }
   },
   "siteRecovery": {

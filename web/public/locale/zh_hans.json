@@ -1497,7 +1497,9 @@
       "tlsFingerprint": "TLS 指纹",
       "tlsFingerprintNone": "不伪装（默认）",
       "tlsFingerprintChrome": "Chrome",
-      "tlsFingerprintFirefox": "Firefox"
+      "tlsFingerprintFirefox": "Firefox",
+      "uaPreset": "UA 伪装预设",
+      "uaPresetCustom": "自定义 / 不设置"
     }
   },
   "siteChannel": {
@@ -1954,7 +1956,8 @@
         "failureRisk": "CF 风控",
         "failureTransient": "上游故障",
         "failureOther": "其他错误",
-        "partial": "部分成功"
+        "partial": "部分成功",
+        "skipped": "跳过"
       },
       "overview": "签到总览",
       "totalStats": "{siteCount} 站点 · {accountCount} 签到账号",
@@ -1968,7 +1971,10 @@
       "clearFilters": "清空筛选",
       "openManualCheckin": "打开手动签到（{count}）",
       "removeTagFilter": "取消按“{tag}”筛选",
-      "addTagFilter": "按“{tag}”筛选"
+      "addTagFilter": "按“{tag}”筛选",
+      "history": "签到历史",
+      "historyEmpty": "暂无签到记录",
+      "reward": "奖励"
     }
   },
   "siteRecovery": {

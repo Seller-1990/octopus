@@ -21,6 +21,7 @@ import { Badge } from '@/components/ui/badge';
 import { toast } from '@/components/common/Toast';
 import { useTranslations } from 'next-intl';
 import { useEffect, useRef, useState } from 'react';
+import { CHANNEL_UA_PRESETS, currentUAHeader, setUAHeader } from '@/lib/ua-presets';
 import { RefreshCw, X, Plus } from 'lucide-react';
 
 export interface ChannelKeyFormItem {
@@ -85,6 +86,7 @@ export function ChannelForm({
     idPrefix = 'channel',
 }: ChannelFormProps) {
     const t = useTranslations('channel.form');
+    const currentUA = currentUAHeader(formData.custom_header)?.header_value ?? '';
 
     // Ensure the form always shows at least 1 row for base_urls / keys / custom_header.
     // This avoids "empty list" UI and also keeps URL + APIKEY layout consistent.
@@ -579,6 +581,39 @@ export function ChannelForm({
                         </div>
 
                         <div className="space-y-2">
+                            <div className="flex items-center justify-between">
+                                <label className="text-sm font-medium text-card-foreground">
+                                    {t('uaPreset')}
+                                </label>
+                            </div>
+                            <Select
+                                value={CHANNEL_UA_PRESETS.includes(currentUA) ? currentUA : 'custom'}
+                                onValueChange={(value) =>
+                                    onFormDataChange({
+                                        ...formData,
+                                        custom_header: setUAHeader(
+                                            formData.custom_header,
+                                            value === 'custom' ? '' : value,
+                                        ),
+                                    })
+                                }
+                            >
+                                <SelectTrigger
+                                    id={`${idPrefix}-ua-preset`}
+                                    className="rounded-xl w-full border border-border px-4 py-2 text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                                >
+                                    <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent className='rounded-xl'>
+                                    <SelectItem className='rounded-xl' value="custom">{t('uaPresetCustom')}</SelectItem>
+                                    {CHANNEL_UA_PRESETS.map((preset) => (
+                                        <SelectItem key={preset} className='rounded-xl' value={preset}>
+                                            {preset}
+                                        </SelectItem>
+                                    ))}
+                                </SelectContent>
+                            </Select>
+
                             <div className="flex items-center justify-between">
                                 <label className="text-sm font-medium text-card-foreground">
                                     {t('customHeader')} {formData.custom_header.length > 0 ? `(${formData.custom_header.length})` : ''}

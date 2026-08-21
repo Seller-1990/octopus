@@ -1497,7 +1497,9 @@
       "tlsFingerprint": "TLS 指紋",
       "tlsFingerprintNone": "不偽裝（默認）",
       "tlsFingerprintChrome": "Chrome",
-      "tlsFingerprintFirefox": "Firefox"
+      "tlsFingerprintFirefox": "Firefox",
+      "uaPreset": "UA 偽裝預設",
+      "uaPresetCustom": "自定義 / 不設置"
     }
   },
   "siteChannel": {
@@ -1954,7 +1956,8 @@
         "failureRisk": "CF 風控",
         "failureTransient": "上游故障",
         "failureOther": "其他錯誤",
-        "partial": "部分成功"
+        "partial": "部分成功",
+        "skipped": "跳過"
       },
       "overview": "簽到總覽",
       "totalStats": "{siteCount} 站點 · {accountCount} 簽到帳號",
@@ -1968,7 +1971,10 @@
       "clearFilters": "清除篩選",
       "openManualCheckin": "開啟手動簽到（{count}）",
       "removeTagFilter": "取消按「{tag}」篩選",
-      "addTagFilter": "按「{tag}」篩選"
+      "addTagFilter": "按「{tag}」篩選",
+      "history": "簽到歷史",
+      "historyEmpty": "暫無簽到記錄",
+      "reward": "獎勵"
     }
   },
   "siteRecovery": {

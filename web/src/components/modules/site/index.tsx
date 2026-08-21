@@ -85,6 +85,7 @@ import {
   type CheckinFilterStatus,
 } from "./checkin-status";
 import { translateSiteMessage } from "./site-message";
+import { AccountCheckinHistory } from "./AccountCheckinHistory";
 import { useSiteUIStore } from "./ui-store";
 import {
   isSiteJumpTarget,
@@ -2062,6 +2063,9 @@ export function Site() {
                                         随机延迟 0-
                                         {account.checkin_random_window_minutes} 分钟
                                       </div>
+                                    ) : null}
+                                    {supportsCheckin ? (
+                                      <AccountCheckinHistory accountId={account.id} />
                                     ) : null}
                                 </div>
                               </div>

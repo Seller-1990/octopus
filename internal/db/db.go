@@ -94,6 +94,7 @@ func InitDB(dbType, dsn string, debug bool) error {
 		&model.GroupHealthAttempt{},
 		&model.WSResponseAffinity{},
 		&model.SiteChannelOutlierState{},
+		&model.SiteCheckinLog{},
 		&model.RelayLogRepairAudit{},
 		&model.CanonicalModel{},
 		&model.ModelAlias{},

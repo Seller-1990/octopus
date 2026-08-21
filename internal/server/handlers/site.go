@@ -42,6 +42,7 @@ func init() {
 		AddRoute(router.NewRoute("/import/metapi", http.MethodPost).Handle(importMetAPI)).
 		AddRoute(router.NewRoute("/account/sync/:id", http.MethodPost).Handle(syncSiteAccount)).
 		AddRoute(router.NewRoute("/account/checkin/:id", http.MethodPost).Handle(checkinSiteAccount)).
+		AddRoute(router.NewRoute("/account/checkin-logs", http.MethodGet).Handle(listSiteCheckinLogs)).
 		AddRoute(router.NewRoute("/sync-all", http.MethodPost).Handle(syncAllSiteAccounts)).
 		AddRoute(router.NewRoute("/checkin-all", http.MethodPost).Handle(checkinAllSiteAccounts)).
 		AddRoute(router.NewRoute("/last-sync-time", http.MethodGet).Handle(getSiteLastSyncTime)).
@@ -426,6 +427,21 @@ func checkinSiteAccount(c *gin.Context) {
 		return
 	}
 	resp.Success(c, result)
+}
+
+func listSiteCheckinLogs(c *gin.Context) {
+	accountID, err := strconv.Atoi(c.Query("account_id"))
+	if err != nil || accountID <= 0 {
+		resp.InvalidParam(c)
+		return
+	}
+	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "20"))
+	logs, err := op.SiteCheckinLogList(c.Request.Context(), accountID, limit)
+	if err != nil {
+		resp.Error(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+	resp.Success(c, logs)
 }
 
 func syncAllSiteAccounts(c *gin.Context) {

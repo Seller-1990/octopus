@@ -206,6 +206,18 @@ export type SiteCheckinResult = {
   reward?: string;
 };
 
+export type SiteCheckinLog = {
+  id: number;
+  site_id: number;
+  site_account_id: number;
+  status: string;
+  message?: string;
+  reward?: string;
+  latency_ms: number;
+  source: string;
+  created_at: string;
+};
+
 export type AllAPIHubImportResult = {
   created_sites: number;
   reused_sites: number;
@@ -537,8 +549,24 @@ export function useCheckinSiteAccount() {
         `/api/v1/site/account/checkin/${id}`,
         {},
       ),
-    onSuccess: () => invalidateSiteQueries(queryClient),
+    onSuccess: (_data, id) => {
+      invalidateSiteQueries(queryClient);
+      queryClient.invalidateQueries({ queryKey: ["site", "checkin-logs", id] });
+    },
     onError: (error) => logger.error("站点账号签到失败:", error),
+  });
+}
+
+export function useSiteCheckinLogs(accountId: number, enabled = true) {
+  return useQuery({
+    queryKey: ["site", "checkin-logs", accountId],
+    queryFn: async () =>
+      apiClient.get<SiteCheckinLog[]>("/api/v1/site/account/checkin-logs", {
+        account_id: accountId,
+        limit: 10,
+      }),
+    enabled: enabled && accountId > 0,
+    refetchInterval: 30_000,
   });
 }
 
