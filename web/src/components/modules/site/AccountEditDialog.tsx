@@ -55,6 +55,8 @@ type SiteAccountFormState = {
     platform_user_id: string;
     tls_fingerprint: string;
     user_agent: string;
+    cf_cookie: string;
+    clear_cf_cookie: boolean;
     proxy_mode: ProxyMode;
     proxy_config_id: number | null;
     auto_proxy_recovery: boolean | null;
@@ -156,6 +158,8 @@ function createEmptyAccountForm(site: SiteRecord): SiteAccountFormState {
         platform_user_id: '',
         tls_fingerprint: '',
         user_agent: '',
+        cf_cookie: '',
+        clear_cf_cookie: false,
         proxy_mode: 'inherit',
         proxy_config_id: null,
         auto_proxy_recovery: null,
@@ -185,6 +189,8 @@ function createAccountForm(account: SiteAccount): SiteAccountFormState {
             : '',
         tls_fingerprint: account.tls_fingerprint ?? '',
         user_agent: account.user_agent ?? '',
+        cf_cookie: '',
+        clear_cf_cookie: false,
         proxy_mode: account.proxy_mode ?? 'inherit',
         proxy_config_id: account.proxy_config_id ?? null,
         auto_proxy_recovery: account.auto_proxy_recovery ?? null,
@@ -398,6 +404,9 @@ export function AccountEditDialog({ open, onOpenChange, site, account }: Account
                 platform_user_id: shouldIncludePlatformUserID ? parsedPlatformUserID : null,
                 tls_fingerprint: accountForm.tls_fingerprint,
                 user_agent: accountForm.user_agent.trim(),
+                ...(accountForm.cf_cookie.trim() !== '' || accountForm.clear_cf_cookie
+                    ? { cf_cookie: accountForm.cf_cookie.trim() }
+                    : {}),
                 proxy_mode: accountForm.proxy_mode,
                 proxy_config_id:
                     accountForm.proxy_mode === 'pool' ? accountForm.proxy_config_id : null,
@@ -954,6 +963,46 @@ export function AccountEditDialog({ open, onOpenChange, site, account }: Account
                                         ))}
                                     </SelectContent>
                                 </Select>
+                            </div>
+
+                            <div className="grid gap-2">
+                                <span className="font-medium">{tForm('cfCookie')}</span>
+                                <Input
+                                    type="text"
+                                    value={accountForm.cf_cookie}
+                                    onChange={(event) =>
+                                        setAccountForm((current) =>
+                                            current
+                                                ? {
+                                                      ...current,
+                                                      cf_cookie: event.target.value,
+                                                      clear_cf_cookie:
+                                                          event.target.value.trim() === '' &&
+                                                          Boolean(account?.has_stored_cf_cookie),
+                                                  }
+                                                : current,
+                                        )
+                                    }
+                                    placeholder={account?.has_stored_cf_cookie ? tForm('cfCookieStored') : tForm('cfCookiePlaceholder')}
+                                    className="rounded-xl"
+                                />
+                                <span className="text-xs text-muted-foreground">{tForm('cfCookieHint')}</span>
+                                {account?.has_stored_cf_cookie ? (
+                                    <Button
+                                        type="button"
+                                        variant="ghost"
+                                        size="sm"
+                                        onClick={() =>
+                                            setAccountForm((current) =>
+                                                current
+                                                    ? { ...current, cf_cookie: '', clear_cf_cookie: true }
+                                                    : current,
+                                            )
+                                        }
+                                    >
+                                        {tForm('cfCookieClear')}
+                                    </Button>
+                                ) : null}
                             </div>
                         </div>
 

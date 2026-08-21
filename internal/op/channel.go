@@ -287,6 +287,10 @@ func ChannelUpdate(req *model.ChannelUpdateRequest, ctx context.Context) (*model
 		selectFields = append(selectFields, "tls_fingerprint")
 		updates.TLSFingerprint = normalizeChannelTLSFingerprint(*req.TLSFingerprint)
 	}
+	if req.CFCookieEncrypted != nil {
+		selectFields = append(selectFields, "cf_cookie_encrypted")
+		updates.CFCookieEncrypted = *req.CFCookieEncrypted
+	}
 	if req.AllowLossy != nil {
 		selectFields = append(selectFields, "allow_lossy")
 		updates.AllowLossy = *req.AllowLossy

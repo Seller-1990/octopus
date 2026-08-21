@@ -129,21 +129,22 @@ func ProjectAccount(ctx context.Context, accountID int) ([]int, error) {
 			modelNames := extractSiteModelNames(bucketModels)
 			bindingKey := compositeBindingKey(groupKey, obType, shouldSplit)
 			channelPayload := model.Channel{
-				Name:           buildManagedChannelName(siteRecord, account, group, obType),
-				Type:           obType,
-				Enabled:        enabled,
-				BaseUrls:       baseUrls,
-				Keys:           buildChannelKeys(groupTokens, siteRecord.Platform),
-				Model:          strings.Join(modelNames, ","),
-				CustomModel:    "",
-				ProxyMode:      proxyMode,
-				ProxyConfigID:  proxyConfigID,
-				Proxy:          proxyMode != model.ProxyUsageModeDirect,
-				AutoSync:       false,
-				AutoGroup:      model.AutoGroupTypeNone,
-				TLSFingerprint: account.TLSFingerprint,
-				CustomHeader:   op.BuildAccountRelayHeaders(siteRecord.CustomHeader, account.UserAgent),
-				IsReserve:      siteRecord.IsReserve,
+				Name:              buildManagedChannelName(siteRecord, account, group, obType),
+				Type:              obType,
+				Enabled:           enabled,
+				BaseUrls:          baseUrls,
+				Keys:              buildChannelKeys(groupTokens, siteRecord.Platform),
+				Model:             strings.Join(modelNames, ","),
+				CustomModel:       "",
+				ProxyMode:         proxyMode,
+				ProxyConfigID:     proxyConfigID,
+				Proxy:             proxyMode != model.ProxyUsageModeDirect,
+				AutoSync:          false,
+				AutoGroup:         model.AutoGroupTypeNone,
+				TLSFingerprint:    account.TLSFingerprint,
+				CFCookieEncrypted: account.CFCookieEncrypted,
+				CustomHeader:      op.BuildAccountRelayHeaders(siteRecord.CustomHeader, account.UserAgent),
+				IsReserve:         siteRecord.IsReserve,
 			}
 
 			binding, exists := bindingMap[bindingKey]
@@ -203,7 +204,7 @@ func ProjectAccount(ctx context.Context, accountID int) ([]int, error) {
 				continue
 			}
 
-			updateReq := &model.ChannelUpdateRequest{ID: existingChannel.ID, Name: &channelPayload.Name, Type: &channelPayload.Type, Enabled: &channelPayload.Enabled, BaseUrls: &channelPayload.BaseUrls, Model: &channelPayload.Model, CustomModel: &channelPayload.CustomModel, ProxyMode: &channelPayload.ProxyMode, ProxyConfigID: channelPayload.ProxyConfigID, AutoSync: &channelPayload.AutoSync, TLSFingerprint: &channelPayload.TLSFingerprint, CustomHeader: &channelPayload.CustomHeader, IsReserve: &channelPayload.IsReserve, BypassManagedCheck: true}
+			updateReq := &model.ChannelUpdateRequest{ID: existingChannel.ID, Name: &channelPayload.Name, Type: &channelPayload.Type, Enabled: &channelPayload.Enabled, BaseUrls: &channelPayload.BaseUrls, Model: &channelPayload.Model, CustomModel: &channelPayload.CustomModel, ProxyMode: &channelPayload.ProxyMode, ProxyConfigID: channelPayload.ProxyConfigID, AutoSync: &channelPayload.AutoSync, TLSFingerprint: &channelPayload.TLSFingerprint, CFCookieEncrypted: &channelPayload.CFCookieEncrypted, CustomHeader: &channelPayload.CustomHeader, IsReserve: &channelPayload.IsReserve, BypassManagedCheck: true}
 			updateReq.KeysToAdd, updateReq.KeysToUpdate, updateReq.KeysToDelete = diffManagedChannelKeys(existingChannel.Keys, channelPayload.Keys)
 			if _, err := op.ChannelUpdate(updateReq, ctx); err != nil {
 				return nil, fmt.Errorf("failed to update managed channel: %w", err)

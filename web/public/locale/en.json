@@ -1930,7 +1930,12 @@
       "tlsFingerprintChrome": "Chrome",
       "tlsFingerprintFirefox": "Firefox",
       "uaPreset": "User-Agent Preset",
-      "uaPresetCustom": "Custom / None"
+      "uaPresetCustom": "Custom / None",
+      "cfCookie": "Cloudflare Cookie (cf_clearance)",
+      "cfCookiePlaceholder": "e.g. cf_clearance=... (optional)",
+      "cfCookieStored": "Stored (leave blank to keep)",
+      "cfCookieHint": "Copy from browser DevTools; pair with UA preset and same proxy exit IP.",
+      "cfCookieClear": "Clear stored cookie"
     },
     "batchEdit": {
       "selectSiteRequired": "Select at least one site",

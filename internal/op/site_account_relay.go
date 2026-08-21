@@ -35,9 +35,11 @@ func PropagateAccountRelaySettings(ctx context.Context, account *model.SiteAccou
 			continue
 		}
 		fingerprint := account.TLSFingerprint
+		cfCookieEncrypted := account.CFCookieEncrypted
 		req := &model.ChannelUpdateRequest{
 			ID:                 channel.ID,
 			TLSFingerprint:     &fingerprint,
+			CFCookieEncrypted:  &cfCookieEncrypted,
 			CustomHeader:       &headers,
 			BypassManagedCheck: true,
 		}

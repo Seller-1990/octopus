@@ -554,6 +554,14 @@ func SiteAccountCreate(account *model.SiteAccount, ctx context.Context) error {
 	if account.CredentialRevision == 0 {
 		account.CredentialRevision = 1
 	}
+	if strings.TrimSpace(account.CFCookie) != "" {
+		encrypted, encryptErr := EncryptSecret(strings.TrimSpace(account.CFCookie))
+		if encryptErr != nil {
+			return fmt.Errorf("encrypt cf cookie: %w", encryptErr)
+		}
+		account.CFCookieEncrypted = encrypted
+		account.CFCookie = ""
+	}
 	if account.ProxyMode == model.ProxyUsageModePool && account.ProxyConfigID != nil {
 		if _, err := ProxyURLForConfig(*account.ProxyConfigID, ctx); err != nil {
 			return err
@@ -652,6 +660,19 @@ func SiteAccountUpdate(req *model.SiteAccountUpdateRequest, ctx context.Context)
 	if req.UserAgent != nil {
 		merged.UserAgent = strings.TrimSpace(*req.UserAgent)
 		selectFields = append(selectFields, "user_agent")
+	}
+	var cfCookieEncrypted string
+	if req.CFCookie != nil {
+		selectFields = append(selectFields, "cf_cookie_encrypted")
+		if strings.TrimSpace(*req.CFCookie) == "" {
+			cfCookieEncrypted = ""
+		} else {
+			encrypted, encryptErr := EncryptSecret(strings.TrimSpace(*req.CFCookie))
+			if encryptErr != nil {
+				return nil, fmt.Errorf("encrypt cf cookie: %w", encryptErr)
+			}
+			cfCookieEncrypted = encrypted
+		}
 	}
 	if req.ProxyMode != nil {
 		merged.ProxyMode = *req.ProxyMode
@@ -776,6 +797,9 @@ func SiteAccountUpdate(req *model.SiteAccountUpdateRequest, ctx context.Context)
 	if req.UserAgent != nil {
 		updates.UserAgent = merged.UserAgent
 	}
+	if req.CFCookie != nil {
+		updates.CFCookieEncrypted = cfCookieEncrypted
+	}
 	if req.ProxyMode != nil {
 		updates.ProxyMode = merged.ProxyMode
 	}
@@ -856,7 +880,7 @@ func SiteAccountUpdate(req *model.SiteAccountUpdateRequest, ctx context.Context)
 		fmt.Errorf("verification account credentials were updated"),
 	)
 
-	if req.TLSFingerprint != nil || req.UserAgent != nil {
+	if req.TLSFingerprint != nil || req.UserAgent != nil || req.CFCookie != nil {
 		if updated, getErr := SiteAccountGet(req.ID, ctx); getErr == nil {
 			if propagateErr := PropagateAccountRelaySettings(ctx, updated); propagateErr != nil {
 				log.Warnf("failed to propagate account relay settings (account=%d): %v", updated.ID, propagateErr)

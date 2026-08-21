@@ -93,6 +93,8 @@ export type SiteAccount = {
   password: string;
   access_token: string;
   has_stored_session_cookie?: boolean;
+  has_stored_cf_cookie?: boolean;
+  cf_cookie?: string;
   api_key: string;
   refresh_token: string;
   token_expires_at: number;

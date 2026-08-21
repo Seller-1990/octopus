@@ -227,6 +227,8 @@ type SiteAccount struct {
 	RefreshToken                string             `json:"refresh_token"`
 	TokenExpiresAt              int64              `json:"token_expires_at" gorm:"default:0"`
 	SessionCookieEncrypted      string             `json:"-" gorm:"type:text"`
+	CFCookieEncrypted           string             `json:"-" gorm:"type:text"`
+	CFCookie                    string             `json:"cf_cookie,omitempty" gorm:"-"`
 	CredentialRevision          int64              `json:"-" gorm:"not null;default:0"`
 	LastAuthFailureClass        string             `json:"last_auth_failure_class,omitempty" gorm:"size:64"`
 	LastAuthFailureAt           *time.Time         `json:"last_auth_failure_at,omitempty"`
@@ -275,13 +277,17 @@ type SiteAccount struct {
 
 func (a SiteAccount) MarshalJSON() ([]byte, error) {
 	type alias SiteAccount
-	return json.Marshal(struct {
+	aux := struct {
 		alias
 		HasStoredSessionCookie bool `json:"has_stored_session_cookie"`
+		HasStoredCFCookie      bool `json:"has_stored_cf_cookie"`
 	}{
 		alias:                  alias(a),
 		HasStoredSessionCookie: a.SessionCookieEncrypted != "",
-	})
+		HasStoredCFCookie:      a.CFCookieEncrypted != "",
+	}
+	aux.alias.CFCookie = ""
+	return json.Marshal(aux)
 }
 
 func IsSiteCookieCredential(value string) bool {
@@ -467,6 +473,7 @@ type SiteAccountUpdateRequest struct {
 	PlatformUserIDSet          bool                `json:"-"`
 	TLSFingerprint             *string             `json:"tls_fingerprint,omitempty"`
 	UserAgent                  *string             `json:"user_agent,omitempty"`
+	CFCookie                   *string             `json:"cf_cookie"`
 	ProxyMode                  *ProxyUsageMode     `json:"proxy_mode,omitempty"`
 	ProxyConfigID              *int                `json:"proxy_config_id,omitempty"`
 	ProxyConfigIDSet           bool                `json:"-"`

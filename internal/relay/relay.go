@@ -1464,6 +1464,10 @@ func (ra *relayAttempt) sendRequest(req *http.Request) (*http.Response, error) {
 	}
 
 	req = ra.attachFirstTokenBudget(req)
+	if err := ra.applyChannelCFCookie(req); err != nil {
+		ra.closeFirstTokenBudget()
+		return nil, err
+	}
 
 	response, err := httpClient.Do(req)
 	if err != nil {
@@ -1500,6 +1504,10 @@ func (ra *relayAttempt) sendFingerprintedRequest(req *http.Request) (*http.Respo
 	}
 
 	req = ra.attachFirstTokenBudget(req)
+	if err := ra.applyChannelCFCookie(req); err != nil {
+		ra.closeFirstTokenBudget()
+		return nil, err
+	}
 
 	flatHeaders := make(map[string]string, len(req.Header))
 	for key, values := range req.Header {
@@ -1538,6 +1546,23 @@ func (ra *relayAttempt) sendFingerprintedRequest(req *http.Request) (*http.Respo
 	}
 
 	return response, nil
+}
+
+// applyChannelCFCookie 将渠道配置的 Cloudflare clearance cookie 注入请求。
+// Cookie 与 TLS 指纹、UA 配套使用，用于通过 CF 挑战页。
+func (ra *relayAttempt) applyChannelCFCookie(req *http.Request) error {
+	if ra.channel == nil || ra.channel.CFCookieEncrypted == "" {
+		return nil
+	}
+	cookie, err := op.DecryptSecret(ra.channel.CFCookieEncrypted)
+	if err != nil {
+		return fmt.Errorf("decrypt channel cf cookie: %w", err)
+	}
+	cookie = strings.TrimSpace(cookie)
+	if cookie != "" {
+		req.Header.Set("Cookie", cookie)
+	}
+	return nil
 }
 
 // handleStreamResponseV2 uses StreamProcessor for unified stream handling.

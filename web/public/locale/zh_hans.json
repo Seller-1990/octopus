@@ -1930,7 +1930,12 @@
       "tlsFingerprintChrome": "Chrome",
       "tlsFingerprintFirefox": "Firefox",
       "uaPreset": "UA 伪装预设",
-      "uaPresetCustom": "自定义 / 不设置"
+      "uaPresetCustom": "自定义 / 不设置",
+      "cfCookie": "Cloudflare Cookie (cf_clearance)",
+      "cfCookiePlaceholder": "例如 cf_clearance=...（可选）",
+      "cfCookieStored": "已存储（留空保持不变）",
+      "cfCookieHint": "从浏览器开发者工具复制；需与 UA 预设和代理出口 IP 配套使用。",
+      "cfCookieClear": "清除已存 Cookie"
     },
     "batchEdit": {
       "selectSiteRequired": "请先选择站点",
