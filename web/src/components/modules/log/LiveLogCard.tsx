@@ -6,8 +6,9 @@ import { ChevronDown, ChevronUp, Coins, Loader2, Square } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
-import { channelDisplayName } from '@/lib/channel-name';
+import { channelDisplayName, splitChannelDisplayName } from '@/lib/channel-name';
 import { formatAttemptFailure, formatFailureSummary } from '@/lib/attempt-failure';
+import { getModelIcon } from '@/lib/model-icons';
 import {
     useLiveLogDetail,
     useStopAttempt,
@@ -40,6 +41,17 @@ function formatKeyMultiplier(value: number | undefined | null): string | null {
     return `${rounded}x`;
 }
 
+function LiveChannelName({ channelName, color, className }: { channelName: string; color: string; className?: string }) {
+    const parts = splitChannelDisplayName(channelName);
+    if (!parts.siteName) return <span className={className}>{channelDisplayName(channelName)}</span>;
+    return (
+        <span className={cn('inline-flex min-w-0 items-center gap-1.5', className)}>
+            <span className="shrink-0 font-bold" style={{ color }}>{parts.siteName}</span>
+            <span className="text-muted-foreground truncate">/{parts.groupName}</span>
+        </span>
+    );
+}
+
 const stateStyles: Record<LiveRequestState, string> = {
     running: 'border-blue-500/40 bg-blue-500/10 text-blue-600 dark:text-blue-300',
     success: 'border-emerald-500/40 bg-emerald-500/10 text-emerald-600 dark:text-emerald-300',
@@ -62,6 +74,10 @@ export function LiveLogCard({ log }: { log: LiveLogOverview }) {
     const hasHistoryAttempts = historyAttempts.length > 0;
     const attemptCount = hasHistoryAttempts ? historyAttempts.length : attempts.length;
     const keyMultiplierLabel = formatKeyMultiplier(log.price_group_multiplier);
+    const { color: brandColor } = getModelIcon(log.request_model_name || '');
+    const channelNameParts = splitChannelDisplayName(log.channel_name);
+    const channelSiteName = channelNameParts.siteName;
+    const channelGroupName = channelNameParts.groupName;
 
     useEffect(() => {
         if (!running) return;
@@ -89,9 +105,21 @@ export function LiveLogCard({ log }: { log: LiveLogOverview }) {
                 <span className="font-semibold text-card-foreground truncate" title={log.request_model_name}>
                     {log.request_model_name || '--'}
                 </span>
-                <span className="text-muted-foreground truncate" title={log.channel_name || log.actual_model_name || undefined}>
-                    {channelDisplayName(log.channel_name) || log.actual_model_name || '--'}
-                </span>
+                {channelSiteName ? (
+                    <span className="flex min-w-0 items-center gap-1.5" title={log.channel_name || log.actual_model_name || undefined}>
+                        <Badge
+                            className="shrink-0 h-5 px-1.5 text-[10px] font-bold uppercase tracking-wide border-0"
+                            style={{ backgroundColor: `${brandColor}25`, color: brandColor }}
+                        >
+                            {channelSiteName}
+                        </Badge>
+                        <span className="text-muted-foreground truncate">{channelGroupName}</span>
+                    </span>
+                ) : (
+                    <span className="text-muted-foreground truncate" title={log.channel_name || log.actual_model_name || undefined}>
+                        {channelDisplayName(log.channel_name) || log.actual_model_name || '--'}
+                    </span>
+                )}
                 {keyMultiplierLabel ? (
                     <Badge
                         variant="secondary"
@@ -138,8 +166,9 @@ export function LiveLogCard({ log }: { log: LiveLogOverview }) {
                 <div className="mt-3 border-t border-border pt-3">
                     {running && runningAttempt ? (
                         <div className="mb-3 flex items-center gap-3">
-                            <span className="text-xs text-muted-foreground">
-                                {t('attemptIndex', { index: runningAttempt.attempt_index })}: {channelDisplayName(runningAttempt.channel_name)}
+                            <span className="flex min-w-0 items-center gap-1 text-xs text-muted-foreground">
+                                {t('attemptIndex', { index: runningAttempt.attempt_index })}:
+                                <LiveChannelName channelName={runningAttempt.channel_name} color={brandColor} className="font-semibold text-foreground" />
                             </span>
                             <Button
                                 type="button"
@@ -176,9 +205,7 @@ export function LiveLogCard({ log }: { log: LiveLogOverview }) {
                                             <span className="text-muted-foreground">
                                                 {t('attemptIndex', { index: attempt.attempt_num })}
                                             </span>
-                                            <span className="font-semibold text-foreground" title={attempt.channel_name}>
-                                                {channelDisplayName(attempt.channel_name)}
-                                            </span>
+                                            <LiveChannelName channelName={attempt.channel_name} color={brandColor} className="font-semibold text-foreground" />
                                             <span className="text-muted-foreground">{attempt.model_name}</span>
                                             <span className="text-muted-foreground">{attempt.status}</span>
                                             {attempt.sticky ? (
@@ -206,9 +233,7 @@ export function LiveLogCard({ log }: { log: LiveLogOverview }) {
                                             <span className="text-muted-foreground">
                                                 {t('attemptIndex', { index: attempt.attempt_index })}
                                             </span>
-                                            <span className="font-semibold text-foreground" title={attempt.channel_name}>
-                                                {channelDisplayName(attempt.channel_name)}
-                                            </span>
+                                            <LiveChannelName channelName={attempt.channel_name} color={brandColor} className="font-semibold text-foreground" />
                                             {runningAttempt?.attempt_index === attempt.attempt_index ? (
                                                 <Loader2 className="ml-auto size-3 animate-spin text-muted-foreground" />
                                             ) : null}
