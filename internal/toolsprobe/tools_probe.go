@@ -24,7 +24,7 @@ func init() {
 }
 
 // toolsProbeSemaphore 限制并发探测请求数（节流）。
-var toolsProbeSemaphore = make(chan struct{}, 4)
+var toolsProbeSemaphore = make(chan struct{}, 1)
 
 const probeTimeout = 12 * time.Second
 

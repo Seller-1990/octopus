@@ -213,26 +213,21 @@ func ResolveProbePrompt() string {
 	return probePrompts[rand.Intn(len(probePrompts))]
 }
 
-// probeToolsForNewItems 对新添加的 GroupItem 异步探测并回填（含缓存刷新闭环）。
+// probeToolsForNewItems 对新添加的 GroupItem 串行探测并回填（含缓存刷新闭环）。
 // 已探测（SupportsTools 非 nil）且 probed_at 在冷却期内的条目跳过；调用方需在 item 创建提交后调用。
+// 探测逐条串行执行，每条之间间隔 5 秒，避免对渠道造成突发请求压力。
 func probeToolsForNewItems(ctx context.Context, items []model.GroupItem) {
 	if len(items) == 0 {
 		return
 	}
 	now := time.Now()
+	var toProbe []model.GroupItem
 	for _, item := range items {
 		if item.ChannelID == 0 || item.ModelName == "" {
 			continue
 		}
-		// FIX-E：跳过冷却期内已探测条目，避免付费重探 + 翻转继承值。
-		// 冷却只认 probed_at（U7/Reset 写 nil+probed_at=now 也应进入冷却）。
-		// 调用方（preset 激活/新增 items）可能传裸结构体（无 ProbedAt），
-		// 故合并 DB 已有行的最近探测时间——继承的旧值/预设镜像值才生效。
 		probedAt := item.SupportsToolsProbedAt
 		if probedAt == nil {
-			// 调用方（preset 激活/新增 items）可能传裸结构体（无 ProbedAt），合并 DB 已有行的最近探测时间。
-			// 复审修复：`supports_tools_probed_at IS NOT NULL` 排除刚创建的新行（probed_at=nil，
-			// Order id DESC 会取到新行自己导致冷却自指失效——数据对抗者 P1）。
 			var existing model.GroupItem
 			if err := db.GetDB().WithContext(ctx).
 				Select("supports_tools_probed_at").
@@ -244,24 +239,31 @@ func probeToolsForNewItems(ctx context.Context, items []model.GroupItem) {
 		if probedAt != nil && now.Sub(*probedAt) < toolsProbeCooldown {
 			continue
 		}
-		item := item
-		go func() {
+		toProbe = append(toProbe, item)
+	}
+	if len(toProbe) == 0 {
+		return
+	}
+	go func() {
+		for i, item := range toProbe {
+			if i > 0 {
+				time.Sleep(5 * time.Second)
+			}
 			channel, err := ChannelGet(item.ChannelID, context.Background())
 			if err != nil {
-				return
+				continue
 			}
 			probeCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-			defer cancel()
 			result, err := ToolsProbeFn(probeCtx, *channel, item.ModelName, "")
+			cancel()
 			if err != nil {
-				// 完全无法探测（embedding/无 key/构造失败）→ 不写
-				return
+				continue
 			}
 			if err := ApplyToolsProbeResult(item.ChannelID, item.ModelName, result, firstEnabledKeyID(*channel)); err != nil {
 				log.Warnf("tools probe backfill failed (channel=%d model=%s): %v", item.ChannelID, item.ModelName, err)
 			}
-		}()
-	}
+		}
+	}()
 }
 
 func firstEnabledKeyID(channel model.Channel) *int {
