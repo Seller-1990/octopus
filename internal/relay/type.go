@@ -147,6 +147,11 @@ type relayAttempt struct {
 	// visionBridged 本次尝试使用了 bridge 副本（图片已替换为 VLM 描述）——
 	// 写入成功 attempt 的 Msg，让 relay log 能回答「这次回答基于图还是基于描述」。
 	visionBridged bool
+	// streamErrorDetail 记录流式处理中捕获的上游错误事件详情（如 response.failed
+	// payload 里的 error.message）。stream.Result 只保留终态事件名，没有它，
+	// 终态失败分支的 attempt.Msg 就只剩事件名而丢失上游错误详情。
+	// 仅在流回调（请求 goroutine 内顺序调用）中写入，无需加锁。
+	streamErrorDetail string
 }
 
 // attemptResult 封装单次尝试的结果

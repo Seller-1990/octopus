@@ -145,7 +145,13 @@ function LogDetailList() {
     const hasMore = filterMode ? dbLogsQuery.hasMore : false;
     const isLoading = filterMode ? dbLogsQuery.isLoading : liveLogsQuery.isLoading;
     const isLoadingMore = filterMode ? dbLogsQuery.isLoadingMore : false;
-    const loadMore = filterMode ? dbLogsQuery.loadMore : () => {};
+    // 稳定引用的三元分支：裸的三元表达式每次渲染产生新的箭头函数，
+    // 会向下污染 handleReachEnd 等 useCallback 的依赖（exhaustive-deps 告警根因）。
+    const noopLoadMore = useCallback(() => {}, []);
+    const loadMore = useMemo(
+        () => (filterMode ? dbLogsQuery.loadMore : noopLoadMore),
+        [filterMode, dbLogsQuery.loadMore, noopLoadMore],
+    );
     const warning = filterMode ? dbLogsQuery.warning : null;
     const logsError = filterMode ? dbLogsQuery.error : liveLogsQuery.error;
 

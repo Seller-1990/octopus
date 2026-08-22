@@ -621,7 +621,12 @@ func (ra *relayAttempt) attempt() attemptResult {
 		op.ChannelKeyRecordUse(ra.usedKey, ra.addObservedAttemptCost())
 		outcome := requestOutcomeForTerminalEvent(terminalEvent)
 		if outcome == dbmodel.RequestOutcomeFailed {
+			// 事件名之外的错误详情来自流内 error 事件（captureStreamErrorDetail）；
+			// 只有事件名时排查无从下手，详情必须进 attempt.Msg 与 live 日志。
 			err := fmt.Errorf("upstream protocol terminal %s", terminalEvent)
+			if ra.streamErrorDetail != "" {
+				err = fmt.Errorf("upstream protocol terminal %s: %s", terminalEvent, ra.streamErrorDetail)
+			}
 			span.EndDetailed(
 				dbmodel.AttemptFailed,
 				statusCode,
@@ -1764,6 +1769,7 @@ func (ra *relayAttempt) transformStreamData(ctx context.Context, data string) ([
 		return nil, err
 	}
 	if ok {
+		ra.captureStreamErrorDetail(events)
 		return ra.encodeInboundStreamEvents(ctx, events)
 	}
 
@@ -1772,11 +1778,29 @@ func (ra *relayAttempt) transformStreamData(ctx context.Context, data string) ([
 		log.Warnf("failed to transform stream: %v", err)
 		return nil, err
 	}
-	if internalStream == nil {
-		return nil, nil
+	if internalStream != nil && internalStream.Error != nil {
+		ra.captureStreamErrorDetail([]model.StreamEvent{{Kind: model.StreamEventKindError, Error: internalStream.Error}})
 	}
-
 	return ra.encodeInboundStreamResponse(ctx, internalStream)
+}
+
+// captureStreamErrorDetail 保留流内错误事件的详情（首个非空 message 优先），
+// 供终态失败分支写入 attempt.Msg——stream.Result 只记事件名，详情在此处才有。
+func (ra *relayAttempt) captureStreamErrorDetail(events []model.StreamEvent) {
+	for _, ev := range events {
+		if ev.Kind != model.StreamEventKindError || ev.Error == nil {
+			continue
+		}
+		if msg := strings.TrimSpace(ev.Error.Detail.Message); msg != "" {
+			if ra.streamErrorDetail == "" {
+				ra.streamErrorDetail = msg
+			}
+			// 后续错误若含状态码信息也追加，保持错误链完整
+			if ev.Error.StatusCode > 0 && !strings.Contains(ra.streamErrorDetail, msg) {
+				ra.streamErrorDetail = fmt.Sprintf("%s (status %d)", ra.streamErrorDetail, ev.Error.StatusCode)
+			}
+		}
+	}
 }
 
 func (ra *relayAttempt) decodeOutboundStreamEvents(ctx context.Context, data []byte) ([]model.StreamEvent, bool, error) {

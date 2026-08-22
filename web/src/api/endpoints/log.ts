@@ -333,16 +333,19 @@ export function useLogs(options: UseLogsOptions = {}) {
         return merged;
     }, [logsQuery.data]);
 
+    // 解构出稳定字段再 memoize：函数体直接访问 logsQuery 对象会捕获整个
+    // 每次渲染都变化的对象引用，无法保留 useCallback 的记忆化。
+    const { hasNextPage, isFetchingNextPage, fetchNextPage } = logsQuery;
     const loadMore = useCallback(async () => {
-        if (!logsQuery.hasNextPage) return;
-        if (logsQuery.isFetchingNextPage) return;
+        if (!hasNextPage) return;
+        if (isFetchingNextPage) return;
 
         try {
-            await logsQuery.fetchNextPage();
+            await fetchNextPage();
         } catch (e) {
             logger.error('加载更多日志失败:', e);
         }
-    }, [logsQuery]);
+    }, [hasNextPage, isFetchingNextPage, fetchNextPage]);
 
     const clear = useCallback(() => {
         queryClient.removeQueries({ queryKey: logsInfiniteQueryKey(pageSize, filters) });
@@ -410,14 +413,13 @@ const LIVE_LOGS_MAX_ENTRIES = 500;
 
 export function useLiveLogs(enabled = true) {
     const [logs, setLogs] = useState<LiveLogOverview[]>([]);
-    const [isLoading, setIsLoading] = useState(true);
+    // 初始值随 enabled：禁用时保持非加载态。enabled 中途变化时本 hook 的
+    // isLoading 不会被消费（调用方按 filterMode 切换加载来源），无需同步重置。
+    const [isLoading, setIsLoading] = useState(enabled);
     const [error, setError] = useState<Error | null>(null);
 
     useEffect(() => {
-        if (!enabled) {
-            setIsLoading(false);
-            return;
-        }
+        if (!enabled) return;
         let cancelled = false;
         let retryTimer: ReturnType<typeof setTimeout> | null = null;
         let eventSource: EventSource | null = null;
@@ -488,11 +490,18 @@ export function useLiveLogDetail(id: number, state: LiveRequestState, enabled: b
     const [attempts, setAttempts] = useState<LiveAttempt[]>([]);
     const [runningAttempt, setRunningAttempt] = useState<LiveAttempt | null>(null);
 
-    useEffect(() => {
-        if (!enabled || isLiveFinished(state)) return;
-
+    // id 变化时在渲染期清空上一个请求的尝试列表（derived-state-reset 模式，
+    // 替代原先 effect 内的同步重置）。重连/重展开时保留已收到的尝试，
+    // 新事件按 attempt_index 去重合并，避免折叠再展开时列表闪空。
+    const [prevId, setPrevId] = useState(id);
+    if (prevId !== id) {
+        setPrevId(id);
         setAttempts([]);
         setRunningAttempt(null);
+    }
+
+    useEffect(() => {
+        if (!enabled || isLiveFinished(state)) return;
         let cancelled = false;
         let eventSource: EventSource | null = null;
 

@@ -128,7 +128,10 @@ func (b *Weighted) Candidates(items []model.GroupItem) []model.GroupItem {
 func sortByPriority(items []model.GroupItem) []model.GroupItem {
 	sorted := make([]model.GroupItem, len(items))
 	copy(sorted, items)
-	sort.Slice(sorted, func(i, j int) bool {
+	// 必须稳定排序：同 priority 成员的相对顺序即用户在分组里的配置顺序
+	//（DB 按 priority ASC, id ASC 加载）。此前用 sort.Slice（pdqsort 不稳定），
+	// 同优先级成员的调用顺序每次可能不同——表现为 failover 乱序。
+	sort.SliceStable(sorted, func(i, j int) bool {
 		return sorted[i].Priority < sorted[j].Priority
 	})
 	return sorted
