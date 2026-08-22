@@ -510,8 +510,13 @@ function RetryBadgeWithTooltip({ channelName, brandColor, attempts }: RetryBadge
             <TooltipTrigger asChild>
                 <Badge
                     variant="secondary"
-                    className="shrink-0 text-xs px-1.5 py-0 cursor-help"
-                    style={{ backgroundColor: `${brandColor}15`, color: brandColor }}
+                    className={cn(
+                        'shrink-0 cursor-help border-0',
+                        channelNameParts.siteName
+                            ? 'h-5 px-1.5 text-[10px] font-bold uppercase tracking-wide'
+                            : 'px-1.5 py-0 text-xs',
+                    )}
+                    style={{ backgroundColor: `${brandColor}${channelNameParts.siteName ? '25' : '15'}`, color: brandColor }}
                     title={channelName}
                 >
                     <RotateCw className="size-3 mr-1 opacity-80" />
@@ -542,7 +547,14 @@ function RetryBadgeWithTooltip({ channelName, brandColor, attempts }: RetryBadge
                                     </Badge>
                                     <div className="flex min-w-0 flex-col flex-1">
                                         <span className="text-xs font-semibold text-foreground">
-                                            {attemptChannelName.groupName}
+                                            {attemptChannelName.siteName ? (
+                                                <>
+                                                    <span style={{ color: brandColor }}>{attemptChannelName.siteName}</span>
+                                                    <span className="text-muted-foreground">/{attemptChannelName.groupName}</span>
+                                                </>
+                                            ) : (
+                                                attemptChannelName.groupName
+                                            )}
                                             {attempt.channel_key_remark ? (
                                                 <span className="ml-1 font-normal text-muted-foreground">· {attempt.channel_key_remark}</span>
                                             ) : null}
@@ -924,6 +936,14 @@ export function LogCard({ log, siteTargets }: { log: RelayLog; siteTargets: LogS
                                             brandColor={brandColor}
                                             attempts={log.attempts!}
                                         />
+                                    ) : channelSiteName ? (
+                                        <Badge
+                                            className="shrink-0 h-5 px-1.5 text-[10px] font-bold uppercase tracking-wide border-0"
+                                            style={{ backgroundColor: `${brandColor}25`, color: brandColor }}
+                                            title={log.channel_name}
+                                        >
+                                            {channelSiteName}
+                                        </Badge>
                                     ) : (
                                         <Badge
                                             variant="secondary"
@@ -931,7 +951,7 @@ export function LogCard({ log, siteTargets }: { log: RelayLog; siteTargets: LogS
                                             style={{ backgroundColor: `${brandColor}15`, color: brandColor }}
                                             title={log.channel_name}
                                         >
-                                            {channelSiteName || channelGroupName}
+                                            {channelGroupName}
                                         </Badge>
                                     )}
                                     <span
@@ -1204,7 +1224,14 @@ export function LogCard({ log, siteTargets }: { log: RelayLog; siteTargets: LogS
                                                                                     <div className="min-w-0 flex-1">
                                                                                         <div className="flex items-center gap-2">
                                                                                             <span className="font-semibold text-foreground" title={attempt.channel_name}>
-                                                                                                {attemptChannelName.groupName}
+                                                                                                {attemptChannelName.siteName ? (
+                                                                                                    <>
+                                                                                                        <span style={{ color: brandColor }}>{attemptChannelName.siteName}</span>
+                                                                                                        <span className="text-muted-foreground">/{attemptChannelName.groupName}</span>
+                                                                                                    </>
+                                                                                                ) : (
+                                                                                                    attemptChannelName.groupName
+                                                                                                )}
                                                                                             </span>
                                                                                             <span className="text-muted-foreground truncate">
                                                                                                 ({attempt.model_name})
