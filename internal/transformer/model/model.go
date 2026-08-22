@@ -1560,22 +1560,6 @@ type Usage struct {
 	CacheReadInputTokens       int64 `json:"cache_read_input_tokens,omitempty"`
 }
 
-func (u *Usage) GetCompletionTokens() *int64 {
-	if u == nil {
-		return nil
-	}
-
-	return &u.CompletionTokens
-}
-
-func (u *Usage) GetPromptTokens() *int64 {
-	if u == nil {
-		return nil
-	}
-
-	return &u.PromptTokens
-}
-
 // HasAnthropicCacheSemantic reports whether PromptTokens excludes cached tokens
 // (the Anthropic Messages convention). When true, total input billing must add
 // cache read/write on top of PromptTokens.

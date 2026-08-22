@@ -60,16 +60,8 @@ func InternalError(c *gin.Context) {
 	ErrorWithAppError(c, http.StatusInternalServerError, apperror.New(apperror.CodeCommonInternalError, ErrInternalServer).WithStatus(http.StatusInternalServerError))
 }
 
-func DatabaseError(c *gin.Context) {
-	ErrorWithAppError(c, http.StatusInternalServerError, apperror.New(apperror.CodeCommonDatabaseError, ErrDatabase).WithStatus(http.StatusInternalServerError))
-}
-
 func NotFound(c *gin.Context) {
 	ErrorWithAppError(c, http.StatusNotFound, apperror.New(apperror.CodeCommonNotFound, ErrResourceNotFound).WithStatus(http.StatusNotFound))
-}
-
-func DuplicateResource(c *gin.Context) {
-	ErrorWithAppError(c, http.StatusConflict, apperror.New(apperror.CodeCommonDuplicateResource, ErrDuplicateResource).WithStatus(http.StatusConflict))
 }
 
 func Unauthorized(c *gin.Context) {

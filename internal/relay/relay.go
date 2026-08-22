@@ -603,6 +603,7 @@ func (ra *relayAttempt) successAttemptMsg() string {
 func (ra *relayAttempt) attempt() attemptResult {
 	span := ra.iter.StartAttempt(ra.channel.ID, ra.usedKey.ID, ra.channel.Name)
 	span.SetRouteCandidateID(ra.metrics.RouteCandidateID)
+	span.SetKeyRemark(ra.usedKey.Remark)
 
 	// 转发请求
 	statusCode, fwdErr := ra.forward()
@@ -617,8 +618,7 @@ func (ra *relayAttempt) attempt() attemptResult {
 		// Passthrough handlers collect response at stream end via PassthroughConfig.CollectMetrics
 		ra.collectResponse()
 		span.SetUsage(ra.metrics.AttemptUsageSnapshot())
-		ra.addObservedAttemptCost()
-		op.ChannelKeyUpdate(ra.usedKey)
+		op.ChannelKeyRecordUse(ra.usedKey, ra.addObservedAttemptCost())
 		outcome := requestOutcomeForTerminalEvent(terminalEvent)
 		if outcome == dbmodel.RequestOutcomeFailed {
 			err := fmt.Errorf("upstream protocol terminal %s", terminalEvent)
@@ -696,8 +696,7 @@ func (ra *relayAttempt) attempt() attemptResult {
 			ra.collectResponse()
 		}
 		span.SetUsage(ra.metrics.AttemptUsageSnapshot())
-		ra.addObservedAttemptCost()
-		op.ChannelKeyUpdate(ra.usedKey)
+		op.ChannelKeyRecordUse(ra.usedKey, ra.addObservedAttemptCost())
 		outcome := requestOutcomeForTerminalEvent(terminalEvent)
 		span.EndDetailed(
 			dbmodel.AttemptSuccess,
@@ -731,8 +730,7 @@ func (ra *relayAttempt) attempt() attemptResult {
 			ra.collectResponse()
 		}
 		span.SetUsage(ra.metrics.AttemptUsageSnapshot())
-		ra.addObservedAttemptCost()
-		op.ChannelKeyUpdate(ra.usedKey)
+		op.ChannelKeyRecordUse(ra.usedKey, ra.addObservedAttemptCost())
 		span.EndDetailed(
 			dbmodel.AttemptCanceled,
 			statusCode,
@@ -804,16 +802,17 @@ func (ra *relayAttempt) attempt() attemptResult {
 	}
 }
 
-func (ra *relayAttempt) addObservedAttemptCost() {
+func (ra *relayAttempt) addObservedAttemptCost() float64 {
 	if ra == nil || ra.metrics == nil {
-		return
+		return 0
 	}
-	ra.usedKey.TotalCost += ra.metrics.Stats.InputCost + ra.metrics.Stats.OutputCost
+	cost := ra.metrics.Stats.InputCost + ra.metrics.Stats.OutputCost
+	ra.usedKey.TotalCost += cost
+	return cost
 }
 
 func (ra *relayAttempt) updateChannelKeyWithObservedCost() {
-	ra.addObservedAttemptCost()
-	_ = op.ChannelKeyUpdate(ra.usedKey)
+	_ = op.ChannelKeyRecordUse(ra.usedKey, ra.addObservedAttemptCost())
 }
 
 func (ra *relayAttempt) captureCompletion(statusCode int, err error) (

@@ -305,6 +305,11 @@ func (p *wsPool) preflightPreferredConnLocked(key wsPoolKey, entry *wsPoolEntry,
 		closePooledConn(pc)
 		return false
 	}
+	if pc.busy {
+		// Ping 窗口内连接被并发调用方取用：连接本身健康，但本次不能复用，
+		// 也不能关闭（正被他人持有）。返回 false 让调用方走 fallback。
+		return false
+	}
 	if err == nil {
 		pc.lastUsed = time.Now()
 		return true

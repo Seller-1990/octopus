@@ -63,18 +63,6 @@ export interface StatsAPIKey extends StatsMetrics {
 export interface StatsAPIKeyFormatted extends StatsMetricsFormatted {
     api_key_id: number;
 }
-/**
- * 获取今日统计数据 Hook
- */
-export function useStatsToday() {
-    return useQuery({
-        queryKey: ['stats', 'today'],
-        queryFn: async () => {
-            return apiClient.get<StatsDaily>('/api/v1/stats/today');
-        },
-        refetchInterval: 30000,
-    });
-}
 
 /**
  * 获取每日统计数据 Hook

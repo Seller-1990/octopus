@@ -36,6 +36,18 @@ var statsAPIKeyCache = cache.New[int, model.StatsAPIKey](16)
 var statsAPIKeyCacheNeedUpdate = make(map[int]struct{})
 var statsAPIKeyCacheNeedUpdateLock sync.Mutex
 
+// statsEntityLocks 按 entity（channel/model/apikey）串行化 stats 的读改写：
+// 分片缓存只保证单次 Get/Set 原子，Get→Add→Set 序列在并发完成同一实体时
+// 会互相覆盖（total/daily/hourly 用整体锁保护，这三处曾遗漏）。
+var statsEntityLocks sync.Map // map[int]*sync.Mutex
+
+func lockStatsEntity(id int) func() {
+	v, _ := statsEntityLocks.LoadOrStore(id, &sync.Mutex{})
+	mu := v.(*sync.Mutex)
+	mu.Lock()
+	return mu.Unlock
+}
+
 // pendingDailyOverrides holds prev-day StatsDaily snapshots whose persistence
 // failed. Retried on the next StatsSaveDB cycle so a rollover snapshot is
 // never silently dropped after the in-memory cache has advanced.
@@ -321,6 +333,7 @@ func StatsTotalUpdate(metrics model.StatsMetrics) error {
 }
 
 func StatsChannelUpdate(channelID int, metrics model.StatsMetrics) error {
+	unlock := lockStatsEntity(channelID)
 	channelCache, ok := statsChannelCache.Get(channelID)
 	if !ok {
 		channelCache = model.StatsChannel{
@@ -329,6 +342,7 @@ func StatsChannelUpdate(channelID int, metrics model.StatsMetrics) error {
 	}
 	channelCache.StatsMetrics.Add(metrics)
 	statsChannelCache.Set(channelID, channelCache)
+	unlock()
 	statsChannelCacheNeedUpdateLock.Lock()
 	statsChannelCacheNeedUpdate[channelID] = struct{}{}
 	statsChannelCacheNeedUpdateLock.Unlock()
@@ -355,6 +369,7 @@ func StatsHourlyUpdate(metrics model.StatsMetrics) error {
 }
 
 func StatsModelUpdate(stats model.StatsModel) error {
+	unlock := lockStatsEntity(stats.ID)
 	modelCache, ok := statsModelCache.Get(stats.ID)
 	if !ok {
 		modelCache = model.StatsModel{
@@ -363,6 +378,7 @@ func StatsModelUpdate(stats model.StatsModel) error {
 	}
 	modelCache.StatsMetrics.Add(stats.StatsMetrics)
 	statsModelCache.Set(stats.ID, modelCache)
+	unlock()
 	statsModelCacheNeedUpdateLock.Lock()
 	statsModelCacheNeedUpdate[stats.ID] = struct{}{}
 	statsModelCacheNeedUpdateLock.Unlock()
@@ -370,6 +386,7 @@ func StatsModelUpdate(stats model.StatsModel) error {
 }
 
 func StatsAPIKeyUpdate(apiKeyID int, metrics model.StatsMetrics) error {
+	unlock := lockStatsEntity(apiKeyID)
 	apiKeyCache, ok := statsAPIKeyCache.Get(apiKeyID)
 	if !ok {
 		apiKeyCache = model.StatsAPIKey{
@@ -378,6 +395,7 @@ func StatsAPIKeyUpdate(apiKeyID int, metrics model.StatsMetrics) error {
 	}
 	apiKeyCache.StatsMetrics.Add(metrics)
 	statsAPIKeyCache.Set(apiKeyID, apiKeyCache)
+	unlock()
 	statsAPIKeyCacheNeedUpdateLock.Lock()
 	statsAPIKeyCacheNeedUpdate[apiKeyID] = struct{}{}
 	statsAPIKeyCacheNeedUpdateLock.Unlock()
@@ -415,6 +433,11 @@ func StatsTotalGet() model.StatsTotal {
 func StatsTodayGet() model.StatsDaily {
 	statsDailyCacheLock.RLock()
 	defer statsDailyCacheLock.RUnlock()
+	// 日切翻转由首个请求驱动（StatsDailyUpdate），零点到当天首请求的空窗期里
+	// 缓存仍是昨天的累计值；这里按日期拦截，返回空的今日，不翻转缓存本身。
+	if statsDailyCache.Date != time.Now().Format("20060102") {
+		return model.StatsDaily{Date: time.Now().Format("20060102")}
+	}
 	return statsDailyCache
 }
 

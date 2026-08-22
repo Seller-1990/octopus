@@ -139,7 +139,6 @@ function LogDetailList() {
     const dbLogsQuery = useLogs({
         pageSize: LOG_PAGE_SIZE,
         filters: logFilters,
-        mode: filterMode ? 'paged' : 'stream',
         enabled: filterMode,
     });
     const logs = filterMode ? dbLogsQuery.logs : liveLogsQuery.logs;
@@ -315,7 +314,12 @@ export function Log() {
 
     useEffect(() => {
         const now = dayjs().tz(timezone);
-        setLogDateRange({ start: now.startOf('day').unix(), end: now.unix() });
+        const todayStart = now.startOf('day').unix();
+        // 仅当范围为空或已过期（end 落在今天零点之前）时才回填今天；此前每次
+        // 挂载都无条件覆写，persist 的自定义日期在路由切换后会静默丢失。
+        if (!logDateRange.end || logDateRange.end < todayStart) {
+            setLogDateRange({ start: todayStart, end: now.unix() });
+        }
     // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 

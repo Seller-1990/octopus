@@ -98,6 +98,20 @@ func (s *Service) RunGroupHealth(ctx context.Context, groupID int, probeModes ..
 	if err != nil {
 		return err
 	}
+	// running 是唯一没有出边兜底的状态：中途任何 return err 或 panic 都会跳过
+	// FinishSnapshot，让该分组之后的检查永远 409（只能手改库恢复）。defer 兜底
+	// 保证快照总有终态；正常路径 FinishSnapshot 成功后置 finished 跳过。
+	finished := false
+	defer func() {
+		if finished {
+			return
+		}
+		finishCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		_ = s.repo.FinishSnapshot(finishCtx, snapshot.ID, model.GroupHealthStatusFailed, nil,
+			time.Since(snapshot.StartedAt).Milliseconds(),
+			"interrupted: check did not complete", time.Now())
+	}()
 
 	items := append([]model.GroupItem(nil), group.Items...)
 	sort.Slice(items, func(i, j int) bool {
@@ -237,7 +251,11 @@ func (s *Service) RunGroupHealth(ctx context.Context, groupID int, probeModes ..
 
 	finishedAt := time.Now()
 	durationMS := finishedAt.Sub(snapshot.StartedAt).Milliseconds()
-	return s.repo.FinishSnapshot(ctx, snapshot.ID, finalStatus, successfulChannelID, durationMS, message, finishedAt)
+	if err := s.repo.FinishSnapshot(ctx, snapshot.ID, finalStatus, successfulChannelID, durationMS, message, finishedAt); err != nil {
+		return err
+	}
+	finished = true
+	return nil
 }
 
 func (s *Service) RunAllGroupHealth(ctx context.Context, maxConcurrency int, probeModes ...model.GroupHealthProbeMode) {

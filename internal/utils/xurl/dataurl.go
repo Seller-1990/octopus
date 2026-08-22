@@ -61,11 +61,6 @@ func ParseDataURL(url string) *DataURL {
 	}
 }
 
-// IsDataURL checks if the given URL is a data URL.
-func IsDataURL(url string) bool {
-	return strings.HasPrefix(url, "data:")
-}
-
 // ExtractBase64FromDataURL extracts the base64 data from a data URL.
 // If the URL is not a data URL, returns the original URL unchanged.
 func ExtractBase64FromDataURL(url string) string {
@@ -79,15 +74,4 @@ func ExtractBase64FromDataURL(url string) string {
 	}
 
 	return url
-}
-
-// ExtractMediaTypeFromDataURL extracts the media type from a data URL.
-// Returns empty string if the URL is not a valid data URL.
-func ExtractMediaTypeFromDataURL(url string) string {
-	parsed := ParseDataURL(url)
-	if parsed == nil {
-		return ""
-	}
-
-	return parsed.MediaType
 }

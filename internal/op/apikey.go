@@ -15,7 +15,17 @@ import (
 
 var apiKeyCache = cache.New[int, model.APIKey](16)
 var apiKeyIDMap = cache.New[string, int](16)
-var apiKeyQuotaMu sync.Mutex
+
+// apiKeyQuotaLocks 按 key 串行化配额读改写。原全局互斥锁让所有成功请求的
+// 配额落账完全串行，是热路径上不必要的争用点。
+var apiKeyQuotaLocks sync.Map // map[int]*sync.Mutex
+
+func lockAPIKeyQuota(id int) func() {
+	v, _ := apiKeyQuotaLocks.LoadOrStore(id, &sync.Mutex{})
+	mu := v.(*sync.Mutex)
+	mu.Lock()
+	return mu.Unlock
+}
 
 const defaultAPIKeyQuotaPeriod = "monthly"
 
@@ -65,8 +75,8 @@ func APIKeyCreate(key *model.APIKey, ctx context.Context) error {
 }
 
 func APIKeyUpdate(key *model.APIKey, ctx context.Context) error {
-	apiKeyQuotaMu.Lock()
-	defer apiKeyQuotaMu.Unlock()
+	unlock := lockAPIKeyQuota(key.ID)
+	defer unlock()
 	existing, ok := apiKeyCache.Get(key.ID)
 	if !ok {
 		return fmt.Errorf("API key not found")
@@ -185,8 +195,8 @@ func APIKeyResetQuota(ctx context.Context, id int, period string, now time.Time)
 		return err
 	}
 	nextReset := computeNextQuotaReset(period, now)
-	apiKeyQuotaMu.Lock()
-	defer apiKeyQuotaMu.Unlock()
+	unlock := lockAPIKeyQuota(id)
+	defer unlock()
 	if err := db.GetDB().WithContext(ctx).Model(&model.APIKey{}).Where("id = ?", id).Updates(map[string]interface{}{
 		"quota_used":     0,
 		"quota_reset_at": nextReset,
@@ -206,18 +216,15 @@ func APIKeyIncrementQuotaUsed(ctx context.Context, id int, cost float64) error {
 	if id == 0 || cost <= 0 {
 		return nil
 	}
-	apiKeyQuotaMu.Lock()
-	defer apiKeyQuotaMu.Unlock()
+	unlock := lockAPIKeyQuota(id)
+	defer unlock()
 	if err := db.GetDB().WithContext(ctx).Model(&model.APIKey{}).Where("id = ?", id).Update("quota_used", gorm.Expr("quota_used + ?", cost)).Error; err != nil {
 		return fmt.Errorf("failed to increment API key quota: %w", err)
 	}
-	var current model.APIKey
-	if err := db.GetDB().WithContext(ctx).First(&current, id).Error; err != nil {
-		return fmt.Errorf("failed to reload API key quota: %w", err)
-	}
+	// DB 侧已是原子自增，缓存侧在锁内做同样增量即可，无需回读 SELECT——
+	// 那是每请求多付的一次 DB 往返，且曾在 SQLite 单连接下放大排队。
 	if key, ok := apiKeyCache.Get(id); ok {
-		key.QuotaUsed = current.QuotaUsed
-		key.QuotaResetAt = current.QuotaResetAt
+		key.QuotaUsed += cost
 		apiKeyCache.Set(id, key)
 	}
 	return nil

@@ -79,28 +79,3 @@ func LatestBatchSummary(phase SiteBatchPhase) *SiteBatchSummaryView {
 	}
 	return latestSummaries.syncBatch
 }
-
-// BatchSummaryReasons 前端失败分组的完整原因枚举。
-func BatchSummaryReasons() []SiteBatchReason {
-	return []SiteBatchReason{
-		SiteBatchReasonUnauthorized,
-		SiteBatchReasonLoginFailed,
-		SiteBatchReasonAccessTokenRequired,
-		SiteBatchReasonDirectTokenRequired,
-		SiteBatchReasonCloudflareProtection,
-		SiteBatchReasonMissingGroupKey,
-		SiteBatchReasonUpstreamHTTPError,
-		SiteBatchReasonUpstreamDecodeFailed,
-		SiteBatchReasonUpstreamHTMLResponse,
-		SiteBatchReasonUnsupportedPlatform,
-		SiteBatchReasonUnsupportedCheckin,
-		SiteBatchReasonScheduledLater,
-		SiteBatchReasonBatchCanceled,
-		SiteBatchReasonTimeout,
-		SiteBatchReasonContextCanceled,
-		SiteBatchReasonContextDeadlineExceeded,
-		SiteBatchReasonDatabaseError,
-		SiteBatchReasonInternalError,
-		SiteBatchReasonUnknown,
-	}
-}

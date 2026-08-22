@@ -25,6 +25,17 @@ var channelKeyCache = cache.New[int, model.ChannelKey](16)
 var channelKeyCacheNeedUpdate = make(map[int]struct{})
 var channelKeyCacheNeedUpdateLock sync.Mutex
 
+// channelKeyUpdateLocks 按 ChannelID 串行化 key 的读改写：relay 请求生命周期可达
+// 数分钟，快照整体回写会把期间其他请求已累计的 TotalCost 覆盖回旧值。
+var channelKeyUpdateLocks sync.Map // map[int]*sync.Mutex
+
+func lockChannelKeyUpdates(channelID int) func() {
+	v, _ := channelKeyUpdateLocks.LoadOrStore(channelID, &sync.Mutex{})
+	mu := v.(*sync.Mutex)
+	mu.Lock()
+	return mu.Unlock
+}
+
 func ChannelList(ctx context.Context) ([]model.Channel, error) {
 	channels := make([]model.Channel, 0, channelCache.Len())
 	for _, channel := range channelCache.GetAll() {
@@ -113,6 +124,45 @@ func ChannelKeyUpdate(key model.ChannelKey) error {
 	}
 	channelCache.Set(key.ChannelID, ch)
 	channelKeyCache.Set(key.ID, key)
+	channelKeyCacheNeedUpdateLock.Lock()
+	channelKeyCacheNeedUpdate[key.ID] = struct{}{}
+	channelKeyCacheNeedUpdateLock.Unlock()
+	return nil
+}
+
+// ChannelKeyRecordUse 以增量方式记录一次运行时 key 使用结果：StatusCode/LastUseTimeStamp
+// 覆盖为本次终态，TotalCost 在当前缓存值上累加。relay 路径必须用它而非 ChannelKeyUpdate——
+// 后者是快照整体替换，长流式请求结束时会把过期快照写回，抹掉并发请求的累计成本。
+func ChannelKeyRecordUse(key model.ChannelKey, addCost float64) error {
+	if key.ID == 0 || key.ChannelID == 0 {
+		return fmt.Errorf("invalid channel key")
+	}
+	unlock := lockChannelKeyUpdates(key.ChannelID)
+	defer unlock()
+	ch, ok := channelCache.Get(key.ChannelID)
+	if !ok {
+		return fmt.Errorf("channel not found")
+	}
+	idx := -1
+	for i := range ch.Keys {
+		if ch.Keys[i].ID == key.ID {
+			idx = i
+			break
+		}
+	}
+	if idx < 0 {
+		return fmt.Errorf("channel key not found")
+	}
+	updated := ch.Keys[idx]
+	updated.StatusCode = key.StatusCode
+	updated.LastUseTimeStamp = key.LastUseTimeStamp
+	updated.TotalCost += addCost
+	keys := make([]model.ChannelKey, len(ch.Keys))
+	copy(keys, ch.Keys)
+	keys[idx] = updated
+	ch.Keys = keys
+	channelCache.Set(key.ChannelID, ch)
+	channelKeyCache.Set(key.ID, updated)
 	channelKeyCacheNeedUpdateLock.Lock()
 	channelKeyCacheNeedUpdate[key.ID] = struct{}{}
 	channelKeyCacheNeedUpdateLock.Unlock()

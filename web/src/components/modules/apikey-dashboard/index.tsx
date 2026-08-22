@@ -28,7 +28,8 @@ import {
     Languages,
     Zap,
     Layers,
-    Clock
+    Clock,
+    Loader2
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
@@ -36,7 +37,7 @@ import dayjs from 'dayjs';
 
 export function APIKeyDashboard() {
     const t = useTranslations('apiKeyDashboard');
-    const { data, error } = useAPIKeyDashboardStats();
+    const { data, error, isLoading } = useAPIKeyDashboardStats();
     const { logout } = useAuthStore();
     const { theme, setTheme } = useTheme();
     const { locale, setLocale } = useSettingStore();
@@ -56,11 +57,21 @@ export function APIKeyDashboard() {
         [copyToClipboard, t]
     );
 
-    if (error || !data) {
+    // 首次加载中显示加载态（此前 data===undefined 且无 error 时会先闪错误屏）；
+    // 已有数据时后台轮询失败（error && data）不算致命——保留旧数据继续展示，
+    // 30s 轮询会在后端恢复后自动自愈，不把整页打回错误+登出。
+    if (!data) {
+        if (isLoading) {
+            return (
+                <div className="min-h-screen flex items-center justify-center">
+                    <Loader2 className="size-6 animate-spin text-muted-foreground" />
+                </div>
+            );
+        }
         return (
             <div className="min-h-screen flex items-center justify-center">
                 <div className="text-center space-y-4">
-                    <p className="text-destructive font-medium">{t('error')}</p>
+                    <p className="text-destructive font-medium">{error instanceof Error ? error.message : t('error')}</p>
                     <Button onClick={logout} variant="outline" className="rounded-xl">
                         {t('logout')}
                     </Button>

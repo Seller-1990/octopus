@@ -25,6 +25,11 @@ const logBase64PayloadKeepChars = 1024
 // 15MB 级图片体绝不原样入库；256KB 对正常长 prompt 几乎无感。
 const logRequestContentMaxBytes = 256 * 1024
 
+// logRequestContentPreTruncateBytes 在 base64 消隐与 string 转换前先粗截断，
+// 避免对数 MB 级含图 body 做全量正则扫描与拷贝。预截断边界可能切断 base64 串，
+// 残段不超过 600 字符（正则阈值以下），仍在最终 256KB 截断之内。
+const logRequestContentPreTruncateBytes = logRequestContentMaxBytes * 2
+
 // logBase64RunPattern 匹配任意位置的 base64 连续串（无锚点：OpenAI data URI 的 payload、
 // Anthropic source.data 的纯 base64 串都命中；data URI 的 media type 前缀含 `:`/`;`，
 // 天然断在串外得以保留）。是否替换由回调按长度判定——RE2 的 {n,} 重复上限 1000，
@@ -110,7 +115,7 @@ func (m *RelayMetrics) SetTransportRequestPayload(payload []byte, modelName stri
 	if len(payload) == 0 {
 		return
 	}
-	count := tokenizer.CountTokens(string(payload), modelName)
+	count := tokenizer.CountTokensBytes(payload, modelName)
 	m.TransportInputTokens = intPtr(count)
 }
 
@@ -349,10 +354,6 @@ func effectivePriceCosts(
 	return inputRaw, outputRaw, inputUSD, outputUSD
 }
 
-func (m *RelayMetrics) Save(ctx context.Context, success bool, err error, attempts []model.ChannelAttempt) {
-	m.SaveWithChannelStats(ctx, success, err, attempts, true)
-}
-
 func (m *RelayMetrics) SaveWithChannelStats(ctx context.Context, success bool, err error, attempts []model.ChannelAttempt, updateChannelStats bool) {
 	outcome := model.RequestOutcomeFailed
 	if success {
@@ -400,7 +401,9 @@ func (m *RelayMetrics) SaveOutcomeWithChannelStats(
 	op.StatsDailyUpdate(context.Background(), globalStats)
 	op.StatsAPIKeyUpdate(m.APIKeyID, globalStats)
 	if outcome == model.RequestOutcomeSuccess {
-		if err := op.APIKeyIncrementQuotaUsed(ctx, m.APIKeyID, m.Stats.InputCost+m.Stats.OutputCost); err != nil {
+		// 配额是持久化副作用：客户端收完响应即断连时请求 ctx 已取消，
+		// 裸 ctx 会让 UPDATE 失败且无重试，费用永久漏计（日志走 WithoutCancel，这里必须一致）。
+		if err := op.APIKeyIncrementQuotaUsed(context.WithoutCancel(ctx), m.APIKeyID, m.Stats.InputCost+m.Stats.OutputCost); err != nil {
 			log.Warnf("failed to update API key quota: %v", err)
 		}
 	}
@@ -596,7 +599,11 @@ func (m *RelayMetrics) saveLog(ctx context.Context, outcome model.RequestOutcome
 	// 请求内容：优先原始请求体，保留 provider 专有字段（如 Anthropic cache_control）；
 	// 超长 base64 图片只留占位符（15MB data URI 原样入库会撑爆 relay_logs，图片也不属于日志数据）
 	if len(m.RawRequest) > 0 {
-		relayLog.RequestContent = redactBase64PayloadsForLog(string(m.RawRequest))
+		raw := m.RawRequest
+		if len(raw) > logRequestContentPreTruncateBytes {
+			raw = raw[:logRequestContentPreTruncateBytes]
+		}
+		relayLog.RequestContent = redactBase64PayloadsForLog(string(raw))
 	} else if m.InternalRequest != nil {
 		if reqJSON, jsonErr := json.Marshal(m.InternalRequest); jsonErr == nil {
 			relayLog.RequestContent = redactBase64PayloadsForLog(string(reqJSON))

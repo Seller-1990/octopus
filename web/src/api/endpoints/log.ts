@@ -1,9 +1,7 @@
-import type { InfiniteData } from '@tanstack/react-query';
-import { keepPreviousData, useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { apiClient, API_BASE_URL } from '../client';
 import { logger } from '@/lib/logger';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useTranslations } from 'next-intl';
+import { useCallback, useMemo, useState, useEffect } from 'react';
 
 /**
  * 尝试状态
@@ -23,6 +21,7 @@ export type RelayLogWSRecovery = 'reconnect' | 'replay' | 'downgrade';
 export interface ChannelAttempt {
     channel_id: number;
     channel_key_id?: number;
+    channel_key_remark?: string;
     channel_name: string;
     model_name: string;
     attempt_num: number;    // 第几次尝试
@@ -34,6 +33,10 @@ export interface ChannelAttempt {
     duration: number;       // 耗时(毫秒)
     sticky?: boolean;
     msg?: string;
+    /** 后端AttemptUsageSnapshot的轻量投影：这里只消费倍率字段 */
+    usage?: {
+        price_multiplier?: number;
+    } | null;
 }
 
 /**
@@ -161,7 +164,6 @@ export interface LogListParams {
 export interface UseLogsOptions {
     pageSize?: number;
     filters?: Omit<LogListParams, 'page' | 'page_size'>;
-    mode?: 'stream' | 'paged';
     enabled?: boolean;
 }
 
@@ -202,55 +204,12 @@ function appendLogListParams(params: URLSearchParams, filters?: UseLogsOptions['
     if (filters?.keyword_mode && filters.keyword_mode !== 'default') params.set('keyword_mode', filters.keyword_mode);
 }
 
-export interface LogPageResponse {
-    logs: RelayLog[];
-    total: number;
-    has_more?: boolean;
-    next_cursor?: LogCursor | null;
-    search_mode?: string;
-    warning?: string;
-}
-
-export function useLogPage(params: LogListParams) {
-    const page = params.page ?? 1;
-    const pageSize = params.page_size ?? 20;
-    const filters = logFiltersKey(params);
-
-    return useQuery({
-        queryKey: ['logs', 'page', pageSize, page, filters],
-        queryFn: async (): Promise<LogPageResponse> => {
-            const search = new URLSearchParams();
-            search.set('page', String(page));
-            search.set('page_size', String(pageSize));
-            search.set('include_content', String(params.include_content ?? false));
-            search.set('with_total', String(params.with_total ?? true));
-            appendLogListParams(search, params);
-            const result = await apiClient.get<{ logs: RelayLog[] | null; total: number; has_more?: boolean; next_cursor?: LogCursor | null; warning?: string; search_mode?: string } | null>(
-                `/api/v1/log/list?${search.toString()}`,
-            );
-            return {
-                logs: result?.logs ?? [],
-                total: result?.total ?? 0,
-                has_more: result?.has_more ?? false,
-                next_cursor: result?.next_cursor ?? null,
-                warning: result?.warning,
-                search_mode: result?.search_mode,
-            };
-        },
-        placeholderData: keepPreviousData,
-        staleTime: 0,
-        refetchOnMount: 'always',
-        refetchOnWindowFocus: false,
-        enabled: params.enabled ?? true,
-    });
-}
-
 /**
  * 清空日志 Hook
- * 
+ *
  * @example
  * const clearLogs = useClearLogs();
- * 
+ *
  * clearLogs.mutate();
  */
 export async function getLogDetail(id: number): Promise<RelayLog> {
@@ -304,25 +263,19 @@ const logsInfiniteQueryKey = (pageSize: number, filters?: UseLogsOptions['filter
 
 /**
  * 日志管理 Hook
- * 整合初始加载、SSE 实时推送、滚动加载更多
- * 
+ * 整合初始加载与滚动加载更多；实时日志由 useLiveLogs 独立承担。
+ *
  * @example
- * const { logs, isConnected, hasMore, isLoadingMore, loadMore, clear } = useLogs();
- * 
- * // logs 自动包含历史日志和实时日志，按时间倒序
+ * const { logs, hasMore, isLoadingMore, loadMore, clear } = useLogs();
+ *
+ * // logs 按时间倒序
  * logs.forEach(log => console.log(log.request_model_name));
- * 
+ *
  * // 滚动到底部时加载更多
  * if (hasMore && !isLoadingMore) loadMore();
  */
 export function useLogs(options: UseLogsOptions = {}) {
-    const { pageSize = 20, filters, mode = 'stream', enabled = true } = options;
-    const streamEnabled = mode === 'stream' && enabled;
-    const t = useTranslations('log.list');
-
-    const [isConnected, setIsConnected] = useState(false);
-    const [error, setError] = useState<Error | null>(null);
-    const eventSourceRef = useRef<EventSource | null>(null);
+    const { pageSize = 20, filters, enabled = true } = options;
 
     const queryClient = useQueryClient();
 
@@ -359,7 +312,7 @@ export function useLogs(options: UseLogsOptions = {}) {
         },
         staleTime: 0,
         refetchOnMount: 'always',
-        refetchOnWindowFocus: streamEnabled,
+        refetchOnWindowFocus: false,
         enabled,
     });
 
@@ -391,105 +344,13 @@ export function useLogs(options: UseLogsOptions = {}) {
         }
     }, [logsQuery]);
 
-    useEffect(() => {
-        if (!streamEnabled) {
-            eventSourceRef.current?.close();
-            eventSourceRef.current = null;
-            return;
-        }
-
-        let cancelled = false;
-        let retryTimer: ReturnType<typeof setTimeout> | null = null;
-        let retryAttempt = 0;
-
-        const scheduleReconnect = () => {
-            if (cancelled) return;
-            const delay = Math.min(30000, 1000 * 2 ** retryAttempt);
-            retryAttempt += 1;
-            retryTimer = setTimeout(() => {
-                retryTimer = null;
-                connect(true);
-            }, delay);
-        };
-
-        const connect = async (isReconnect = false) => {
-            try {
-                const { token } = await apiClient.get<{ token: string }>('/api/v1/log/stream-token');
-                if (cancelled) return;
-
-                const eventSource = new EventSource(`${API_BASE_URL}/api/v1/log/stream?token=${token}`);
-                eventSourceRef.current = eventSource;
-
-                eventSource.onopen = () => {
-                    retryAttempt = 0;
-                    setIsConnected(true);
-                    setError(null);
-                    if (isReconnect) {
-                        queryClient.invalidateQueries({ queryKey: logsInfiniteQueryKey(pageSize, filters) });
-                    }
-                };
-
-                eventSource.onmessage = (event) => {
-                    try {
-                        const log: RelayLog = JSON.parse(event.data);
-                        queryClient.setQueryData(
-                            logsInfiniteQueryKey(pageSize, filters),
-                            (old: InfiniteData<CursorPage, LogCursor | null> | undefined) => {
-                                if (!old) {
-                                    return { pages: [{ logs: [log], has_more: false, next_cursor: null }], pageParams: [null] };
-                                }
-
-                                const exists = old.pages.some((p) => p?.logs.some((x) => x.id === log.id));
-                                if (exists) return old;
-
-                                const firstPage = old.pages[0] ?? { logs: [], has_more: false, next_cursor: null };
-                                const prepended = [log, ...firstPage.logs];
-                                const nextFirstPage = { ...firstPage, logs: prepended.slice(0, pageSize) };
-                                if (prepended.length > pageSize && old.pages.length > 1) {
-                                    queryClient.invalidateQueries({ queryKey: logsInfiniteQueryKey(pageSize, filters) });
-                                }
-                                return { ...old, pages: [nextFirstPage, ...old.pages.slice(1)] };
-                            }
-                        );
-                    } catch (e) {
-                        logger.error('解析日志数据失败:', e);
-                    }
-                };
-
-                eventSource.onerror = () => {
-                    setIsConnected(false);
-                    setError(new Error(t('streamDisconnected')));
-                    eventSource.close();
-                    eventSourceRef.current = null;
-                    scheduleReconnect();
-                };
-            } catch (e) {
-                if (cancelled) return;
-                setError(e instanceof Error ? e : new Error(t('streamTokenFailed')));
-                logger.error('获取 stream token 失败:', e);
-                scheduleReconnect();
-            }
-        };
-
-        connect(false);
-
-        return () => {
-            cancelled = true;
-            if (retryTimer) clearTimeout(retryTimer);
-            eventSourceRef.current?.close();
-            eventSourceRef.current = null;
-            setIsConnected(false);
-        };
-    }, [pageSize, filters, queryClient, streamEnabled, enabled, t]);
-
     const clear = useCallback(() => {
         queryClient.removeQueries({ queryKey: logsInfiniteQueryKey(pageSize, filters) });
     }, [pageSize, filters, queryClient]);
 
     return {
         logs,
-        isConnected: streamEnabled && isConnected,
-        error: logsQuery.error ?? (streamEnabled ? error : null),
+        error: logsQuery.error,
         hasMore: !!logsQuery.hasNextPage,
         isLoading: logsQuery.isLoading,
         isLoadingMore: logsQuery.isFetchingNextPage,
@@ -543,6 +404,10 @@ async function fetchLogStreamToken() {
 }
 
 // useLiveLogs 订阅实时日志概览流（快照 + 增量）。
+// live 列表在内存中按 id 降序保留固定条数：面板常被整天挂着，无上限会让
+// 数万条日志对象常驻并让每条新日志触发全量排序。
+const LIVE_LOGS_MAX_ENTRIES = 500;
+
 export function useLiveLogs(enabled = true) {
     const [logs, setLogs] = useState<LiveLogOverview[]>([]);
     const [isLoading, setIsLoading] = useState(true);
@@ -581,7 +446,8 @@ export function useLiveLogs(enabled = true) {
                         const next = JSON.parse((event as MessageEvent<string>).data) as LiveLogOverview;
                         setLogs((current) => {
                             const rest = current.filter((item) => item.id !== next.id);
-                            return [...rest, next].sort((a, b) => b.id - a.id);
+                            const merged = [...rest, next].sort((a, b) => b.id - a.id);
+                            return merged.length > LIVE_LOGS_MAX_ENTRIES ? merged.slice(0, LIVE_LOGS_MAX_ENTRIES) : merged;
                         });
                         setIsLoading(false);
                         setError(null);

@@ -256,8 +256,7 @@ func ImagesHandler(endpoint string, c *gin.Context) {
 			span.SetUsage(metrics.AttemptUsageSnapshot())
 			metrics.ResponseContent = buildImagesResponseContentForLog(stream, upstreamCT, usage)
 
-			usedKey.TotalCost += metrics.Stats.InputCost + metrics.Stats.OutputCost
-			op.ChannelKeyUpdate(usedKey)
+			op.ChannelKeyRecordUse(usedKey, metrics.Stats.InputCost+metrics.Stats.OutputCost)
 
 			if stream {
 				metrics.TransportTermination = model.TransportTerminationUpstreamEOF
@@ -307,8 +306,9 @@ func ImagesHandler(endpoint string, c *gin.Context) {
 				upstreamCT,
 				usage,
 			)
-			usedKey.TotalCost += metrics.Stats.InputCost + metrics.Stats.OutputCost
-			op.ChannelKeyUpdate(usedKey)
+			usedKey.StatusCode = statusCode
+			usedKey.LastUseTimeStamp = time.Now().Unix()
+			op.ChannelKeyRecordUse(usedKey, metrics.Stats.InputCost+metrics.Stats.OutputCost)
 			metrics.TransportTermination = model.TransportTerminationClientCanceled
 			metrics.CompletionEvidence = model.CompletionEvidenceNone
 			span.EndDetailed(
@@ -334,7 +334,7 @@ func ImagesHandler(endpoint string, c *gin.Context) {
 			metrics.SetUsageFromImages(item.ModelName, *usage)
 			span.SetUsage(metrics.AttemptUsageSnapshot())
 		}
-		op.ChannelKeyUpdate(usedKey)
+		op.ChannelKeyRecordUse(usedKey, 0)
 		metrics.TransportTermination = model.TransportTerminationUpstreamError
 		metrics.CompletionEvidence = model.CompletionEvidenceNone
 		span.EndDetailed(
@@ -496,10 +496,6 @@ func (m *imagesRelayMetrics) AttemptUsageSnapshot() *model.AttemptUsageSnapshot 
 		snapshot.PriceMatchReason = m.EffectivePrice.MatchReason
 	}
 	return snapshot
-}
-
-func (m *imagesRelayMetrics) Save(ctx context.Context, success bool, err error, attempts []model.ChannelAttempt) {
-	m.SaveWithChannelStats(ctx, success, err, attempts, true)
 }
 
 func (m *imagesRelayMetrics) SaveWithChannelStats(ctx context.Context, success bool, err error, attempts []model.ChannelAttempt, updateChannelStats bool) {

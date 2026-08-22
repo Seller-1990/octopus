@@ -214,34 +214,3 @@ export function useDeleteAPIKey() {
         },
     });
 }
-
-/**
- * 获取当前 API Key 的统计数据 Hook
- * 
- * 此接口使用 API Key 认证，通过 API Key 获取对应的统计数据
- * 
- * @example
- * const { data: stats, isLoading } = useAPIKeyStats();
- */
-export function useAPIKeyStats() {
-    return useQuery({
-        queryKey: ['apikey', 'stats'],
-        queryFn: async () => {
-            return apiClient.get<StatsAPIKey>('/api/v1/apikey/stats');
-        },
-        select: (data): StatsAPIKeyFormatted => ({
-            api_key_id: data.api_key_id,
-            input_token: formatCount(data.input_token),
-            output_token: formatCount(data.output_token),
-            total_token: formatCount(data.input_token + data.output_token),
-            input_cost: formatMoney(data.input_cost),
-            output_cost: formatMoney(data.output_cost),
-            total_cost: formatMoney(data.input_cost + data.output_cost),
-            wait_time: formatTime(data.wait_time),
-            request_success: formatCount(data.request_success),
-            request_failed: formatCount(data.request_failed),
-            request_count: formatCount(data.request_success + data.request_failed),
-        }),
-        refetchInterval: 30000,
-    });
-}

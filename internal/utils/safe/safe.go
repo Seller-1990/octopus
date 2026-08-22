@@ -1,7 +1,6 @@
 package safe
 
 import (
-	"fmt"
 	"runtime/debug"
 	"time"
 
@@ -32,17 +31,4 @@ func Run(name string, fn func()) {
 	}
 
 	fn()
-}
-
-// RecoverHandler returns a recovery function for defer use in request-scoped code.
-func RecoverHandler(name string, onPanic func(error)) func() {
-	return func() {
-		if r := recover(); r != nil {
-			err := fmt.Errorf("panic recovered (%s): %v", name, r)
-			log.Errorf("%v\n%s", err, debug.Stack())
-			if onPanic != nil {
-				onPanic(err)
-			}
-		}
-	}
 }

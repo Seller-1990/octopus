@@ -87,10 +87,15 @@ func (r *GroupHealthRepository) ListLatestSnapshots(ctx context.Context) ([]mode
 	return snapshots, err
 }
 
+// staleRunningSnapshotAge 判定 running 快照为崩溃遗留的阈值。正常运行受
+// service 层 per-group 锁保护远短于此；超阈值的 running 记录只可能来自上次
+// 进程崩溃/宕机，不应继续阻塞该分组的健康检查（遗留记录本身保留在库中）。
+const staleRunningSnapshotAge = 10 * time.Minute
+
 func (r *GroupHealthRepository) GetRunningSnapshotByGroupID(ctx context.Context, groupID int) (*model.GroupHealthSnapshot, error) {
 	var snapshot model.GroupHealthSnapshot
 	err := db.GetDB().WithContext(ctx).
-		Where("group_id = ? AND status = ?", groupID, model.GroupHealthStatusRunning).
+		Where("group_id = ? AND status = ? AND started_at > ?", groupID, model.GroupHealthStatusRunning, time.Now().Add(-staleRunningSnapshotAge)).
 		Order("id DESC").
 		First(&snapshot).Error
 	if err != nil {
