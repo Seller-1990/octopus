@@ -38,6 +38,7 @@ export interface LLMChannel {
     balance?: number | null;
     multiplier?: number | null;
     group_multiplier?: number | null;
+    capabilities?: string[];
 }
 
 /**

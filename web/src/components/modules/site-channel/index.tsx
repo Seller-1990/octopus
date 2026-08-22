@@ -74,6 +74,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { toast } from '@/components/common/Toast';
 import { cn, formatCount, formatMoney } from '@/lib/utils';
 import { getModelIcon } from '@/lib/model-icons';
+import { CapabilityBadges } from '@/components/modules/model/CapabilityBadges';
 import type { ToolbarSortField, ToolbarSortOrder } from '@/components/modules/toolbar/view-options-store';
 import { useSettingStore } from '@/stores/setting';
 import {
@@ -1141,6 +1142,7 @@ const SiteChannelTableView = forwardRef<
                                         <div className="min-w-0 flex-1">
                                             <div className="flex min-w-0 items-center gap-1.5">
                                                 <span className="min-w-0 truncate text-sm font-medium">{model.model_name}</span>
+                                                <CapabilityBadges capabilities={model.capabilities} size="xs" />
                                                 {model.source === 'manual' ? (
                                                     <Badge variant="outline" className="h-5 shrink-0 px-1.5 text-[10px] border-primary/30 bg-primary/10 text-primary">自定义</Badge>
                                                 ) : null}

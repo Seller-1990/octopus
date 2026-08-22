@@ -13,6 +13,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { cn } from '@/lib/utils';
 import { getModelIcon } from '@/lib/model-icons';
 import type { LLMChannel } from '@/api/endpoints/model';
+import { CapabilityBadges } from '@/components/modules/model/CapabilityBadges';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/animate-ui/components/animate/tooltip';
 import { Badge } from '@/components/ui/badge';
 import { useTranslations } from 'next-intl';
@@ -172,6 +173,7 @@ function MemberItem({
                             </TooltipTrigger>
                             <TooltipContent key={member.name}>{member.name}</TooltipContent>
                         </Tooltip>
+                        <CapabilityBadges capabilities={member.capabilities} size="xs" />
                         {member.is_reserve && (
                             <span className="ml-auto inline-flex shrink-0 rounded-full border border-amber-500/30 bg-amber-500/10 px-1.5 py-px text-[9px] font-medium text-amber-700 dark:text-amber-300">
                                 {t('member.reserveBadge')}

@@ -113,6 +113,9 @@ func newDiscoveredModel(
 
 	canonical, resolved := CatalogResolveIdentity(name)
 	if !resolved {
+		if caps := resolveCapabilities(name); caps != nil {
+			item.Capabilities = model.CapabilitiesToNames(*caps)
+		}
 		return item
 	}
 

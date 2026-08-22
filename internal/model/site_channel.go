@@ -103,6 +103,7 @@ type SiteChannelModel struct {
 	ProjectedChannelID *int                     `json:"projected_channel_id,omitempty"`
 	RouteMetadata      *SiteModelRouteMetadata  `json:"route_metadata,omitempty"`
 	History            *SiteModelHistorySummary `json:"history,omitempty"`
+	Capabilities       []string                 `json:"capabilities,omitempty" gorm:"-"`
 }
 
 type SiteModelHistorySummary struct {

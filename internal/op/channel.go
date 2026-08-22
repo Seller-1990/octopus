@@ -663,6 +663,10 @@ func ChannelLLMList(ctx context.Context) ([]model.LLMChannel, error) {
 			if modelName == "" {
 				continue
 			}
+			var caps []string
+			if resolved := resolveCapabilities(modelName); resolved != nil {
+				caps = model.CapabilitiesToNames(*resolved)
+			}
 			models = append(models, model.LLMChannel{
 				Name:            modelName,
 				Enabled:         channel.Enabled,
@@ -678,6 +682,7 @@ func ChannelLLMList(ctx context.Context) ([]model.LLMChannel, error) {
 				IsReserve:       channelIsReserve,
 				Balance:         balance,
 				GroupMultiplier: channelGroupMultiplierPointer(gm, gmOK),
+				Capabilities:    caps,
 			})
 		}
 	}

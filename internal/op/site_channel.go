@@ -286,6 +286,9 @@ func buildSiteChannelGroups(ctx context.Context, site model.Site, account model.
 			RouteMetadata:  routeMetadata,
 			History:        historyMap[key+"\x00"+item.ModelName],
 		}
+		if resolved := resolveCapabilities(item.ModelName); resolved != nil {
+			modelView.Capabilities = model.CapabilitiesToNames(*resolved)
+		}
 		if hasChannel {
 			id := channelID
 			modelView.ProjectedChannelID = &id

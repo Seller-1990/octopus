@@ -62,6 +62,7 @@ export type SiteChannelModel = {
     projected_channel_id?: number | null;
     route_metadata?: SiteModelRouteMetadata | null;
     history?: SiteModelHistorySummary | null;
+    capabilities?: string[];
 };
 
 export type SiteProjectedChannelSettings = {
