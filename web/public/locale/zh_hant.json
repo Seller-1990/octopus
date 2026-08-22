@@ -2116,7 +2116,15 @@
       "clearConfirmTitle": "清除帳號驗證？",
       "clearConfirmDescription": "將撤銷相關會話、取消任務並刪除帳號儲存的驗證狀態。",
       "revokeConfirmTitle": "撤銷驗證會話？",
-      "revokeConfirmDescription": "該會話及其活動任務將立即失效。"
+      "revokeConfirmDescription": "該會話及其活動任務將立即失效。",
+      "browserSync": {
+        "button": "瀏覽器同步",
+        "opened": "已在瀏覽器中開啟目標站點，請完成登入後自動同步",
+        "failed": "瀏覽器同步啟動失敗",
+        "blocked": "瀏覽器彈窗被攔截，請允許彈出視窗後重試",
+        "hint": "使用「瀏覽器同步」前需安裝驗證橋擴充功能",
+        "install": "安裝擴充功能"
+      }
     }
   },
   "circuit": {

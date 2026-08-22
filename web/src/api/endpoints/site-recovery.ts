@@ -153,6 +153,17 @@ export type VerificationBridgePairingCreated = {
     token: string;
 };
 
+export type OneClickBrowserSyncRequest = {
+    site_account_id: number;
+    operation?: SiteRecoveryOperation;
+};
+
+export type OneClickBrowserSyncResponse = {
+    pairing_token: string;
+    target_url: string;
+    nas_origin: string;
+};
+
 function invalidateRecovery(queryClient: ReturnType<typeof useQueryClient>) {
     queryClient.invalidateQueries({ queryKey: ['site-recovery'] });
     queryClient.invalidateQueries({ queryKey: ['sites', 'list'] });
@@ -411,5 +422,17 @@ export function useRotateVerificationPairing() {
                 queryKey: ['site-recovery', 'verification', 'pairings'],
             });
         },
+    });
+}
+
+export function useOneClickBrowserSync() {
+    const queryClient = useQueryClient();
+    return useMutation({
+        mutationFn: async (data: OneClickBrowserSyncRequest) =>
+            apiClient.post<OneClickBrowserSyncResponse>(
+                '/api/v1/site/recovery/browser-sync',
+                data,
+            ),
+        onSuccess: () => invalidateRecovery(queryClient),
     });
 }

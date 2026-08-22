@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"strconv"
 	"time"
@@ -14,6 +15,7 @@ import (
 	"github.com/bestruirui/octopus/internal/sitesync"
 	"github.com/bestruirui/octopus/internal/utils/log"
 	"github.com/bestruirui/octopus/internal/utils/safe"
+	"github.com/bestruirui/octopus/static"
 	"github.com/gin-gonic/gin"
 )
 
@@ -48,7 +50,11 @@ func init() {
 		AddRoute(router.NewRoute("/verification", http.MethodPost).Handle(createVerificationSession)).
 		AddRoute(router.NewRoute("/verification/:id/complete", http.MethodPost).Handle(manualCompleteVerificationSession)).
 		AddRoute(router.NewRoute("/verification/pairings", http.MethodPost).Handle(createVerificationPairing)).
-		AddRoute(router.NewRoute("/verification/pairings/:id/rotate", http.MethodPost).Handle(rotateVerificationPairing))
+		AddRoute(router.NewRoute("/verification/pairings/:id/rotate", http.MethodPost).Handle(rotateVerificationPairing)).
+		AddRoute(router.NewRoute("/browser-sync", http.MethodPost).Handle(oneClickBrowserSync))
+
+	router.NewGroupRouter("/api/v1/extension").
+		AddRoute(router.NewRoute("/verification-bridge", http.MethodGet).Handle(downloadVerificationBridge))
 
 	router.NewGroupRouter("/api/v1/site/recovery/verification/bridge").
 		Use(middleware.RequireJSON()).
@@ -203,6 +209,63 @@ func createVerificationSession(c *gin.Context) {
 		return
 	}
 	resp.Success(c, item)
+}
+
+func oneClickBrowserSync(c *gin.Context) {
+	var request struct {
+		SiteAccountID int                     `json:"site_account_id" binding:"required"`
+		Operation     model.SiteOperationType  `json:"operation,omitempty"`
+	}
+	if err := c.ShouldBindJSON(&request); err != nil {
+		resp.InvalidJSON(c)
+		return
+	}
+	operation := request.Operation
+	if operation == "" {
+		operation = model.SiteOperationSync
+	}
+	switch operation {
+	case model.SiteOperationSync, model.SiteOperationCheckin:
+	default:
+		resp.Error(c, http.StatusBadRequest,
+			fmt.Sprintf("unsupported operation: %s", operation))
+		return
+	}
+	nasOrigin, _ := op.SettingGetString(model.SettingKeyApiBaseUrl)
+	if nasOrigin == "" {
+		scheme := "http"
+		if c.Request.TLS != nil || c.GetHeader("X-Forwarded-Proto") == "https" {
+			scheme = "https"
+		}
+		nasOrigin = scheme + "://" + c.Request.Host
+	}
+	pairingCreated, err := op.VerificationBridgePairingCreate(
+		c.Request.Context(),
+		"一键同步",
+		0,
+		request.SiteAccountID,
+	)
+	if err != nil {
+		resp.Error(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	sessionCreated, err := op.VerificationSessionCreate(c.Request.Context(),
+		op.VerificationSessionCreateRequest{
+			SiteAccountID:        request.SiteAccountID,
+			UseAccountPreference:  true,
+			Operation:             operation,
+			TTLMinutes:            15,
+		})
+	if err != nil {
+		_ = op.VerificationBridgePairingRevoke(c.Request.Context(), pairingCreated.Pairing.ID)
+		resp.Error(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	resp.Success(c, gin.H{
+		"pairing_token": pairingCreated.Token,
+		"target_url":    sessionCreated.Task.TargetURL,
+		"nas_origin":    nasOrigin,
+	})
 }
 
 func manualCompleteVerificationSession(c *gin.Context) {
@@ -540,4 +603,11 @@ func optionalPositiveIntQuery(c *gin.Context, name string) (int, bool) {
 		return 0, false
 	}
 	return value, true
+}
+
+func downloadVerificationBridge(c *gin.Context) {
+	if err := static.WriteVerificationBridgeZip(c.Writer); err != nil {
+		resp.Error(c, http.StatusInternalServerError, err.Error())
+		return
+	}
 }

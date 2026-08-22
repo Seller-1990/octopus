@@ -77,6 +77,7 @@ import { SiteEditDialog } from "./SiteEditDialog";
 import { BatchEditDialog } from "./BatchEditDialog";
 import { AccountEditDialog } from "./AccountEditDialog";
 import { RecoveryDialog } from "./RecoveryDialog";
+import { useOneClickBrowserSync } from "@/api/endpoints/site-recovery";
 import {
   accountHasCheckinEnabled,
   accountMatchesCheckinFilters,
@@ -100,6 +101,7 @@ import {
   CircleAlert,
   FileJson,
   FilterX,
+  Globe,
   Link2,
   MoreHorizontal,
   Pencil,
@@ -107,6 +109,7 @@ import {
   PinOff,
   Power,
   Plus,
+  Puzzle,
   RefreshCw,
   ShieldCheck,
   Square,
@@ -586,6 +589,7 @@ export function Site() {
   const importAllAPIHub = useImportAllAPIHub();
   const importMetAPI = useImportMetAPI();
   const batchAction = useSiteBatchAction();
+  const oneClickBrowserSync = useOneClickBrowserSync();
 
   const [siteDialogOpen, setSiteDialogOpen] = useState(false);
   const [importDialogOpen, setImportDialogOpen] = useState(false);
@@ -635,6 +639,9 @@ export function Site() {
   const [checkinAccountIds, setCheckinAccountIds] = useState<Set<number>>(
     () => new Set(),
   );
+  const [browserSyncAccountIds, setBrowserSyncAccountIds] = useState<
+    Set<number>
+  >(() => new Set());
   const [statusDayKey, setStatusDayKey] = useState(() => {
     const now = new Date();
     return `${now.getFullYear()}-${now.getMonth()}-${now.getDate()}`;
@@ -1097,6 +1104,46 @@ export function Site() {
       toast.error(translateSiteMessage(locale, getErrorMessage(syncError), t));
     } finally {
       setSyncingAccountIds((current) => {
+        const next = new Set(current);
+        next.delete(account.id);
+        return next;
+      });
+    }
+  }
+
+  async function handleBrowserSync(account: SiteAccount, site: SiteRecord) {
+    setBrowserSyncAccountIds((current) => new Set(current).add(account.id));
+    try {
+      const result = await oneClickBrowserSync.mutateAsync({
+        site_account_id: account.id,
+        operation: "sync",
+      });
+      if (!result.target_url || !result.pairing_token || !result.nas_origin) {
+        toast.error(tRecovery("verification.browserSync.failed"));
+        return;
+      }
+      let url: URL;
+      try {
+        url = new URL(result.target_url);
+      } catch {
+        toast.error(tRecovery("verification.browserSync.failed"));
+        return;
+      }
+      if (url.protocol !== "http:" && url.protocol !== "https:") {
+        toast.error(tRecovery("verification.browserSync.failed"));
+        return;
+      }
+      url.hash = `octopus_sync=1&octopus_token=${encodeURIComponent(result.pairing_token)}&octopus_origin=${encodeURIComponent(result.nas_origin)}`;
+      const win = window.open(url.href, "_blank", "noopener,noreferrer");
+      if (!win) {
+        toast.error(tRecovery("verification.browserSync.blocked"));
+        return;
+      }
+      toast.success(tRecovery("verification.browserSync.opened"));
+    } catch (syncError) {
+      toast.error(translateSiteMessage(locale, getErrorMessage(syncError), t));
+    } finally {
+      setBrowserSyncAccountIds((current) => {
         const next = new Set(current);
         next.delete(account.id);
         return next;
@@ -1931,6 +1978,14 @@ export function Site() {
                                         />
                                       </IconActionButton>
 
+                                      <IconActionButton
+                                        label={tRecovery("verification.browserSync.button")}
+                                        disabled={browserSyncAccountIds.has(account.id)}
+                                        onClick={() => handleBrowserSync(account, site)}
+                                      >
+                                        <Globe className="size-4" />
+                                      </IconActionButton>
+
                                       <Popover>
                                         <PopoverTrigger asChild>
                                           <Button
@@ -2112,6 +2167,29 @@ export function Site() {
           activeTags={tagFilters}
           onTagFilterChange={handleTagFilterChange}
         />
+
+        {visibleSites.length > 0 ? (
+          <div className="flex items-center justify-between gap-2 rounded-2xl border border-border/60 bg-card px-4 py-2 text-sm">
+            <span className="text-muted-foreground">
+              {tRecovery("verification.browserSync.hint")}
+            </span>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="rounded-xl"
+              onClick={() =>
+                window.open(
+                  `${typeof window !== "undefined" ? window.location.origin : ""}/api/v1/extension/verification-bridge`,
+                  "_blank",
+                )
+              }
+            >
+              <Puzzle className="size-4" />
+              {tRecovery("verification.browserSync.install")}
+            </Button>
+          </div>
+        ) : null}
 
         {selectedSiteIds.length > 0 ? (
           <section className="sticky top-0 z-30 rounded-3xl border border-border/70 bg-card/95 p-4 shadow-[0_20px_60px_-42px_rgba(15,23,42,0.45)] backdrop-blur supports-[backdrop-filter]:bg-card/90">

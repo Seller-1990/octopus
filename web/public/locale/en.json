@@ -2116,7 +2116,15 @@
       "clearConfirmTitle": "Clear account verification?",
       "clearConfirmDescription": "Related sessions will be revoked, tasks canceled, and saved verification state removed.",
       "revokeConfirmTitle": "Revoke verification session?",
-      "revokeConfirmDescription": "This session and its active task will become invalid immediately."
+      "revokeConfirmDescription": "This session and its active task will become invalid immediately.",
+      "browserSync": {
+        "button": "Browser Sync",
+        "opened": "Target site opened in browser. Complete login to sync automatically.",
+        "failed": "Failed to start browser sync",
+        "blocked": "Browser popup was blocked. Please allow popups and try again.",
+        "hint": "Install the Verification Bridge extension before using Browser Sync",
+        "install": "Install Extension"
+      }
     }
   },
   "circuit": {
