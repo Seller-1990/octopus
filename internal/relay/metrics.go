@@ -464,6 +464,17 @@ func (m *RelayMetrics) SaveOutcomeWithChannelStats(
 		if actualModel == "" {
 			actualModel = m.RequestModel
 		}
+		var priceGroupMultiplier *float64
+		var priceGroupMultiplierKnown *bool
+		if m.EffectivePrice != nil {
+			groupMultiplier := m.EffectivePrice.GroupMultiplier
+			priceGroupMultiplier = &groupMultiplier
+			// 与 saveLog 保持一致：仅解析到价格时写 known。
+			if m.EffectivePrice.Source != model.PriceQuoteSourceUnknown {
+				known := m.EffectivePrice.GroupMultiplierKnown
+				priceGroupMultiplierKnown = &known
+			}
+		}
 		liveLogOutcome(
 			m.LiveRequestID,
 			outcome,
@@ -475,6 +486,9 @@ func (m *RelayMetrics) SaveOutcomeWithChannelStats(
 			intPointerValue(m.CacheReadTokens),
 			intPointerValue(m.CacheWriteTokens),
 			m.Stats.InputCost+m.Stats.OutputCost,
+			attempts,
+			priceGroupMultiplier,
+			priceGroupMultiplierKnown,
 		)
 	}
 }

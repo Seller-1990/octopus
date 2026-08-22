@@ -17,6 +17,10 @@ const (
 	sub2APIAccessTokenRefreshLead  = 5 * time.Minute
 	sub2APIAccessTokenSpreadWindow = 2 * time.Minute
 	Sub2APIRefreshTaskInterval     = 30 * time.Second
+	// sub2APIRefreshRequestTimeout 限制单次上游刷新请求的总时长。
+	// 无整体超时前，上游连接建立后若迟迟不返回，刷新任务会一直挂到任务 ctx
+	// 超时（5 分钟），导致单账号故障拖垮整轮刷新。
+	sub2APIRefreshRequestTimeout = 60 * time.Second
 )
 
 type sub2APIRefreshedCredentials struct {
@@ -209,11 +213,14 @@ func refreshSub2APIManagedSession(ctx context.Context, siteRecord *model.Site, a
 		headers["Authorization"] = ensureBearer(currentAccessToken)
 	}
 
+	requestCtx, cancel := context.WithTimeout(ctx, sub2APIRefreshRequestTimeout)
+	defer cancel()
+
 	var payload map[string]any
 	var err error
 	for attempt := 0; attempt < 2; attempt++ {
 		payload, err = requestJSON(
-			ctx,
+			requestCtx,
 			siteRecord,
 			"POST",
 			buildSiteURL(siteRecord.BaseURL, "/api/v1/auth/refresh"),
@@ -230,13 +237,16 @@ func refreshSub2APIManagedSession(ctx context.Context, siteRecord *model.Site, a
 		}
 		timer := time.NewTimer(retryDelay)
 		select {
-		case <-ctx.Done():
+		case <-requestCtx.Done():
 			timer.Stop()
-			return "", ctx.Err()
+			return "", requestCtx.Err()
 		case <-timer.C:
 		}
 	}
 	if err != nil {
+		if requestCtx.Err() != nil && ctx.Err() == nil {
+			return "", fmt.Errorf("sub2api token refresh request timed out after %s: %w", sub2APIRefreshRequestTimeout, requestCtx.Err())
+		}
 		return "", fmt.Errorf("sub2api token refresh request failed: %w", err)
 	}
 

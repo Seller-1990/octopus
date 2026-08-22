@@ -1372,7 +1372,8 @@
       "stopAttempt": "停止当前尝试",
       "stopping": "停止中",
       "attempts": "尝试",
-      "attemptIndex": "第 {index} 次尝试"
+      "attemptIndex": "第 {index} 次尝试",
+      "keyMultiplier": "Key 倍率"
     }
   },
   "channel": {

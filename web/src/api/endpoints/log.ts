@@ -526,6 +526,11 @@ export interface LiveLogOverview {
     cache_write_tokens: number;
     total_cost: number;
     error?: string;
+    // 请求完成后的补充字段：与 DB 历史日志一致，用于实时列表展示
+    // key 倍率与完整 key 切换记录。
+    price_group_multiplier?: number;
+    price_group_multiplier_known?: boolean;
+    attempts?: ChannelAttempt[];
 }
 
 function isLiveFinished(state: LiveRequestState) {

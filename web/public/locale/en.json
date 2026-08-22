@@ -1372,7 +1372,8 @@
       "stopAttempt": "Stop attempt",
       "stopping": "Stopping",
       "attempts": "Attempts",
-      "attemptIndex": "Attempt #{index}"
+      "attemptIndex": "Attempt #{index}",
+      "keyMultiplier": "Key multiplier"
     }
   },
   "channel": {

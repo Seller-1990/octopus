@@ -52,6 +52,12 @@ type LiveLog struct {
 	CacheWriteTokens int64            `json:"cache_write_tokens"`
 	TotalCost        float64          `json:"total_cost"`
 	Error            string           `json:"error,omitempty"`
+
+	// 终态补充字段：与 DB 历史日志一致，供前端在实时列表里继续展示
+	// key 倍率与完整的 key 切换记录（仅请求完成后写入）。
+	PriceGroupMultiplier      *float64               `json:"price_group_multiplier,omitempty"`
+	PriceGroupMultiplierKnown *bool                  `json:"price_group_multiplier_known,omitempty"`
+	Attempts                  []model.ChannelAttempt `json:"attempts,omitempty"`
 }
 
 type liveLogRecord struct {
@@ -145,6 +151,9 @@ func liveLogOutcome(
 	cacheReadTokens int64,
 	cacheWriteTokens int64,
 	totalCost float64,
+	attempts []model.ChannelAttempt,
+	priceGroupMultiplier *float64,
+	priceGroupMultiplierKnown *bool,
 ) {
 	if id == 0 {
 		return
@@ -172,6 +181,9 @@ func liveLogOutcome(
 	record.CacheReadTokens = cacheReadTokens
 	record.CacheWriteTokens = cacheWriteTokens
 	record.TotalCost = totalCost
+	record.Attempts = attempts
+	record.PriceGroupMultiplier = priceGroupMultiplier
+	record.PriceGroupMultiplierKnown = priceGroupMultiplierKnown
 	if state == LiveRequestSuccess {
 		record.Error = ""
 	} else if err != nil {
