@@ -2,7 +2,7 @@
 
 import { useState, useMemo, useCallback, useEffect, useRef } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { Trash2, X, Pencil, Pin, PinOff, ArrowDownWideNarrow, HeartPulse, FlaskConical } from 'lucide-react';
+import { Trash2, X, Pencil, Pin, PinOff, ArrowDownWideNarrow, ListChecks } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { type Group, useDeleteGroup, useUpdateGroup, useToggleGroupPin, useToolsTestBatch, useForceToolsUnsupported, useResetToolsState, type ToolsBatchItem, type ToolsBatchTask } from '@/api/endpoints/group';
 import { apiClient } from '@/api/client';
@@ -18,7 +18,6 @@ import { MemberList } from './ItemList';
 import { GroupEditor, type GroupEditorValues } from './Editor';
 import { GroupHealthBadge } from './health';
 import { CapabilityBadges } from '../model/CapabilityBadges';
-import { useRunGroupHealth } from '@/api/endpoints/group-health';
 import { modelChannelKey, MODE_LABELS } from './utils';
 import { GroupMode, type GroupUpdateRequest } from '@/api/endpoints/group';
 import { PresetPopover } from './PresetPopover';
@@ -519,9 +518,6 @@ export function GroupCard({ group }: { group: Group }) {
 
             <div className="flex items-center gap-1.5">
                 <GroupHealthBadge groupId={group.id} />
-                {group.id ? (
-                    <ManualProbeButton groupId={group.id} />
-                ) : null}
                 <Tooltip side="top" sideOffset={6} align="center">
                     <TooltipTrigger asChild>
                         <button
@@ -534,7 +530,7 @@ export function GroupCard({ group }: { group: Group }) {
                                 batchActive ? 'text-primary animate-pulse' : 'text-muted-foreground hover:bg-muted hover:text-foreground',
                             )}
                         >
-                            <FlaskConical className="size-3.5" />
+                            <ListChecks className="size-3.5" />
                         </button>
                     </TooltipTrigger>
                     <TooltipContent>{t('tools.batchTestTitle')}</TooltipContent>
@@ -693,20 +689,5 @@ export function GroupCard({ group }: { group: Group }) {
                 )}
             </AnimatePresence>
         </article >
-    );
-}
-
-function ManualProbeButton({ groupId }: { groupId: number }) {
-    const runHealth = useRunGroupHealth();
-    return (
-        <button
-            type="button"
-            onClick={() => runHealth.mutate({ groupId })}
-            disabled={runHealth.isPending}
-            className="shrink-0 rounded-md p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-50"
-            title="Manual probe"
-        >
-            <HeartPulse className={`size-3.5 ${runHealth.isPending ? 'animate-pulse' : ''}`} />
-        </button>
     );
 }

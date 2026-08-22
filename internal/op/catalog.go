@@ -43,15 +43,18 @@ func resolveCapabilities(modelName string) *uint8 {
 	lower := strings.ToLower(modelName)
 	var caps uint8
 	// 显式后缀兜底（中文厂商命名惯例 + 通用后缀）。
-	// 注意：5v/vision 子串误伤概率低（纯文本模型少用这些后缀），漏判方向安全（nil=未知）。
-	for _, suffix := range []string{"5v", "vision", "-vl", "-vlx", "omni", "visual"} {
+	// 注意：vision/vl 子串误伤概率低（纯文本模型少用这些后缀），漏判方向安全（nil=未知）。
+	// "vl" 用裸子串而非 "-vl"：internvl / qwen2.5-vl-* 等含 vl 组合的命名都能命中；
+	// "4v"/"5v" 覆盖 glm-4v / glm-4.5v 系列。
+	for _, suffix := range []string{"4v", "5v", "vision", "vl", "omni", "visual", "llava"} {
 		if strings.Contains(lower, suffix) {
 			caps |= uint8(model.CapMultimodal)
 			break
 		}
 	}
 	// 推理后缀兜底（reasoning 无 models.dev 数据时的保守推断）。
-	for _, suffix := range []string{"reasoning", "-r1", "thinking"} {
+	// "think" 裸子串同时覆盖 -think 与 -thinking。
+	for _, suffix := range []string{"reasoning", "-r1", "think"} {
 		if strings.Contains(lower, suffix) {
 			caps |= uint8(model.CapReasoning)
 			break

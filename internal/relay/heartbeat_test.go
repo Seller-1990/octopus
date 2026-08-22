@@ -118,6 +118,9 @@ func TestEarlyHeartbeat_DelayedFirstHeartbeat(t *testing.T) {
 	if !hb.HeaderWritten() {
 		t.Fatal("expected SSE header after delay")
 	}
+	// Stop 等 heartbeat goroutine 退出，与 header 写入建立 happens-before，
+	// 之后的 header/body 断言才是无竞争读取（Stop 幂等，defer 再调一次无害）。
+	hb.Stop()
 	if got := w.Header().Get("Content-Type"); got != "text/event-stream" {
 		t.Fatalf("expected Content-Type=text/event-stream, got %q", got)
 	}

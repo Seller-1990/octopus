@@ -253,6 +253,15 @@ func (s *AttemptSpan) SetUsage(usage *model.AttemptUsageSnapshot) {
 	s.attempt.Usage = &snapshot
 }
 
+// SetKeyRemark 记录本次尝试实际使用的 channel key 备注，供日志明细定位到具体 key
+//（倍率随 Usage 快照记录；两者合起来支撑「哪个 key、什么倍率、怎么失败的」排查）。
+func (s *AttemptSpan) SetKeyRemark(remark string) {
+	if s == nil || s.ended {
+		return
+	}
+	s.attempt.ChannelKeyRemark = remark
+}
+
 // End 结束尝试：设置状态，自动计算耗时，追加到 Iterator
 func (s *AttemptSpan) End(status model.AttemptStatus, statusCode int, msg string) {
 	outcome := model.RequestOutcomeFailed

@@ -96,6 +96,7 @@ type AttemptUsageSnapshot struct {
 type ChannelAttempt struct {
 	ChannelID          int                   `json:"channel_id"`
 	ChannelKeyID       int                   `json:"channel_key_id,omitempty"`
+	ChannelKeyRemark   string                `json:"channel_key_remark,omitempty"`
 	ChannelName        string                `json:"channel_name"`
 	ModelName          string                `json:"model_name"`
 	RouteCandidateID   int                   `json:"route_candidate_id,omitempty"`

@@ -179,5 +179,9 @@ func (h *earlyHeartbeat) FlushOrError(c *gin.Context, statusCode int, message st
 		h.WriteSSEError(statusCode, message)
 		return
 	}
+	// header 尚未写过时必须先等 heartbeat goroutine 退出再写响应：否则
+	// resp.Error 写 header 与后台 writeSSEHeaderLocked 并发访问同一 map。
+	// Stop 幂等（defer 里的再次 Stop 只等已关闭的 done channel）。
+	h.Stop()
 	resp.Error(c, statusCode, message)
 }

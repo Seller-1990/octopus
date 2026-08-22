@@ -220,17 +220,6 @@ export function GroupHealthBadge({ groupId }: { groupId?: number }) {
                         {isRunning || isStandardRunPending ? <LoaderCircle className="size-3.5 animate-spin" /> : <Play className="size-3.5" />}
                         {t('run')}
                     </Button>
-                    <Button
-                        type="button"
-                        size="sm"
-                        variant="outline"
-                        className="h-7 rounded-lg px-2 text-xs"
-                        disabled={isRunPendingForGroup || isRunning}
-                        onClick={() => runGroupHealth.mutate({ groupId, probeMode: 'full' }, { onError: showRunError })}
-                    >
-                        {isFullRunPending ? <LoaderCircle className="size-3.5 animate-spin" /> : <Play className="size-3.5" />}
-                        {t('runFull')}
-                    </Button>
                 </CardContent>
             </Card>
 
@@ -240,8 +229,20 @@ export function GroupHealthBadge({ groupId }: { groupId?: number }) {
                         <span className={cn('size-2.5 rounded-full', statusDotTone(latest?.status))} />
                         {t('detailTitle')}
                     </DialogTitle>
-                    <DialogDescription>
-                        {t('lastRun', { time: formatDateTime(latest?.finished_at ?? latest?.started_at ?? null) })}
+                    <DialogDescription className="flex items-center justify-between gap-2">
+                        <span>{t('lastRun', { time: formatDateTime(latest?.finished_at ?? latest?.started_at ?? null) })}</span>
+                        {/* Run Full 只在详情里提供：卡片行保留单一 Run 入口，避免按钮拥挤 */}
+                        <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            className="h-7 shrink-0 rounded-lg px-2 text-xs"
+                            disabled={isRunPendingForGroup || isRunning}
+                            onClick={() => runGroupHealth.mutate({ groupId, probeMode: 'full' }, { onError: showRunError })}
+                        >
+                            {isFullRunPending ? <LoaderCircle className="size-3.5 animate-spin" /> : <Play className="size-3.5" />}
+                            {t('runFull')}
+                        </Button>
                     </DialogDescription>
                 </DialogHeader>
 

@@ -1,6 +1,7 @@
 package modelvendor
 
 import (
+	"regexp"
 	"strings"
 	"sync"
 
@@ -93,11 +94,39 @@ func ReplaceVisionIndex(entries map[string]VisionEntry) {
 	ReplaceCapabilityIndex(conv)
 }
 
+// releaseSuffixPatterns 渠道实际模型名常带 models.dev 索引里没有的发布后缀
+//（-20241022 / -2025-01-28 / -latest），精确未命中时剥掉重查。
+var releaseSuffixPatterns = []*regexp.Regexp{
+	regexp.MustCompile(`-20\d{6}$`),
+	regexp.MustCompile(`-20\d{2}-\d{2}-\d{2}$`),
+	regexp.MustCompile(`-latest$`),
+}
+
+func stripReleaseSuffix(name string) string {
+	for _, p := range releaseSuffixPatterns {
+		if p.MatchString(name) {
+			return p.ReplaceAllString(name, "")
+		}
+	}
+	return name
+}
+
 // LookupCapabilities 查询模型能力位图。ok=false 表示索引无此模型（未知）。
 func LookupCapabilities(name string) (uint8, bool) {
+	key := strings.ToLower(strings.TrimSpace(name))
+	indexMu.RLock()
+	caps, ok := capIndex[key]
+	indexMu.RUnlock()
+	if ok {
+		return caps, true
+	}
+	stripped := stripReleaseSuffix(key)
+	if stripped == key || stripped == "" {
+		return caps, false
+	}
 	indexMu.RLock()
 	defer indexMu.RUnlock()
-	caps, ok := capIndex[strings.ToLower(strings.TrimSpace(name))]
+	caps, ok = capIndex[stripped]
 	return caps, ok
 }
 

@@ -516,6 +516,11 @@ function RetryBadgeWithTooltip({ channelName, brandColor, attempts }: RetryBadge
             <TooltipContent className="border bg-card p-2 min-w-[280px] shadow-sm rounded-3xl flex flex-col gap-1">
                 {merged.map((attempt, idx) => {
                     const statusMeta = getAttemptStatusMeta(attempt.status, t);
+                    const isFailed = attempt.status === 'failed' || attempt.status === 'circuit_break';
+                    // 失败且高耗时的 key 是禁用决策的直接依据，耗时行给醒目警示色
+                    const slowFailure = isFailed && attempt.totalDuration > 10_000;
+                    const multiplierLabel = formatKeyMultiplier(attempt.usage?.price_multiplier);
+                    const errMsg = sanitizeErrorMessage(attempt.msg);
 
                     return (
                         <div key={idx} className="flex flex-col w-full">
@@ -531,11 +536,29 @@ function RetryBadgeWithTooltip({ channelName, brandColor, attempts }: RetryBadge
                                 <div className="flex min-w-0 flex-col flex-1">
                                     <span className="truncate text-xs font-semibold text-foreground">
                                         {attempt.channel_name}
+                                        {attempt.channel_key_remark ? (
+                                            <span className="ml-1 font-normal text-muted-foreground">· {attempt.channel_key_remark}</span>
+                                        ) : null}
                                     </span>
-                                    <span className="text-[10px] text-muted-foreground">
-                                        {attempt.model_name} • {formatDuration(attempt.totalDuration)}
+                                    <span
+                                        className={cn(
+                                            'text-[10px] text-muted-foreground',
+                                            slowFailure && 'font-medium text-destructive',
+                                        )}
+                                    >
+                                        {attempt.model_name} • {formatDuration(attempt.totalDuration)}{slowFailure ? ' ⚠' : ''}
                                     </span>
+                                    {errMsg ? (
+                                        <span className="truncate text-[10px] text-destructive/80" title={errMsg}>
+                                            {errMsg}
+                                        </span>
+                                    ) : null}
                                 </div>
+                                {multiplierLabel ? (
+                                    <Badge variant="outline" className="shrink-0 h-5 px-1.5 text-[10px] font-semibold tabular-nums">
+                                        {multiplierLabel}
+                                    </Badge>
+                                ) : null}
                                 {attempt.repeat > 1 ? (
                                     <Badge variant="outline" className="shrink-0 h-5 px-1.5 text-[10px] font-semibold tabular-nums">
                                         ×{attempt.repeat}

@@ -64,14 +64,17 @@ func UpdateCore() error {
 	checksumURL := releaseDownloadURL("sha256sums.txt")
 	expectedHash, err := fetchExpectedChecksum(checksumURL, filename)
 	if err != nil {
-		log.Warnf("sha256sums.txt not available, skipping checksum verification: %v", err)
-	} else {
-		if err := verifySHA256(data, expectedHash); err != nil {
-			log.Warnf("checksum verification failed: %v", err)
-			return fmt.Errorf("checksum verification failed: %w", err)
-		}
-		log.Infof("SHA-256 checksum verified successfully")
+		// 校验源不可用即拒绝更新：热更新是替换自身二进制的不可逆动作，
+		// 未校验的下载体（截断/污染）一旦写入并重启会直接挂掉服务。
+		// 更新失败可以随时重试，坏二进制无法自愈。
+		log.Warnf("sha256sums.txt unavailable, aborting update (never install unverified binaries): %v", err)
+		return fmt.Errorf("checksum verification unavailable: %w", err)
 	}
+	if err := verifySHA256(data, expectedHash); err != nil {
+		log.Warnf("checksum verification failed: %v", err)
+		return fmt.Errorf("checksum verification failed: %w", err)
+	}
+	log.Infof("SHA-256 checksum verified successfully")
 
 	// Determine target path based on environment
 	var targetDir string
