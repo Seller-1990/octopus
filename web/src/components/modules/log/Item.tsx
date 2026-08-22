@@ -50,7 +50,7 @@ import {
     type RequestOutcome,
 } from '@/api/endpoints/log';
 import { getModelIcon } from '@/lib/model-icons';
-import { channelGroupDisplayName, splitChannelDisplayName } from '@/lib/channel-name';
+import { splitChannelDisplayName } from '@/lib/channel-name';
 import { formatAttemptFailure } from '@/lib/attempt-failure';
 import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
@@ -502,6 +502,8 @@ interface RetryBadgeWithTooltipProps {
 function RetryBadgeWithTooltip({ channelName, brandColor, attempts }: RetryBadgeWithTooltipProps) {
     const t = useTranslations('log.card');
     const merged = useMemo(() => mergeAdjacentAttempts(attempts), [attempts]);
+    const channelNameParts = useMemo(() => splitChannelDisplayName(channelName), [channelName]);
+    const triggerName = channelNameParts.siteName || channelNameParts.groupName;
 
     return (
         <Tooltip>
@@ -513,7 +515,7 @@ function RetryBadgeWithTooltip({ channelName, brandColor, attempts }: RetryBadge
                     title={channelName}
                 >
                     <RotateCw className="size-3 mr-1 opacity-80" />
-                    {channelGroupDisplayName(channelName)}
+                    {triggerName}
                 </Badge>
             </TooltipTrigger>
             <TooltipContent className="border bg-card p-2 min-w-[300px] max-w-[480px] shadow-sm rounded-3xl">
@@ -779,6 +781,12 @@ export function LogCard({ log, siteTargets }: { log: RelayLog; siteTargets: LogS
         () => log.actual_model_name?.trim() || log.request_model_name?.trim() || '',
         [log.actual_model_name, log.request_model_name],
     );
+    const channelNameParts = useMemo(
+        () => splitChannelDisplayName(log.channel_name),
+        [log.channel_name],
+    );
+    const channelSiteName = channelNameParts.siteName;
+    const channelGroupName = channelNameParts.groupName;
     const { Avatar: ModelAvatar, color: brandColor } = useMemo(
         () => getModelIcon(displayActualModelName),
         [displayActualModelName]
@@ -923,11 +931,14 @@ export function LogCard({ log, siteTargets }: { log: RelayLog; siteTargets: LogS
                                             style={{ backgroundColor: `${brandColor}15`, color: brandColor }}
                                             title={log.channel_name}
                                         >
-                                            {channelGroupDisplayName(log.channel_name)}
+                                            {channelSiteName || channelGroupName}
                                         </Badge>
                                     )}
-                                    <span className="text-muted-foreground truncate" title={displayActualModelName}>
-                                        {displayActualModelName}
+                                    <span
+                                        className="text-muted-foreground truncate"
+                                        title={channelSiteName ? (displayActualModelName || log.channel_name) : displayActualModelName}
+                                    >
+                                        {channelSiteName ? channelGroupName : displayActualModelName}
                                     </span>
                                     {log.attempts?.some((attempt) => attempt.sticky) ? (
                                         <Pin className="size-3.5 shrink-0 text-amber-500" />
@@ -1034,10 +1045,15 @@ export function LogCard({ log, siteTargets }: { log: RelayLog; siteTargets: LogS
                                         style={{ backgroundColor: `${brandColor}15`, color: brandColor }}
                                         title={log.channel_name}
                                     >
-                                        {channelGroupDisplayName(log.channel_name)}
+                                        {channelSiteName || channelGroupName}
                                     </Badge>
                                 )}
-                                <span className="text-muted-foreground truncate">{displayActualModelName}</span>
+                                <span
+                                    className="text-muted-foreground truncate"
+                                    title={channelSiteName ? (displayActualModelName || log.channel_name) : displayActualModelName}
+                                >
+                                    {channelSiteName ? channelGroupName : displayActualModelName}
+                                </span>
                                 {log.attempts?.some((attempt) => attempt.sticky) ? (
                                     <Pin className="size-3.5 shrink-0 text-amber-500" />
                                 ) : null}

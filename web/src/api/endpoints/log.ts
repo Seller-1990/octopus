@@ -406,10 +406,38 @@ async function fetchLogStreamToken() {
     return token;
 }
 
-// useLiveLogs 订阅实时日志概览流（快照 + 增量）。
+// useLiveLogs 订阅实时日志概览流（初始历史快照 + 增量）。
 // live 列表在内存中按 id 降序保留固定条数：面板常被整天挂着，无上限会让
 // 数万条日志对象常驻并让每条新日志触发全量排序。
 const LIVE_LOGS_MAX_ENTRIES = 500;
+// 进入无过滤日志页时先拉取最近 N 条历史日志作为初始快照，随后由 SSE 增量更新。
+// 否则页面只在收到下一条实时事件后才显示内容，给用户「没有日志」的错觉。
+const LIVE_LOGS_SNAPSHOT_SIZE = 20;
+
+function relayLogToLiveOverview(log: RelayLog): LiveLogOverview {
+    return {
+        id: log.id,
+        state: log.outcome === 'success'
+            ? 'success'
+            : log.outcome === 'client_canceled'
+                ? 'canceled'
+                : 'failed',
+        started_at: new Date(log.time * 1000).toISOString(),
+        completed_at: new Date((log.time + Math.max(0, Math.floor(log.use_time / 1000))) * 1000).toISOString(),
+        duration_ms: log.use_time,
+        request_model_name: log.request_model_name,
+        actual_model_name: log.actual_model_name,
+        channel_name: log.channel_name,
+        input_tokens: log.input_tokens,
+        output_tokens: log.output_tokens,
+        cache_read_tokens: log.cache_read_tokens ?? 0,
+        cache_write_tokens: log.cache_write_tokens ?? 0,
+        total_cost: log.cost,
+        error: log.error,
+        price_group_multiplier: log.price_group_multiplier,
+        attempts: log.attempts,
+    };
+}
 
 export function useLiveLogs(enabled = true) {
     const [logs, setLogs] = useState<LiveLogOverview[]>([]);
@@ -430,6 +458,24 @@ export function useLiveLogs(enabled = true) {
                 retryTimer = null;
                 void connect(true);
             }, 2000);
+        };
+
+        const loadSnapshot = async () => {
+            try {
+                const params = new URLSearchParams();
+                params.set('limit', String(LIVE_LOGS_SNAPSHOT_SIZE));
+                params.set('with_total', 'false');
+                params.set('include_content', 'false');
+                params.set('pagination', 'cursor');
+                const result = await apiClient.get<{ logs: RelayLog[] | null } | null>(
+                    `/api/v1/log/list?${params.toString()}`,
+                );
+                if (cancelled) return;
+                setLogs((result?.logs ?? []).map(relayLogToLiveOverview));
+            } catch (e) {
+                if (cancelled) return;
+                setError(e instanceof Error ? e : new Error('Failed to load recent logs'));
+            }
         };
 
         const connect = async (isReconnect = false) => {
@@ -473,6 +519,7 @@ export function useLiveLogs(enabled = true) {
             }
         };
 
+        void loadSnapshot();
         void connect(false);
 
         return () => {

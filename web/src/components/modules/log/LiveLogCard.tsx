@@ -6,7 +6,7 @@ import { ChevronDown, ChevronUp, Coins, Loader2, Square } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
-import { channelGroupDisplayName } from '@/lib/channel-name';
+import { channelDisplayName } from '@/lib/channel-name';
 import { formatAttemptFailure, formatFailureSummary } from '@/lib/attempt-failure';
 import {
     useLiveLogDetail,
@@ -90,7 +90,7 @@ export function LiveLogCard({ log }: { log: LiveLogOverview }) {
                     {log.request_model_name || '--'}
                 </span>
                 <span className="text-muted-foreground truncate" title={log.channel_name || log.actual_model_name || undefined}>
-                    {channelGroupDisplayName(log.channel_name) || log.actual_model_name || '--'}
+                    {channelDisplayName(log.channel_name) || log.actual_model_name || '--'}
                 </span>
                 {keyMultiplierLabel ? (
                     <Badge
@@ -139,7 +139,7 @@ export function LiveLogCard({ log }: { log: LiveLogOverview }) {
                     {running && runningAttempt ? (
                         <div className="mb-3 flex items-center gap-3">
                             <span className="text-xs text-muted-foreground">
-                                {t('attemptIndex', { index: runningAttempt.attempt_index })}: {channelGroupDisplayName(runningAttempt.channel_name)}
+                                {t('attemptIndex', { index: runningAttempt.attempt_index })}: {channelDisplayName(runningAttempt.channel_name)}
                             </span>
                             <Button
                                 type="button"
@@ -177,7 +177,7 @@ export function LiveLogCard({ log }: { log: LiveLogOverview }) {
                                                 {t('attemptIndex', { index: attempt.attempt_num })}
                                             </span>
                                             <span className="font-semibold text-foreground" title={attempt.channel_name}>
-                                                {channelGroupDisplayName(attempt.channel_name)}
+                                                {channelDisplayName(attempt.channel_name)}
                                             </span>
                                             <span className="text-muted-foreground">{attempt.model_name}</span>
                                             <span className="text-muted-foreground">{attempt.status}</span>
@@ -207,7 +207,7 @@ export function LiveLogCard({ log }: { log: LiveLogOverview }) {
                                                 {t('attemptIndex', { index: attempt.attempt_index })}
                                             </span>
                                             <span className="font-semibold text-foreground" title={attempt.channel_name}>
-                                                {channelGroupDisplayName(attempt.channel_name)}
+                                                {channelDisplayName(attempt.channel_name)}
                                             </span>
                                             {runningAttempt?.attempt_index === attempt.attempt_index ? (
                                                 <Loader2 className="ml-auto size-3 animate-spin text-muted-foreground" />

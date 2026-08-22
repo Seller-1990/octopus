@@ -1178,7 +1178,8 @@
       "loadFailed": "Failed to load logs: {message}",
       "retry": "Retry",
       "streamDisconnected": "Live log connection disconnected",
-      "streamTokenFailed": "Failed to get live log stream token"
+      "streamTokenFailed": "Failed to get live log stream token",
+      "empty": "No logs yet"
     },
     "card": {
       "error": "Error",

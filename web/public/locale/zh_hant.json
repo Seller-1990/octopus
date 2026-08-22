@@ -1178,7 +1178,8 @@
       "loadFailed": "日誌載入失敗：{message}",
       "retry": "重試",
       "streamDisconnected": "即時日誌連線已中斷",
-      "streamTokenFailed": "取得即時日誌串流權杖失敗"
+      "streamTokenFailed": "取得即時日誌串流權杖失敗",
+      "empty": "暫無日誌"
     },
     "card": {
       "error": "錯誤",

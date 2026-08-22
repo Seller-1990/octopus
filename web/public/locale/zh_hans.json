@@ -1178,7 +1178,8 @@
       "loadFailed": "日志加载失败：{message}",
       "retry": "重试",
       "streamDisconnected": "实时日志连接已断开",
-      "streamTokenFailed": "获取实时日志流令牌失败"
+      "streamTokenFailed": "获取实时日志流令牌失败",
+      "empty": "暂无日志"
     },
     "card": {
       "error": "错误",

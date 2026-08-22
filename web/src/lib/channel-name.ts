@@ -35,3 +35,9 @@ export function splitChannelDisplayName(channelName: string | null | undefined):
 export function channelGroupDisplayName(channelName: string | null | undefined): string {
     return splitChannelDisplayName(channelName).groupName;
 }
+
+/** 用于需同时展示站点与分组的单行文本（如实时日志列表）。 */
+export function channelDisplayName(channelName: string | null | undefined): string {
+    const { siteName, groupName } = splitChannelDisplayName(channelName);
+    return siteName ? `${siteName}/${groupName}` : groupName;
+}
