@@ -1016,6 +1016,12 @@ func distinctChannelIDs(items []model.GroupItem) []int {
 	return channelIDs
 }
 
+// ChannelBalanceMap 返回 channel_id -> 绑定站点账号余额（无绑定的渠道不在 map 中）。
+// 供路由前的余额预检使用：绑定账号余额耗尽的渠道在转发前即被跳过。
+func ChannelBalanceMap(ctx context.Context, items []model.GroupItem) map[int]float64 {
+	return channelBalanceByChannel(ctx, items)
+}
+
 // channelBalanceByChannel 返回 channel_id -> 绑定账号余额（无绑定时为 0）。
 func channelBalanceByChannel(ctx context.Context, items []model.GroupItem) map[int]float64 {
 	result := make(map[int]float64, len(items))

@@ -50,6 +50,7 @@ import {
     type RequestOutcome,
 } from '@/api/endpoints/log';
 import { getModelIcon } from '@/lib/model-icons';
+import { channelGroupDisplayName, splitChannelDisplayName } from '@/lib/channel-name';
 import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
 import { CopyIconButton } from '@/components/common/CopyButton';
@@ -508,71 +509,85 @@ function RetryBadgeWithTooltip({ channelName, brandColor, attempts }: RetryBadge
                     variant="secondary"
                     className="shrink-0 text-xs px-1.5 py-0 cursor-help"
                     style={{ backgroundColor: `${brandColor}15`, color: brandColor }}
+                    title={channelName}
                 >
                     <RotateCw className="size-3 mr-1 opacity-80" />
-                    {channelName}
+                    {channelGroupDisplayName(channelName)}
                 </Badge>
             </TooltipTrigger>
-            <TooltipContent className="border bg-card p-2 min-w-[280px] shadow-sm rounded-3xl flex flex-col gap-1">
-                {merged.map((attempt, idx) => {
-                    const statusMeta = getAttemptStatusMeta(attempt.status, t);
-                    const isFailed = attempt.status === 'failed' || attempt.status === 'circuit_break';
-                    // 失败且高耗时的 key 是禁用决策的直接依据，耗时行给醒目警示色
-                    const slowFailure = isFailed && attempt.totalDuration > 10_000;
-                    const multiplierLabel = formatKeyMultiplier(attempt.usage?.price_multiplier);
-                    const errMsg = sanitizeErrorMessage(attempt.msg);
+            <TooltipContent className="border bg-card p-2 min-w-[300px] max-w-[480px] shadow-sm rounded-3xl">
+                <div className="flex max-h-[360px] flex-col gap-1 overflow-y-auto pr-0.5">
+                    {merged.map((attempt, idx) => {
+                        const statusMeta = getAttemptStatusMeta(attempt.status, t);
+                        const isFailed = attempt.status === 'failed' || attempt.status === 'circuit_break';
+                        // 失败且高耗时的 key 是禁用决策的直接依据，耗时行给醒目警示色
+                        const slowFailure = isFailed && attempt.totalDuration > 10_000;
+                        const multiplierLabel = formatKeyMultiplier(attempt.usage?.price_multiplier);
+                        const errMsg = sanitizeErrorMessage(attempt.msg);
+                        const attemptChannelName = splitChannelDisplayName(attempt.channel_name);
 
-                    return (
-                        <div key={idx} className="flex flex-col w-full">
-                            <div className="flex items-center gap-2 rounded-md px-2 py-1.5 hover:bg-muted/50 transition-colors">
-                                <Badge
-                                    className={cn(
-                                        'h-5 shrink-0 px-1.5 text-[10px] font-bold uppercase shadow-none border-0',
-                                        statusMeta.badgeClassName,
-                                    )}
-                                >
-                                    {statusMeta.label}
-                                </Badge>
-                                <div className="flex min-w-0 flex-col flex-1">
-                                    <span className="truncate text-xs font-semibold text-foreground">
-                                        {attempt.channel_name}
-                                        {attempt.channel_key_remark ? (
-                                            <span className="ml-1 font-normal text-muted-foreground">· {attempt.channel_key_remark}</span>
-                                        ) : null}
-                                    </span>
-                                    <span
+                        return (
+                            <div key={idx} className="flex flex-col w-full">
+                                <div className="flex items-start gap-2 rounded-md px-2 py-1.5 hover:bg-muted/50 transition-colors">
+                                    <Badge
                                         className={cn(
-                                            'text-[10px] text-muted-foreground',
-                                            slowFailure && 'font-medium text-destructive',
+                                            'mt-0.5 h-5 shrink-0 px-1.5 text-[10px] font-bold uppercase shadow-none border-0',
+                                            statusMeta.badgeClassName,
                                         )}
                                     >
-                                        {attempt.model_name} • {formatDuration(attempt.totalDuration)}{slowFailure ? ' ⚠' : ''}
-                                    </span>
-                                    {errMsg ? (
-                                        <span className="truncate text-[10px] text-destructive/80" title={errMsg}>
-                                            {errMsg}
+                                        {statusMeta.label}
+                                    </Badge>
+                                    <div className="flex min-w-0 flex-col flex-1">
+                                        <span className="text-xs font-semibold text-foreground">
+                                            {attemptChannelName.groupName}
+                                            {attemptChannelName.siteName ? (
+                                                <Badge
+                                                    variant="outline"
+                                                    className="ml-1 h-4 shrink-0 px-1 align-middle text-[9px] font-medium text-muted-foreground"
+                                                >
+                                                    {attemptChannelName.siteName}
+                                                </Badge>
+                                            ) : null}
+                                            {attempt.channel_key_remark ? (
+                                                <span className="ml-1 font-normal text-muted-foreground">· {attempt.channel_key_remark}</span>
+                                            ) : null}
                                         </span>
+                                        <span
+                                            className={cn(
+                                                'text-[10px] text-muted-foreground',
+                                                slowFailure && 'font-medium text-destructive',
+                                            )}
+                                        >
+                                            {attempt.model_name} • {formatDuration(attempt.totalDuration)}
+                                            {attempt.status_code ? ` • HTTP ${attempt.status_code}` : ''}
+                                            {slowFailure ? ' ⚠' : ''}
+                                        </span>
+                                        {errMsg ? (
+                                            <span className="mt-0.5 whitespace-pre-wrap break-words text-[10px] leading-relaxed text-destructive/80">
+                                                {errMsg}
+                                            </span>
+                                        ) : null}
+                                    </div>
+                                    {multiplierLabel ? (
+                                        <Badge variant="outline" className="shrink-0 h-5 px-1.5 text-[10px] font-semibold tabular-nums">
+                                            {multiplierLabel}
+                                        </Badge>
+                                    ) : null}
+                                    {attempt.repeat > 1 ? (
+                                        <Badge variant="outline" className="shrink-0 h-5 px-1.5 text-[10px] font-semibold tabular-nums">
+                                            ×{attempt.repeat}
+                                        </Badge>
                                     ) : null}
                                 </div>
-                                {multiplierLabel ? (
-                                    <Badge variant="outline" className="shrink-0 h-5 px-1.5 text-[10px] font-semibold tabular-nums">
-                                        {multiplierLabel}
-                                    </Badge>
-                                ) : null}
-                                {attempt.repeat > 1 ? (
-                                    <Badge variant="outline" className="shrink-0 h-5 px-1.5 text-[10px] font-semibold tabular-nums">
-                                        ×{attempt.repeat}
-                                    </Badge>
+                                {idx < merged.length - 1 ? (
+                                    <div className="flex justify-center py-0.5">
+                                        <ArrowDown className="size-3 text-muted-foreground/30" />
+                                    </div>
                                 ) : null}
                             </div>
-                            {idx < merged.length - 1 ? (
-                                <div className="flex justify-center py-0.5">
-                                    <ArrowDown className="size-3 text-muted-foreground/30" />
-                                </div>
-                            ) : null}
-                        </div>
-                    );
-                })}
+                        );
+                    })}
+                </div>
             </TooltipContent>
         </Tooltip>
     );
@@ -914,8 +929,9 @@ export function LogCard({ log, siteTargets }: { log: RelayLog; siteTargets: LogS
                                             variant="secondary"
                                             className="shrink-0 text-xs px-1.5 py-0"
                                             style={{ backgroundColor: `${brandColor}15`, color: brandColor }}
+                                            title={log.channel_name}
                                         >
-                                            {log.channel_name}
+                                            {channelGroupDisplayName(log.channel_name)}
                                         </Badge>
                                     )}
                                     <span className="text-muted-foreground truncate" title={displayActualModelName}>
@@ -1024,8 +1040,9 @@ export function LogCard({ log, siteTargets }: { log: RelayLog; siteTargets: LogS
                                         variant="secondary"
                                         className="shrink-0 text-xs px-1.5 py-0"
                                         style={{ backgroundColor: `${brandColor}15`, color: brandColor }}
+                                        title={log.channel_name}
                                     >
-                                        {log.channel_name}
+                                        {channelGroupDisplayName(log.channel_name)}
                                     </Badge>
                                 )}
                                 <span className="text-muted-foreground truncate">{displayActualModelName}</span>
@@ -1157,6 +1174,7 @@ export function LogCard({ log, siteTargets }: { log: RelayLog; siteTargets: LogS
                                                                         const attemptTarget = attemptTargets[attempt.originalIndex] ?? null;
                                                                         const canDisableAttempt = attempt.status === 'failed' && !!attemptTarget?.can_disable_model;
                                                                         const sanitizedMsg = sanitizeErrorMessage(attempt.msg);
+                                                                        const attemptChannelName = splitChannelDisplayName(attempt.channel_name);
 
                                                                         return (
                                                                             <div
@@ -1177,9 +1195,17 @@ export function LogCard({ log, siteTargets }: { log: RelayLog; siteTargets: LogS
                                                                                     </Badge>
                                                                                     <div className="min-w-0 flex-1">
                                                                                         <div className="flex items-center gap-2">
-                                                                                            <span className="font-semibold text-foreground">
-                                                                                                {attempt.channel_name}
+                                                                                            <span className="font-semibold text-foreground" title={attempt.channel_name}>
+                                                                                                {attemptChannelName.groupName}
                                                                                             </span>
+                                                                                            {attemptChannelName.siteName ? (
+                                                                                                <Badge
+                                                                                                    variant="outline"
+                                                                                                    className="h-4 shrink-0 px-1 text-[9px] font-medium text-muted-foreground"
+                                                                                                >
+                                                                                                    {attemptChannelName.siteName}
+                                                                                                </Badge>
+                                                                                            ) : null}
                                                                                             <span className="text-muted-foreground truncate">
                                                                                                 ({attempt.model_name})
                                                                                             </span>

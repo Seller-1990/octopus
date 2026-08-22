@@ -26,6 +26,11 @@ func TestTwoStateMultiplierCapMatrix(t *testing.T) {
 		{name: "known true under cap allowed", groupKey: "mtx-d", multiplier: f64Ptr(2), known: true, cap: "4", wantStatus: MultiplierPolicyStatusAllowed},
 		{name: "cap disabled over cap allowed", groupKey: "mtx-e", multiplier: f64Ptr(6), known: true, cap: "0", wantStatus: MultiplierPolicyStatusAllowed},
 		{name: "cap below one blocks known 1x", groupKey: "mtx-f", multiplier: f64Ptr(1), known: true, cap: "0.5", wantStatus: MultiplierPolicyStatusBlocked},
+		// 免费分组守护：已知 0x（免费）必须放行——免费模型不得被跳过调用；
+		// 0 永不大于任何 cap，即便 cap 低至 0.5 也不得误伤免费分组。
+		{name: "free zero multiplier known allowed", groupKey: "mtx-g", multiplier: f64Ptr(0), known: true, cap: "4", wantStatus: MultiplierPolicyStatusAllowed},
+		{name: "free zero multiplier survives low cap", groupKey: "mtx-h", multiplier: f64Ptr(0), known: true, cap: "0.5", wantStatus: MultiplierPolicyStatusAllowed},
+		{name: "zero unknown treated as missing not free", groupKey: "mtx-i", multiplier: f64Ptr(0), known: false, cap: "4", wantStatus: MultiplierPolicyStatusAllowed},
 	}
 
 	for _, tc := range cases {

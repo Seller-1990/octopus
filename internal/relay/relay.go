@@ -271,6 +271,11 @@ func Handler(inboundType inbound.InboundType, c *gin.Context) {
 
 	liveAttemptIndex := 0
 
+	// 余额预检（请求级一次性查询）：绑定站点账号且余额耗尽的渠道在进入转发前
+	// 直接跳过，省掉一次注定失败的上游往返。免费分组（倍率已知为 0）豁免——
+	// 免费模型的调用不消耗账号余额，不得因余额为 0 被跳过。
+	balanceByChannel := op.ChannelBalanceMap(c.Request.Context(), group.Items)
+
 	for iter.Next() {
 		select {
 		case <-c.Request.Context().Done():
@@ -294,6 +299,14 @@ func Handler(inboundType inbound.InboundType, c *gin.Context) {
 		if !channel.Enabled {
 			iter.Skip(channel.ID, 0, channel.Name, "channel disabled")
 			continue
+		}
+		// 站点账号余额耗尽跳过（免费分组豁免，见循环前的余额预检说明）
+		if !isFreeGroupItem(item) {
+			if balance, hasBinding := balanceByChannel[channel.ID]; hasBinding && balance <= 0 {
+				iter.Skip(channel.ID, 0, channel.Name,
+					fmt.Sprintf("insufficient account balance (%.2f), skip channel", balance))
+				continue
+			}
 		}
 		// 出站适配器
 		outAdapter := outbound.Get(channel.Type)
@@ -597,6 +610,13 @@ func (ra *relayAttempt) successAttemptMsg() string {
 		return "vision_bridged"
 	}
 	return ""
+}
+
+// isFreeGroupItem 判定分组成员是否为已知免费（分组倍率 0）。
+// 免费模型必须照常发起调用，且豁免账号余额预检——0x 调用不消耗余额。
+func isFreeGroupItem(item dbmodel.GroupItem) bool {
+	return item.MultiplierKnown != nil && *item.MultiplierKnown &&
+		item.GroupMultiplier != nil && *item.GroupMultiplier == 0
 }
 
 // attempt 统一管理一次通道尝试的完整生命周期

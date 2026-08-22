@@ -6,6 +6,7 @@ import { ChevronDown, ChevronUp, Coins, Loader2, Square } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
+import { channelGroupDisplayName, splitChannelDisplayName } from '@/lib/channel-name';
 import {
     useLiveLogDetail,
     useStopAttempt,
@@ -87,8 +88,8 @@ export function LiveLogCard({ log }: { log: LiveLogOverview }) {
                 <span className="font-semibold text-card-foreground truncate" title={log.request_model_name}>
                     {log.request_model_name || '--'}
                 </span>
-                <span className="text-muted-foreground truncate">
-                    {log.channel_name || log.actual_model_name || '--'}
+                <span className="text-muted-foreground truncate" title={log.channel_name || log.actual_model_name || undefined}>
+                    {channelGroupDisplayName(log.channel_name) || log.actual_model_name || '--'}
                 </span>
                 {keyMultiplierLabel ? (
                     <Badge
@@ -137,7 +138,7 @@ export function LiveLogCard({ log }: { log: LiveLogOverview }) {
                     {running && runningAttempt ? (
                         <div className="mb-3 flex items-center gap-3">
                             <span className="text-xs text-muted-foreground">
-                                {t('attemptIndex', { index: runningAttempt.attempt_index })}: {runningAttempt.channel_name}
+                                {t('attemptIndex', { index: runningAttempt.attempt_index })}: {channelGroupDisplayName(runningAttempt.channel_name)}
                             </span>
                             <Button
                                 type="button"
@@ -174,7 +175,14 @@ export function LiveLogCard({ log }: { log: LiveLogOverview }) {
                                             <span className="text-muted-foreground">
                                                 {t('attemptIndex', { index: attempt.attempt_num })}
                                             </span>
-                                            <span className="font-semibold text-foreground">{attempt.channel_name}</span>
+                                            <span className="font-semibold text-foreground" title={attempt.channel_name}>
+                                                {channelGroupDisplayName(attempt.channel_name)}
+                                            </span>
+                                            {splitChannelDisplayName(attempt.channel_name).siteName ? (
+                                                <Badge variant="outline" className="h-4 shrink-0 px-1 text-[9px] font-medium text-muted-foreground">
+                                                    {splitChannelDisplayName(attempt.channel_name).siteName}
+                                                </Badge>
+                                            ) : null}
                                             <span className="text-muted-foreground">{attempt.model_name}</span>
                                             <span className="text-muted-foreground">{attempt.status}</span>
                                             {attempt.sticky ? (
@@ -202,7 +210,9 @@ export function LiveLogCard({ log }: { log: LiveLogOverview }) {
                                             <span className="text-muted-foreground">
                                                 {t('attemptIndex', { index: attempt.attempt_index })}
                                             </span>
-                                            <span className="font-semibold text-foreground">{attempt.channel_name}</span>
+                                            <span className="font-semibold text-foreground" title={attempt.channel_name}>
+                                                {channelGroupDisplayName(attempt.channel_name)}
+                                            </span>
                                             {runningAttempt?.attempt_index === attempt.attempt_index ? (
                                                 <Loader2 className="ml-auto size-3 animate-spin text-muted-foreground" />
                                             ) : null}
