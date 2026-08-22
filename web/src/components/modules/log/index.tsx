@@ -53,11 +53,9 @@ function useDebouncedValue<T>(value: T, delay = 200) {
 }
 
 function filtersActive(filters: LogFilters) {
-    const startOfToday = new Date();
-    startOfToday.setHours(0, 0, 0, 0);
-    const isHistorical = filters.endTime != null && filters.endTime < Math.floor(startOfToday.getTime() / 1000);
     return (
-        isHistorical ||
+        filters.startTime != null ||
+        filters.endTime != null ||
         !!filters.keyword.trim() ||
         filters.channelIds.length > 0 ||
         filters.siteIds.length > 0 ||
@@ -221,7 +219,7 @@ function LogDetailList() {
         );
     }
 
-    if (!filterMode && logs.length === 0 && !logsError) {
+    if (logs.length === 0 && !isLoading && !logsError) {
         return (
             <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
                 {t('list.empty')}
