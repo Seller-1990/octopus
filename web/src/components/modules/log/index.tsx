@@ -3,16 +3,13 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import {
-    useLiveLogs,
     useLogs,
     useLogSiteActionTargets,
-    type LiveLogOverview,
     type LogKeywordMode,
     type LogKeywordScope,
     type RelayLog,
 } from '@/api/endpoints/log';
 import type { UsageAnalyticsFilters, UsageBreakdownItem } from '@/api/endpoints/log-analytics';
-import { LiveLogCard } from './LiveLogCard';
 import { LogCard, type LogSiteActionTargets } from './Item';
 import { Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -52,26 +49,9 @@ function useDebouncedValue<T>(value: T, delay = 200) {
     return debounced;
 }
 
-function filtersActive(filters: LogFilters) {
-    return (
-        filters.startTime != null ||
-        filters.endTime != null ||
-        !!filters.keyword.trim() ||
-        filters.channelIds.length > 0 ||
-        filters.siteIds.length > 0 ||
-        filters.siteAccountIds.length > 0 ||
-        filters.apiKeyIds.length > 0 ||
-        filters.requestModels.length > 0 ||
-        filters.actualModels.length > 0 ||
-        filters.canonicalModels.length > 0
-    );
-}
-
 /**
- * 日志页面组件
- * - 初始加载 pageSize 条历史日志
- * - SSE 实时推送新日志（无过滤时）
- * - 过滤模式使用 cursor 分页，滚动加载更多
+ * 日志明细列表：始终走历史日志查询并按当前时间范围展示；
+ * 筛选只影响查询条件，不切换展示组件。
  */
 function LogDetailList() {
     const t = useTranslations('log');
@@ -118,7 +98,6 @@ function LogDetailList() {
         siteIds,
     ]);
     const debouncedFilters = useDebouncedValue(filters, 200);
-    const filterMode = filtersActive(debouncedFilters);
     const logFilters = useMemo(() => ({
         keyword: debouncedFilters.keyword.trim() || undefined,
         keyword_mode: debouncedFilters.keyword.trim() ? debouncedFilters.keywordMode : undefined,
@@ -133,28 +112,21 @@ function LogDetailList() {
         start_time: debouncedFilters.startTime,
         end_time: debouncedFilters.endTime,
     }), [debouncedFilters]);
-    const liveLogsQuery = useLiveLogs(!filterMode);
     const dbLogsQuery = useLogs({
         pageSize: LOG_PAGE_SIZE,
         filters: logFilters,
-        enabled: filterMode,
+        enabled: true,
     });
-    const logs = filterMode ? dbLogsQuery.logs : liveLogsQuery.logs;
-    const hasMore = filterMode ? dbLogsQuery.hasMore : false;
-    const isLoading = filterMode ? dbLogsQuery.isLoading : liveLogsQuery.isLoading;
-    const isLoadingMore = filterMode ? dbLogsQuery.isLoadingMore : false;
-    // 稳定引用的三元分支：裸的三元表达式每次渲染产生新的箭头函数，
-    // 会向下污染 handleReachEnd 等 useCallback 的依赖（exhaustive-deps 告警根因）。
-    const noopLoadMore = useCallback(() => {}, []);
-    const loadMore = useMemo(
-        () => (filterMode ? dbLogsQuery.loadMore : noopLoadMore),
-        [filterMode, dbLogsQuery.loadMore, noopLoadMore],
-    );
-    const warning = filterMode ? dbLogsQuery.warning : null;
-    const logsError = filterMode ? dbLogsQuery.error : liveLogsQuery.error;
+    const logs = dbLogsQuery.logs;
+    const hasMore = dbLogsQuery.hasMore;
+    const isLoading = dbLogsQuery.isLoading;
+    const isLoadingMore = dbLogsQuery.isLoadingMore;
+    const loadMore = dbLogsQuery.loadMore;
+    const warning = dbLogsQuery.warning;
+    const logsError = dbLogsQuery.error;
 
     const logIDs = useMemo(() => logs.map((log) => log.id), [logs]);
-    const siteActionTargetsQuery = useLogSiteActionTargets(logIDs, filterMode && logs.length > 0);
+    const siteActionTargetsQuery = useLogSiteActionTargets(logIDs, logs.length > 0);
     const siteActionTargets = useMemo(() => {
         const next = new Map<number, LogSiteActionTargets>();
         const data = siteActionTargetsQuery.data ?? {};
@@ -177,7 +149,7 @@ function LogDetailList() {
         setRefreshing(true);
         const startedAt = Date.now();
         try {
-            if (filterMode) await dbLogsQuery.refetch();
+            await dbLogsQuery.refetch();
         } finally {
             const elapsed = Date.now() - startedAt;
             const remaining = Math.max(0, 500 - elapsed);
@@ -185,7 +157,7 @@ function LogDetailList() {
                 if (refreshIdRef.current === myId) setRefreshing(false);
             }, remaining);
         }
-    }, [dbLogsQuery, filterMode, setRefreshing]);
+    }, [dbLogsQuery, setRefreshing]);
 
     useEffect(() => {
         if (refreshRequestId === lastHandledRefreshRequestIdRef.current) return;
@@ -194,14 +166,14 @@ function LogDetailList() {
     }, [handleRefresh, refreshRequestId]);
 
     const footer = useMemo(() => {
-        if (filterMode && hasMore) {
+        if (hasMore) {
             return (
                 <div className="flex justify-center py-4">
                     <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
                 </div>
             );
         }
-        if (filterMode && logs.length > 0) {
+        if (logs.length > 0) {
             return (
                 <div className="flex justify-center py-4">
                     <span className="text-sm text-muted-foreground">{t('list.noMore')}</span>
@@ -209,7 +181,7 @@ function LogDetailList() {
             );
         }
         return null;
-    }, [filterMode, hasMore, logs.length, t]);
+    }, [hasMore, logs.length, t]);
 
     if (isLoading && logs.length === 0) {
         return (
@@ -240,39 +212,25 @@ function LogDetailList() {
                     className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive"
                 >
                     <span>{t('list.loadFailed', { message: logsError.message })}</span>
-                    {filterMode ? (
-                        <Button type="button" variant="outline" size="sm" onClick={() => void dbLogsQuery.refetch()}>
-                            {t('list.retry')}
-                        </Button>
-                    ) : null}
+                    <Button type="button" variant="outline" size="sm" onClick={() => void dbLogsQuery.refetch()}>
+                        {t('list.retry')}
+                    </Button>
                 </div>
             ) : null}
             <div className="relative min-h-0 flex-1">
-                {filterMode ? (
-                    <VirtualizedGrid
-                        items={logs as RelayLog[]}
-                        layout="list"
-                        columns={{ default: 1 }}
-                        estimateItemHeight={80}
-                        overscan={8}
-                        getItemKey={(log) => `log-${log.id}`}
-                        renderItem={(log) => <LogCard log={log} siteTargets={siteActionTargets.get(log.id) ?? null} />}
-                        footer={footer}
-                        onReachEnd={handleReachEnd}
-                        reachEndEnabled={canLoadMore}
-                        reachEndOffset={2}
-                    />
-                ) : (
-                    <VirtualizedGrid
-                        items={logs as LiveLogOverview[]}
-                        layout="list"
-                        columns={{ default: 1 }}
-                        estimateItemHeight={120}
-                        overscan={8}
-                        getItemKey={(log) => `live-log-${log.id}`}
-                        renderItem={(log) => <LiveLogCard log={log} />}
-                    />
-                )}
+                <VirtualizedGrid
+                    items={logs as RelayLog[]}
+                    layout="list"
+                    columns={{ default: 1 }}
+                    estimateItemHeight={80}
+                    overscan={8}
+                    getItemKey={(log) => `log-${log.id}`}
+                    renderItem={(log) => <LogCard log={log} siteTargets={siteActionTargets.get(log.id) ?? null} />}
+                    footer={footer}
+                    onReachEnd={handleReachEnd}
+                    reachEndEnabled={canLoadMore}
+                    reachEndOffset={2}
+                />
             </div>
         </div>
     );
