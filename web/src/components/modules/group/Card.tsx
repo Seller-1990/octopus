@@ -14,7 +14,7 @@ import { toast } from '@/components/common/Toast';
 import { CopyIconButton } from '@/components/common/CopyButton';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/animate-ui/components/animate/tooltip';
 import type { SelectedMember } from './ItemList';
-import { MemberList } from './ItemList';
+import { MemberList, isUnavailableMember } from './ItemList';
 import { GroupEditor, type GroupEditorValues } from './Editor';
 import { GroupHealthBadge } from './health';
 import { CapabilityBadges } from '../model/CapabilityBadges';
@@ -78,7 +78,7 @@ function EditDialogContent({ group, displayMembers, isSubmitting, onSubmit }: Ed
     );
 }
 
-export function GroupCard({ group }: { group: Group }) {
+export function GroupCard({ group, hideUnavailable = false }: { group: Group; hideUnavailable?: boolean }) {
     const t = useTranslations('group');
     const updateGroup = useUpdateGroup();
     const deleteGroup = useDeleteGroup();
@@ -193,6 +193,11 @@ export function GroupCard({ group }: { group: Group }) {
     const renderedMembers = useMemo(
         () => isDragging || updateGroup.isPending ? members : effectiveDisplayMembers,
         [effectiveDisplayMembers, isDragging, updateGroup.isPending, members]
+    );
+
+    const visibleMembers = useMemo(
+        () => hideUnavailable ? renderedMembers.filter((member) => !isUnavailableMember(member)) : renderedMembers,
+        [hideUnavailable, renderedMembers]
     );
 
     useEffect(() => {
@@ -589,7 +594,7 @@ export function GroupCard({ group }: { group: Group }) {
 
             <section className="rounded-xl border border-border/50 bg-muted/30 overflow-hidden relative h-101">
                 <MemberList
-                    members={renderedMembers}
+                    members={visibleMembers}
                     onReorder={setMembers}
                     onRemove={handleRemoveMember}
                     onWeightChange={handleWeightChange}

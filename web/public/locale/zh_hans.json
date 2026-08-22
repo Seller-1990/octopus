@@ -694,7 +694,9 @@
       "confirmRemove": "确认移除 {name}",
       "reserveBadge": "中转",
       "balanceLabel": "余额",
-      "multiplierLabel": "Key 倍率"
+      "multiplierLabel": "Key 倍率",
+      "disabledBadge": "已禁用",
+      "balanceInsufficientBadge": "余额不足"
     },
     "detail": {
       "actions": {
@@ -850,7 +852,9 @@
       "badgeToolsNo": "探测为不支持 tools，「仅 tools」的 Key 会跳过此渠道",
       "source": "来源",
       "pollFailed": "批量任务状态丢失（服务重启或网络异常），结果未知"
-    }
+    },
+    "hideUnavailableKeys": "隐藏不可用 key",
+    "hideUnavailableKeysHint": "隐藏余额不足（≤0.1）与被禁用置灰的 key"
   },
   "model": {
     "create": {

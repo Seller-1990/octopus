@@ -694,7 +694,9 @@
       "confirmRemove": "Confirm removing {name}",
       "reserveBadge": "Relay",
       "balanceLabel": "Balance",
-      "multiplierLabel": "Key multiplier"
+      "multiplierLabel": "Key multiplier",
+      "disabledBadge": "Disabled",
+      "balanceInsufficientBadge": "Low balance"
     },
     "detail": {
       "actions": {
@@ -850,7 +852,9 @@
       "badgeToolsNo": "Probed as tools-unsupported; Tools-only Keys skip this channel",
       "source": "source",
       "pollFailed": "Batch task status lost (server restart or network error); results unknown"
-    }
+    },
+    "hideUnavailableKeys": "Hide unavailable keys",
+    "hideUnavailableKeysHint": "Hide low-balance (≤0.1) and disabled keys"
   },
   "model": {
     "create": {

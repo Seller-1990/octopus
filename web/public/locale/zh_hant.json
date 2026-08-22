@@ -694,7 +694,9 @@
       "confirmRemove": "確認移除 {name}",
       "reserveBadge": "中轉",
       "balanceLabel": "餘額",
-      "multiplierLabel": "Key 倍率"
+      "multiplierLabel": "Key 倍率",
+      "disabledBadge": "已停用",
+      "balanceInsufficientBadge": "餘額不足"
     },
     "detail": {
       "actions": {
@@ -850,7 +852,9 @@
       "badgeToolsNo": "探測為不支援 tools，「僅 tools」的 Key 會跳過此管道",
       "source": "來源",
       "pollFailed": "批次任務狀態遺失（服務重啟或網路異常），結果未知"
-    }
+    },
+    "hideUnavailableKeys": "隱藏不可用 key",
+    "hideUnavailableKeysHint": "隱藏餘額不足（≤0.1）與已停用置灰的 key"
   },
   "model": {
     "create": {

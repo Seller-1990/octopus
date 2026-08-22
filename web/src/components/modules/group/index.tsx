@@ -9,7 +9,7 @@ import { VirtualizedGrid } from '@/components/common/VirtualizedGrid';
 import { VendorIcon } from '@/components/shared/VendorIcon';
 import { toast } from '@/components/common/Toast';
 import { cn } from '@/lib/utils';
-import { Settings2, Wrench } from 'lucide-react';
+import { EyeOff, Settings2, Wrench } from 'lucide-react';
 
 function detectVendorFromModel(modelName: string): string | null {
     const lower = modelName.toLowerCase();
@@ -55,6 +55,8 @@ export function Group() {
     const [vendorFilter, setVendorFilter] = useState<Set<string>>(new Set());
     // 「仅 tools 查看筛选」（v3.1 R11）：谓词 supports_tools !== false——隐藏 ✗，保留 true+nil，对齐路由语义。
     const [toolsOnly, setToolsOnly] = useState(false);
+    // 「隐藏不可用 key」：勾选后余额不足（≤0.1）与被禁用置灰的 key 从卡片列表中隐藏。
+    const [hideUnavailable, setHideUnavailable] = useState(false);
 
     const allVendors = useMemo(() => {
         const vendors = new Set<string>();
@@ -169,6 +171,20 @@ export function Group() {
             </button>
             <button
                 type="button"
+                onClick={() => setHideUnavailable((prev) => !prev)}
+                className={cn(
+                    'flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-medium transition-colors',
+                    hideUnavailable
+                        ? 'bg-amber-500/15 text-amber-700 dark:text-amber-300'
+                        : 'bg-muted text-muted-foreground hover:bg-muted/80',
+                )}
+                title={t('hideUnavailableKeysHint')}
+            >
+                <EyeOff className="size-3.5" />
+                {t('hideUnavailableKeys')}
+            </button>
+            <button
+                type="button"
                 onClick={() => applyDefaults.mutate(undefined, {
                     onSuccess: (data) => {
                         const msg = t('toast.applyDefaultsSuccess', {
@@ -195,7 +211,7 @@ export function Group() {
             columns={groupColumnCompute}
             estimateItemHeight={520}
             getItemKey={(group, index) => group.id ?? `group-${index}`}
-            renderItem={(group) => <GroupCard group={group} />}
+            renderItem={(group) => <GroupCard group={group} hideUnavailable={hideUnavailable} />}
             header={
                 <>
                     {vendorChips}

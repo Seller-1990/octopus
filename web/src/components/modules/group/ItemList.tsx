@@ -48,6 +48,15 @@ export interface SelectedMember extends LLMChannel {
     policy_reason?: string;
 }
 
+// 不可用 key：渠道被禁用，或非免费分组的绑定账号余额低于后端预检阈值（≤0.1）。
+// 与 relay.Handler 的 isFreeGroupItem / balance <= 0.1 保持一致。
+export function isUnavailableMember(member: SelectedMember): boolean {
+    const disabled = member.enabled === false;
+    const free = member.multiplier_known === true && member.group_multiplier === 0;
+    const balanceInsufficient = !free && member.balance != null && member.balance <= 0.1;
+    return disabled || balanceInsufficient;
+}
+
 function reorderList<T>(list: T[], startIndex: number, endIndex: number): T[] {
     const result = [...list];
     const [removed] = result.splice(startIndex, 1);
@@ -95,6 +104,9 @@ function MemberItem({
     const [confirmDelete, setConfirmDelete] = useState(false);
     const t = useTranslations('group');
     const isDisabled = member.enabled === false;
+    const isFreeMember = member.multiplier_known === true && member.group_multiplier === 0;
+    const isBalanceInsufficient = !isFreeMember && member.balance != null && member.balance <= 0.1;
+    const isUnavailable = isDisabled || isBalanceInsufficient;
     const isSiteChannel = member.site_id != null;
     const sourceLabel = [member.channel_name, isSiteChannel ? null : member.endpoint_type?.trim()]
         .filter(Boolean)
@@ -122,11 +134,11 @@ function MemberItem({
             <div className={cn(
                 'group flex items-center gap-2 rounded-lg bg-background border border-border/50 px-2.5 py-2 select-none transition-opacity duration-200 relative overflow-hidden',
                 isRemoving && 'opacity-0',
-                isDisabled && 'opacity-60 grayscale'
+                isUnavailable && 'opacity-60 grayscale'
             )}>
                 <span className={cn(
                     'size-5 rounded-md text-xs font-bold grid place-items-center shrink-0',
-                    isDisabled ? 'bg-muted text-muted-foreground' : 'bg-primary/10 text-primary'
+                    isUnavailable ? 'bg-muted text-muted-foreground' : 'bg-primary/10 text-primary'
                 )}>
                     {index + 1}
                 </span>
@@ -134,7 +146,7 @@ function MemberItem({
                 <div
                     className={cn(
                         'p-0.5 rounded touch-none transition-colors',
-                        isDisabled
+                        isUnavailable
                             ? 'cursor-grab active:cursor-grabbing hover:bg-muted/60'
                             : 'cursor-grab active:cursor-grabbing hover:bg-muted'
                     )}
@@ -145,7 +157,7 @@ function MemberItem({
                     <GripVertical className="size-3.5 text-muted-foreground" />
                 </div>
 
-                <span className={cn(isDisabled && 'opacity-70')}>
+                <span className={cn(isUnavailable && 'opacity-70')}>
                     <ModelAvatar size={18} />
                 </span>
 
@@ -154,7 +166,7 @@ function MemberItem({
                         <Tooltip side="top" sideOffset={10} align="start">
                             <TooltipTrigger className={cn(
                                 'block min-w-0 flex-1 truncate text-left text-sm font-medium leading-tight',
-                                isDisabled && 'text-muted-foreground'
+                                isUnavailable && 'text-muted-foreground'
                             )}>
                                 {member.name}
                             </TooltipTrigger>
@@ -164,6 +176,16 @@ function MemberItem({
                             <span className="ml-auto inline-flex shrink-0 rounded-full border border-amber-500/30 bg-amber-500/10 px-1.5 py-px text-[9px] font-medium text-amber-700 dark:text-amber-300">
                                 {t('member.reserveBadge')}
                             </span>
+                        )}
+                        {isDisabled && (
+                            <Badge variant="outline" className="shrink-0 px-1.5 py-px text-[9px] bg-muted text-muted-foreground">
+                                {t('member.disabledBadge')}
+                            </Badge>
+                        )}
+                        {isBalanceInsufficient && (
+                            <Badge variant="outline" className="shrink-0 px-1.5 py-px text-[9px] bg-destructive/10 text-destructive">
+                                {t('member.balanceInsufficientBadge')}
+                            </Badge>
                         )}
                         {member.policy_status === 'blocked' && (
                             <Badge variant="destructive" className="ml-auto shrink-0 px-1.5 py-px text-[9px]" title={member.policy_reason || undefined}>
@@ -195,7 +217,7 @@ function MemberItem({
                                         onClick={() => onToolsTest(member)}
                                         title={t('tools.batchTestTitle')}
                                         aria-label={t('tools.batchTestTitle')}
-                                        disabled={isDisabled || toolsDisabled}
+                                        disabled={isUnavailable || toolsDisabled}
                                         className="rounded p-0.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-40 disabled:pointer-events-none"
                                     >
                                         <FlaskConical className="size-3" />
@@ -207,7 +229,7 @@ function MemberItem({
                                         onClick={() => onToolsForce(member)}
                                         title={t('tools.forceUnsupported')}
                                         aria-label={t('tools.forceUnsupported')}
-                                        disabled={isDisabled || toolsDisabled}
+                                        disabled={isUnavailable || toolsDisabled}
                                         className="rounded p-0.5 text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive disabled:opacity-40 disabled:pointer-events-none"
                                     >
                                         <Ban className="size-3" />
@@ -219,7 +241,7 @@ function MemberItem({
                                         onClick={() => onToolsReset(member)}
                                         title={t('tools.resetTools')}
                                         aria-label={t('tools.resetTools')}
-                                        disabled={isDisabled || toolsDisabled}
+                                        disabled={isUnavailable || toolsDisabled}
                                         className="rounded p-0.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-40 disabled:pointer-events-none"
                                     >
                                         <RotateCcw className="size-3" />
