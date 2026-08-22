@@ -277,7 +277,7 @@ func syncActivePresetTx(tx *gorm.DB, groupID int) error {
 	}
 
 	var items []model.GroupItem
-	if err := tx.Where("group_id = ?", groupID).Order("priority ASC").Find(&items).Error; err != nil {
+	if err := tx.Where("group_id = ?", groupID).Order("priority ASC, id ASC").Find(&items).Error; err != nil {
 		return fmt.Errorf("failed to load group items: %w", err)
 	}
 	presetItems := make([]model.GroupPresetItem, 0, len(items))

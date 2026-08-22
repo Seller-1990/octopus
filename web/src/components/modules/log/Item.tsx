@@ -51,6 +51,7 @@ import {
 } from '@/api/endpoints/log';
 import { getModelIcon } from '@/lib/model-icons';
 import { channelGroupDisplayName, splitChannelDisplayName } from '@/lib/channel-name';
+import { formatAttemptFailure } from '@/lib/attempt-failure';
 import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
 import { CopyIconButton } from '@/components/common/CopyButton';
@@ -540,14 +541,6 @@ function RetryBadgeWithTooltip({ channelName, brandColor, attempts }: RetryBadge
                                     <div className="flex min-w-0 flex-col flex-1">
                                         <span className="text-xs font-semibold text-foreground">
                                             {attemptChannelName.groupName}
-                                            {attemptChannelName.siteName ? (
-                                                <Badge
-                                                    variant="outline"
-                                                    className="ml-1 h-4 shrink-0 px-1 align-middle text-[9px] font-medium text-muted-foreground"
-                                                >
-                                                    {attemptChannelName.siteName}
-                                                </Badge>
-                                            ) : null}
                                             {attempt.channel_key_remark ? (
                                                 <span className="ml-1 font-normal text-muted-foreground">· {attempt.channel_key_remark}</span>
                                             ) : null}
@@ -559,12 +552,11 @@ function RetryBadgeWithTooltip({ channelName, brandColor, attempts }: RetryBadge
                                             )}
                                         >
                                             {attempt.model_name} • {formatDuration(attempt.totalDuration)}
-                                            {attempt.status_code ? ` • HTTP ${attempt.status_code}` : ''}
                                             {slowFailure ? ' ⚠' : ''}
                                         </span>
                                         {errMsg ? (
-                                            <span className="mt-0.5 whitespace-pre-wrap break-words text-[10px] leading-relaxed text-destructive/80">
-                                                {errMsg}
+                                            <span className="mt-0.5 text-[10px] leading-relaxed text-destructive/80" title={errMsg}>
+                                                {formatAttemptFailure(attempt)}
                                             </span>
                                         ) : null}
                                     </div>
@@ -1198,14 +1190,6 @@ export function LogCard({ log, siteTargets }: { log: RelayLog; siteTargets: LogS
                                                                                             <span className="font-semibold text-foreground" title={attempt.channel_name}>
                                                                                                 {attemptChannelName.groupName}
                                                                                             </span>
-                                                                                            {attemptChannelName.siteName ? (
-                                                                                                <Badge
-                                                                                                    variant="outline"
-                                                                                                    className="h-4 shrink-0 px-1 text-[9px] font-medium text-muted-foreground"
-                                                                                                >
-                                                                                                    {attemptChannelName.siteName}
-                                                                                                </Badge>
-                                                                                            ) : null}
                                                                                             <span className="text-muted-foreground truncate">
                                                                                                 ({attempt.model_name})
                                                                                             </span>
@@ -1233,8 +1217,8 @@ export function LogCard({ log, siteTargets }: { log: RelayLog; siteTargets: LogS
                                                                                     </div>
                                                                                 </div>
                                                                                 {sanitizedMsg ? (
-                                                                                    <div className={cn('pl-2 border-l-2 text-[11px] leading-relaxed whitespace-pre-wrap wrap-break-word', statusMeta.messageClassName)}>
-                                                                                        {sanitizedMsg}
+                                                                                    <div className={cn('pl-2 border-l-2 text-[11px] leading-relaxed', statusMeta.messageClassName)} title={sanitizedMsg}>
+                                                                                        {formatAttemptFailure(attempt)}
                                                                                     </div>
                                                                                 ) : null}
                                                                             </div>

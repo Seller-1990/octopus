@@ -300,9 +300,10 @@ func Handler(inboundType inbound.InboundType, c *gin.Context) {
 			iter.Skip(channel.ID, 0, channel.Name, "channel disabled")
 			continue
 		}
-		// 站点账号余额耗尽跳过（免费分组豁免，见循环前的余额预检说明）
+		// 站点账号余额不足跳过（免费分组豁免，见循环前的余额预检说明）。
+		// 阈值 0.1：部分上游存在余额显示精度/最小扣费预留，0 与极小余额同样视为不可用。
 		if !isFreeGroupItem(item) {
-			if balance, hasBinding := balanceByChannel[channel.ID]; hasBinding && balance <= 0 {
+			if balance, hasBinding := balanceByChannel[channel.ID]; hasBinding && balance <= 0.1 {
 				iter.Skip(channel.ID, 0, channel.Name,
 					fmt.Sprintf("insufficient account balance (%.2f), skip channel", balance))
 				continue

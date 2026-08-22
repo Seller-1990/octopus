@@ -6,7 +6,8 @@ import { ChevronDown, ChevronUp, Coins, Loader2, Square } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
-import { channelGroupDisplayName, splitChannelDisplayName } from '@/lib/channel-name';
+import { channelGroupDisplayName } from '@/lib/channel-name';
+import { formatAttemptFailure, formatFailureSummary } from '@/lib/attempt-failure';
 import {
     useLiveLogDetail,
     useStopAttempt,
@@ -178,11 +179,6 @@ export function LiveLogCard({ log }: { log: LiveLogOverview }) {
                                             <span className="font-semibold text-foreground" title={attempt.channel_name}>
                                                 {channelGroupDisplayName(attempt.channel_name)}
                                             </span>
-                                            {splitChannelDisplayName(attempt.channel_name).siteName ? (
-                                                <Badge variant="outline" className="h-4 shrink-0 px-1 text-[9px] font-medium text-muted-foreground">
-                                                    {splitChannelDisplayName(attempt.channel_name).siteName}
-                                                </Badge>
-                                            ) : null}
                                             <span className="text-muted-foreground">{attempt.model_name}</span>
                                             <span className="text-muted-foreground">{attempt.status}</span>
                                             {attempt.sticky ? (
@@ -192,8 +188,8 @@ export function LiveLogCard({ log }: { log: LiveLogOverview }) {
                                             ) : null}
                                         </div>
                                         {attempt.msg ? (
-                                            <div className="text-[11px] leading-relaxed text-destructive/90 whitespace-pre-wrap break-words">
-                                                {attempt.msg}
+                                            <div className="text-[11px] leading-relaxed text-destructive/90" title={attempt.msg}>
+                                                {formatAttemptFailure(attempt)}
                                             </div>
                                         ) : null}
                                     </div>
@@ -218,8 +214,8 @@ export function LiveLogCard({ log }: { log: LiveLogOverview }) {
                                             ) : null}
                                         </div>
                                         {attempt.error ? (
-                                            <div className="text-[11px] leading-relaxed text-destructive/90 whitespace-pre-wrap break-words">
-                                                {attempt.error}
+                                            <div className="text-[11px] leading-relaxed text-destructive/90" title={attempt.error}>
+                                                {formatFailureSummary(attempt.error)}
                                             </div>
                                         ) : null}
                                     </div>
