@@ -7,6 +7,7 @@ import (
 	"github.com/bestruirui/octopus/internal/db"
 	"github.com/bestruirui/octopus/internal/model"
 	"github.com/bestruirui/octopus/internal/utils/cache"
+	"github.com/bestruirui/octopus/internal/utils/log"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
@@ -592,4 +593,34 @@ func groupRefreshCacheByIDs(ids []int, ctx context.Context) error {
 
 func GroupRefreshCacheByIDs(ids []int, ctx context.Context) error {
 	return groupRefreshCacheByIDs(ids, ctx)
+}
+
+// CleanupOrphanGroupItems 删除引用不存在渠道的组成员（孤儿引用），返回删除行数。
+// 正常渠道删除路径（channelDel）会同步清理其组成员；本函数作为后台兜底，
+// 处理旧数据、站点绑定删除等历史路径可能遗留的脏数据。
+func CleanupOrphanGroupItems(ctx context.Context) (int, error) {
+	channelSubQuery := db.GetDB().Model(&model.Channel{}).Select("id")
+
+	var affectedGroupIDs []int
+	if err := db.GetDB().WithContext(ctx).
+		Table("group_items").
+		Where("channel_id <= 0 OR channel_id NOT IN (?)", channelSubQuery).
+		Pluck("DISTINCT group_id", &affectedGroupIDs).Error; err != nil {
+		return 0, fmt.Errorf("failed to find groups with orphan items: %w", err)
+	}
+
+	result := db.GetDB().WithContext(ctx).
+		Where("channel_id <= 0 OR channel_id NOT IN (?)", channelSubQuery).
+		Delete(&model.GroupItem{})
+	if result.Error != nil {
+		return 0, fmt.Errorf("failed to delete orphan group items: %w", result.Error)
+	}
+
+	for _, groupID := range affectedGroupIDs {
+		if err := groupRefreshCacheByID(groupID, ctx); err != nil {
+			log.Warnf("failed to refresh group cache for group %d after orphan cleanup: %v", groupID, err)
+		}
+	}
+
+	return int(result.RowsAffected), nil
 }

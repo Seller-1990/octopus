@@ -12,13 +12,14 @@ import (
 )
 
 const (
-	TaskStatsSave         = "stats_save"
-	TaskRelayLogSave      = "relay_log_save"
-	TaskBaseUrlDelay      = "base_url_delay"
-	TaskWSAffinityCleanup = "ws_affinity_cleanup"
-	TaskUsageMaintenance  = "usage_maintenance"
-	TaskVerificationRetry = "verification_retry"
-	TaskSub2APIRefresh    = "sub2api_refresh"
+	TaskStatsSave              = "stats_save"
+	TaskRelayLogSave           = "relay_log_save"
+	TaskBaseUrlDelay           = "base_url_delay"
+	TaskWSAffinityCleanup      = "ws_affinity_cleanup"
+	TaskUsageMaintenance       = "usage_maintenance"
+	TaskVerificationRetry      = "verification_retry"
+	TaskSub2APIRefresh         = "sub2api_refresh"
+	TaskGroupItemOrphanCleanup = "group_item_orphan_cleanup"
 )
 
 func Init() {
@@ -94,6 +95,21 @@ func Init() {
 	Register(TaskUsageMaintenance, 10*time.Minute, true, UsageMaintenanceTask)
 	Register(TaskVerificationRetry, time.Minute, true, VerificationRetryTask)
 	Register(TaskSub2APIRefresh, site.Sub2APIRefreshTaskInterval, true, Sub2APIRefreshTask)
+
+	// 孤儿组成员兜底清理：正常删渠道时 channelDel 已同步删除其组成员；
+	// 这里处理历史遗留/其他路径产生的「引用不存在渠道」的脏数据。
+	Register(TaskGroupItemOrphanCleanup, 30*time.Minute, true, func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		deleted, err := op.CleanupOrphanGroupItems(ctx)
+		if err != nil {
+			log.Warnf("group item orphan cleanup failed: %v", err)
+			return
+		}
+		if deleted > 0 {
+			log.Infof("group item orphan cleanup removed %d rows", deleted)
+		}
+	})
 
 	// 注册被动离群退役(POR)任务（默认间隔 2 分钟，总开关在任务内判断）
 	outlierIntervalMinutes, err := op.SettingGetInt(model.SettingKeyOutlierRetireInterval)
