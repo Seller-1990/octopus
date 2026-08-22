@@ -1134,11 +1134,7 @@ export function Site() {
         return;
       }
       url.hash = `octopus_sync=1&octopus_token=${encodeURIComponent(result.pairing_token)}&octopus_origin=${encodeURIComponent(result.nas_origin)}`;
-      const win = window.open(url.href, "_blank", "noopener,noreferrer");
-      if (!win) {
-        toast.error(tRecovery("verification.browserSync.blocked"));
-        return;
-      }
+      window.open(url.href, "_blank", "noopener,noreferrer");
       toast.success(tRecovery("verification.browserSync.opened"));
     } catch (syncError) {
       toast.error(translateSiteMessage(locale, getErrorMessage(syncError), t));

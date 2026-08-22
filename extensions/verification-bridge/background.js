@@ -91,6 +91,10 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
   });
 });
 
+chrome.tabs.onRemoved.addListener((tabId) => {
+  autoPairedTabs.delete(tabId);
+});
+
 async function isOriginAllowed(origin) {
   try {
     const parsed = new URL(origin);

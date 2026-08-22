@@ -2,10 +2,10 @@ package static
 
 import (
 	"archive/zip"
+	"bytes"
 	"embed"
 	"io"
 	"net/http"
-	"strings"
 )
 
 //go:embed all:extensions
@@ -25,11 +25,8 @@ var extensionFiles = []string{
 // WriteVerificationBridgeZip writes a zip archive of the verification-bridge
 // extension to w, excluding test files.
 func WriteVerificationBridgeZip(w http.ResponseWriter) error {
-	w.Header().Set("Content-Type", "application/zip")
-	w.Header().Set("Content-Disposition", `attachment; filename="octopus-verification-bridge.zip"`)
-	w.Header().Set("Cache-Control", "no-cache")
-
-	zipWriter := zip.NewWriter(w)
+	var buf bytes.Buffer
+	zipWriter := zip.NewWriter(&buf)
 	for _, name := range extensionFiles {
 		data, err := extensionFS.ReadFile("extensions/verification-bridge/" + name)
 		if err != nil {
@@ -39,9 +36,16 @@ func WriteVerificationBridgeZip(w http.ResponseWriter) error {
 		if err != nil {
 			return err
 		}
-		if _, err := io.Copy(entry, strings.NewReader(string(data))); err != nil {
+		if _, err := io.Copy(entry, bytes.NewReader(data)); err != nil {
 			return err
 		}
 	}
-	return zipWriter.Close()
+	if err := zipWriter.Close(); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/zip")
+	w.Header().Set("Content-Disposition", `attachment; filename="octopus-verification-bridge.zip"`)
+	w.Header().Set("Cache-Control", "no-cache")
+	_, err := w.Write(buf.Bytes())
+	return err
 }
