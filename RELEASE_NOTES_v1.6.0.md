@@ -23,6 +23,12 @@ Full code-review round (2026-08-22, every finding re-verified before fixing):
 - **Hot-update integrity**: when `sha256sums.txt` cannot be fetched, the updater now refuses to install instead of silently skipping checksum verification.
 - **Data race in early-heartbeat tests fixed** (plus the same theoretical race guarded in `FlushOrError`).
 
+Post-review stabilization round:
+
+- **CI frontend gate fixed**: two long-standing `set-state-in-effect` lint errors (the reason every push since 08-21 failed CI) plus an `exhaustive-deps`/memoization warning — all resolved with proper React patterns; `pnpm lint` is now clean.
+- **Terminal-failure error details preserved**: when the upstream stream ends with `response.failed` / `error` events, the attempt log and live log now carry the upstream error message (previously only the event name was recorded, losing the actual failure cause).
+- **Failover order made deterministic**: same-priority members used to be reordered non-deterministically by an unstable sort; priority ordering is now stable with a deterministic DB load order (`priority ASC, id ASC`), locked by a regression test.
+
 ## 🚀 Performance
 
 - Quota accounting: per-key locks instead of one global mutex, and the read-back SELECT after every successful request is gone.
@@ -62,6 +68,12 @@ Full code-review round (2026-08-22, every finding re-verified before fixing):
 - **前端**：后端短暂重启时 API Key 面板保留缓存数据并显示加载态，不再整页翻车；实时日志列表加上 500 条上限；持久化的日志日期范围不再每次挂载被重置；删除不可达的 `useLogs` SSE 分支。
 - **热更新完整性**：sha256sums.txt 获取失败时拒绝安装，不再静默跳过校验替换二进制。
 - **修复 early-heartbeat 测试的数据竞争**（并对 `FlushOrError` 的同类理论竞争加防护）。
+
+审查后的稳定化修复：
+
+- **CI frontend 门禁修复**：两个自 08-21 起导致每次 push 失败的 `set-state-in-effect` lint error 与 `exhaustive-deps`/记忆化告警全部以正确的 React 模式解决，`pnpm lint` 归零。
+- **终态失败错误详情保留**：上游流以 `response.failed` / `error` 事件终止时，尝试日志与实时日志现在携带上游错误信息（此前只记事件名，真实失败原因丢失）。
+- **failover 顺序确定化**：同优先级成员此前被不稳定排序随机重排；现改为稳定排序并配合确定的加载序（`priority ASC, id ASC`），回归测试锁定顺序契约。
 
 ## 🚀 性能
 
