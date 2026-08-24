@@ -799,3 +799,37 @@ Overall         ██████░░░░  6.4  B
 - **死代码删除**：逐一确认无测试/脚本/构建标签引用，`go build ./...` 通过。
 
 最终验证：`go build ./...` ✅、`go test ./...` ✅、`go vet ./...` ✅、`go test -race ./internal/op ./internal/relay ./internal/transformer/model` ✅、`pnpm lint` ✅、`pnpm build` ✅。
+
+---
+
+## 15. 第二批较大改动记录（2026-08-23）
+
+### 15.1 已实施
+
+| 项目 | 实施内容 | 涉及文件 |
+|------|----------|----------|
+| 非流式上游整体超时 | 新增 `client.response_timeout_seconds` 配置（默认 120），`sendRequest` / `sendFingerprintedRequest` 对非流式请求施加 context 超时，body 关闭时释放 cancel | conf/config.go, relay/relay.go |
+| SQLite 读连接池 | SQLite `MaxOpenConns/MaxIdleConns` 由 1 调整为 4，依赖 WAL + busy_timeout(5000) | db/db.go |
+| 路由元数据缓存 | 新增 `enabledHeaderPolicies` TTL 3s 缓存，`ResolveHeaderPolicy` / `ResolveSiteHeaderPolicy` 从逐 scope N 次查询降为 1 次批量查询；Upsert/Delete 显式清缓存，测试 DB 初始化同步清缓存 | op/header_policy_cache.go, op/header_policy.go, op/backup_test.go |
+| fallback 可观测性 | 新增 `HeaderPolicyFallbackTotal` / `MultiplierBindingFailureTotal` / `MultiplierLookupFailureTotal` 原子计数，在三个降级点累加 | op/fallback_metrics.go, op/header_policy.go, op/group_multiplier_policy.go, op/channel.go |
+| relay.go 拆分 | 将 7 个协议辅助函数移入 `protocol_helpers.go`，relay.go 从 2088 行降至 1988 行 | relay/relay.go, relay/protocol_helpers.go |
+
+### 15.2 验证结果
+
+| 检查 | 结果 |
+|------|------|
+| `go test ./...` | ✅ 通过 |
+| `go vet ./...` | ✅ 零告警 |
+| `go test -race ./internal/op ./internal/relay ./internal/transformer/model` | ✅ 通过 |
+| `pnpm lint` | ✅ 零告警 |
+
+### 15.3 仍未实施（需更谨慎的独立设计）
+
+- 前端 `site-channel/index.tsx`（3405 行）、`site/index.tsx`（2739 行）等组件拆分：涉及 UI 状态与交互，需要独立 PR 配合人工走查。
+- 路由元数据中 binding/price/candidate 的完整缓存层：本次仅缓存了 HeaderPolicy，binding 查询仍为每请求一次，待与缓存失效策略统一设计。
+- fallback 语义统一（HeaderPolicy fail-closed vs 倍率 fail-open）：本次先补了计数器，行为未改变；是否 fail-closed 需要产品确认后再改。
+
+### 15.4 提交
+
+- `30a7f1d` perf: add non-streaming timeout, SQLite read pool, header policy cache
+- `5afefb0` fix: address audit findings (stability, protocol, dead code)
