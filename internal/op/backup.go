@@ -1189,6 +1189,7 @@ func runDBImportTransaction(
 			"error", err,
 		)
 	}
+	InvalidateSiteChannelBindingCache()
 	return res, nil
 }
 

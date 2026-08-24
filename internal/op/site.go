@@ -486,6 +486,7 @@ func SiteDel(id int, ctx context.Context) error {
 	}
 	if len(affectedAccountIDs) > 0 {
 		invalidateSiteBindingCache()
+		InvalidateSiteChannelBindingCache()
 		deleteSiteModelHourlyCacheForAccounts(affectedAccountIDs)
 	}
 	return nil
@@ -953,6 +954,7 @@ func SiteAccountDel(id int, ctx context.Context) error {
 		return err
 	}
 	invalidateSiteBindingCache()
+	InvalidateSiteChannelBindingCache()
 	deleteSiteModelHourlyCacheForAccounts([]int{id})
 	return nil
 }

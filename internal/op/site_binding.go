@@ -10,11 +10,17 @@ import (
 )
 
 func SiteChannelBindingGetByChannelID(channelID int, ctx context.Context) (*model.SiteChannelBinding, error) {
-	var binding model.SiteChannelBinding
-	if err := db.GetDB().WithContext(ctx).Where("channel_id = ?", channelID).First(&binding).Error; err != nil {
+	bindings, err := allSiteChannelBindings(ctx)
+	if err != nil {
 		return nil, err
 	}
-	return &binding, nil
+	for i := range bindings {
+		if bindings[i].ChannelID == channelID {
+			binding := bindings[i]
+			return &binding, nil
+		}
+	}
+	return nil, gorm.ErrRecordNotFound
 }
 
 func SiteChannelBindingMapByChannelIDs(channelIDs []int, ctx context.Context) (map[int]model.SiteChannelBinding, error) {
@@ -23,8 +29,8 @@ func SiteChannelBindingMapByChannelIDs(channelIDs []int, ctx context.Context) (m
 		return result, nil
 	}
 
-	var bindings []model.SiteChannelBinding
-	if err := db.GetDB().WithContext(ctx).Where("channel_id IN ?", channelIDs).Find(&bindings).Error; err != nil {
+	bindings, err := allSiteChannelBindings(ctx)
+	if err != nil {
 		return nil, err
 	}
 	for _, binding := range bindings {

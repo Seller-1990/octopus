@@ -51,7 +51,11 @@ func deleteManagedChannelsByAccount(ctx context.Context, accountID int) error {
 			return fmt.Errorf("failed to delete managed channel %d: %w", binding.ChannelID, err)
 		}
 	}
-	return db.GetDB().WithContext(ctx).Where("site_account_id = ?", accountID).Delete(&model.SiteChannelBinding{}).Error
+	if err := db.GetDB().WithContext(ctx).Where("site_account_id = ?", accountID).Delete(&model.SiteChannelBinding{}).Error; err != nil {
+		return err
+	}
+	op.InvalidateSiteChannelBindingCache()
+	return nil
 }
 
 func isMissingManagedChannelError(err error) bool {

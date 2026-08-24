@@ -25,6 +25,7 @@ func setupSiteOpTestDB(t *testing.T) context.Context {
 	if err := dbpkg.InitDB("sqlite", dbPath, false); err != nil {
 		t.Fatalf("InitDB failed: %v", err)
 	}
+	clearSiteChannelBindingCache()
 	clearHeaderPolicyCache()
 	t.Cleanup(func() {
 		_ = dbpkg.Close()

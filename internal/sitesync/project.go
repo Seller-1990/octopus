@@ -170,6 +170,7 @@ func ProjectAccount(ctx context.Context, accountID int) ([]int, error) {
 				if err := db.GetDB().WithContext(ctx).Create(&binding).Error; err != nil {
 					return nil, fmt.Errorf("failed to create site channel binding: %w", err)
 				}
+				op.InvalidateSiteChannelBindingCache()
 				bindingMap[bindingKey] = binding
 				bindingChannelByKey[bindingKey] = channelPayload.ID
 				managedChannelIDs = append(managedChannelIDs, channelPayload.ID)
@@ -184,6 +185,7 @@ func ProjectAccount(ctx context.Context, accountID int) ([]int, error) {
 				if err := db.GetDB().WithContext(ctx).Delete(&binding).Error; err != nil {
 					return nil, fmt.Errorf("failed to delete broken site channel binding: %w", err)
 				}
+				op.InvalidateSiteChannelBindingCache()
 				if err := op.ChannelCreate(&channelPayload, ctx); err != nil {
 					return nil, fmt.Errorf("failed to recreate managed channel: %w", err)
 				}
@@ -196,6 +198,7 @@ func ProjectAccount(ctx context.Context, accountID int) ([]int, error) {
 				if err := db.GetDB().WithContext(ctx).Create(&binding).Error; err != nil {
 					return nil, fmt.Errorf("failed to recreate site channel binding: %w", err)
 				}
+				op.InvalidateSiteChannelBindingCache()
 				bindingChannelByKey[bindingKey] = channelPayload.ID
 				managedChannelIDs = append(managedChannelIDs, channelPayload.ID)
 				if effective := op.EffectiveProjectedChannelAutoGroup(channelPayload); effective != model.AutoGroupTypeNone {
@@ -218,6 +221,7 @@ func ProjectAccount(ctx context.Context, accountID int) ([]int, error) {
 			if err := db.GetDB().WithContext(ctx).Model(&model.SiteChannelBinding{}).Where("id = ?", binding.ID).Updates(updateBinding).Error; err != nil {
 				return nil, fmt.Errorf("failed to update site channel binding: %w", err)
 			}
+			op.InvalidateSiteChannelBindingCache()
 			bindingChannelByKey[bindingKey] = existingChannel.ID
 			managedChannelIDs = append(managedChannelIDs, existingChannel.ID)
 			updatedChannel, err := op.ChannelGet(existingChannel.ID, ctx)
@@ -348,6 +352,7 @@ func updateSiteChannelBindingGroup(ctx context.Context, bindingID int, group mod
 	if err := db.GetDB().WithContext(ctx).Model(&model.SiteChannelBinding{}).Where("id = ?", bindingID).Updates(updates).Error; err != nil {
 		return fmt.Errorf("failed to update paused site channel binding: %w", err)
 	}
+	op.InvalidateSiteChannelBindingCache()
 	return nil
 }
 
