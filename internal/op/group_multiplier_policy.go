@@ -54,14 +54,16 @@ func evaluateGroupItemMultiplierPolicies(ctx context.Context, items []model.Grou
 		seenChannels[item.ChannelID] = struct{}{}
 		channelIDs = append(channelIDs, item.ChannelID)
 	}
+	capValue, capEnabled := configuredMultiplierCap()
 	bindingMap, bindingErr := SiteChannelBindingMapByChannelIDs(channelIDs, ctx)
 	if bindingErr != nil {
-		// 阶段 2 补充：绑定查询失败保持「未知→放行」（与两态一致），但告警让 cap 失效可观测
+		// cap 开启时按成本控制点 fail-closed：查不到绑定就不能证明倍率在
+		// cap 内，统一按 blocked 处理，与 HeaderPolicy 的 DB 失败 fail-closed
+		// 语义一致。cap 关闭时保持两态语义：未知→放行并告警。
 		multiplierBindingFailureTotal.Add(1)
-		log.Warnf("load site channel bindings failed, treating multipliers as unknown: %v", bindingErr)
+		log.Warnf("load site channel bindings failed (cap_enabled=%t): %v", capEnabled, bindingErr)
 	}
 	groupMultipliers := channelGroupMultiplierMap(ctx, bindingMap)
-	capValue, capEnabled := configuredMultiplierCap()
 
 	policies := make([]groupItemMultiplierPolicy, len(items))
 	for index, item := range items {
@@ -69,6 +71,12 @@ func evaluateGroupItemMultiplierPolicies(ctx context.Context, items []model.Grou
 		if capEnabled {
 			capCopy := capValue
 			policy.cap = &capCopy
+		}
+		if bindingErr != nil && capEnabled {
+			policy.status = MultiplierPolicyStatusBlocked
+			policy.reason = "multiplier lookup failed; fail-closed while cap enabled"
+			policies[index] = policy
+			continue
 		}
 		// 两态（阶段 2 补充，用户拍板「提前 evaluate 两态化」）：
 		// 判定只看分组倍率 + known——candidate 倍率不再参与 effective/blocked 判定（D2' A'）。
