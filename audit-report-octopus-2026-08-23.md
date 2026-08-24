@@ -833,3 +833,36 @@ Overall         ██████░░░░  6.4  B
 
 - `30a7f1d` perf: add non-streaming timeout, SQLite read pool, header policy cache
 - `5afefb0` fix: address audit findings (stability, protocol, dead code)
+
+---
+
+## 16. 第三批推进记录（2026-08-23）
+
+### 16.1 已实施
+
+| 项目 | 实施内容 |
+|------|----------|
+| fallback 语义统一 | `evaluateGroupItemMultiplierPolicies` 在 `default_multiplier_cap` 开启且绑定查询失败时 fail-closed（blocked），与 HeaderPolicy DB 失败 fail-closed 一致；cap 关闭时保持未知放行 |
+| 前端组件拆分 | 从 `site/index.tsx` 抽取 14 个格式化/状态辅助函数与 `HealthTone` 类型到 `site/format-utils.ts`，index.tsx 减少约 130 行 |
+| 测试隔离 | 新增 `clearHeaderPolicyCache()` 到 apikey/site/site_channel_suspend 测试 DB 初始化，避免缓存跨测试污染 |
+
+### 16.2 验证结果
+
+| 检查 | 结果 |
+|------|------|
+| `go test ./...` | ✅ 通过 |
+| `go vet ./...` | ✅ 零告警 |
+| `go test -race ./internal/op` | ✅ 通过 |
+| `pnpm lint` | ✅ 零告警 |
+| `pnpm build` | ✅ 构建成功 |
+
+### 16.3 说明
+
+- 曾尝试为 `site_channel_bindings` 增加短 TTL 缓存，但 sitesync 直接写库的路径缺乏统一失效点，导致 4 个 sitesync 测试失败，已回滚。binding 级缓存需先设计集中失效机制，仍列为后续项。
+- `site-channel/index.tsx`（3405 行）与 `site/index.tsx` 剩余 JSX 的进一步拆分仍建议以独立 UI 重构 PR 人工验收，不在本轮自动完成。
+
+### 16.4 提交
+
+- `c516a70` refactor: fail-closed multiplier fallback, extract site format utils
+- `30a7f1d` perf: add non-streaming timeout, SQLite read pool, header policy cache
+- `5afefb0` fix: address audit findings (stability, protocol, dead code)
