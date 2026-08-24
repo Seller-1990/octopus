@@ -736,6 +736,9 @@ func convertLLMToGeminiRequest(request *model.InternalLLMRequest) *model.GeminiG
 					var args map[string]interface{}
 					if err := json.Unmarshal([]byte(toolCall.Function.Arguments), &args); err != nil {
 						log.Warnf("gemini: failed to unmarshal tool call arguments for %s: %v", toolCall.Function.Name, err)
+						// Gemini 要求 functionCall.args 必须是对象；解析失败时发空
+						// 对象而不是省略该字段，避免上游 INVALID_ARGUMENT。
+						args = map[string]interface{}{}
 					}
 					part := &model.GeminiPart{
 						FunctionCall: &model.GeminiFunctionCall{

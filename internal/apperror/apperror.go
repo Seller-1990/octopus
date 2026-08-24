@@ -26,7 +26,7 @@ const (
 	CodeAuthPasswordIncorrect  = "auth.password_incorrect"
 	CodeAuthAPIKeyDisabled     = "auth.api_key_disabled"
 	CodeAuthAPIKeyCostExceeded = "auth.api_key_cost_exceeded"
-	CodeAuthAPIKeyRateLimited = "auth.api_key_rate_limited"
+	CodeAuthAPIKeyRateLimited  = "auth.api_key_rate_limited"
 
 	CodeSiteSub2APIAPIKeyRequired      = "site.sub2api.api_key_required"
 	CodeSiteSub2APIModelAPIKeyRequired = "site.sub2api.model_api_key_required"
@@ -54,10 +54,6 @@ func Newf(code string, format string, args ...any) *Error {
 
 func Wrap(code string, message string, err error) *Error {
 	return &Error{Code: code, Message: message, Err: err}
-}
-
-func Wrapf(code string, err error, format string, args ...any) *Error {
-	return Wrap(code, fmt.Sprintf(format, args...), err)
 }
 
 func (e *Error) Error() string {
@@ -147,10 +143,6 @@ func Params(err error) map[string]any {
 		return appErr.Params
 	}
 	return nil
-}
-
-func IsCode(err error, code string) bool {
-	return Code(err) == code
 }
 
 func InvalidJSON(message string) *Error {

@@ -14,10 +14,6 @@ import (
 	"gorm.io/gorm/clause"
 )
 
-func SiteChannelList(ctx context.Context) ([]model.SiteChannelCard, error) {
-	return SiteChannelListWithOptions(ctx, SiteChannelListOptions{IncludeHistory: true})
-}
-
 type SiteChannelListOptions struct {
 	IncludeHistory bool
 }

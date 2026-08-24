@@ -3,6 +3,7 @@ package tokenizer
 import (
 	"sync"
 
+	"github.com/bestruirui/octopus/internal/utils/log"
 	"github.com/tiktoken-go/tokenizer/codec"
 )
 
@@ -24,7 +25,8 @@ func CountTokens(content, model string) int {
 	}
 	tc, err := encoder().Count(content)
 	if err != nil {
-		return 0
+		log.Warnf("tokenizer.CountTokens failed, using len/4 estimate: %v", err)
+		return len(content) / 4
 	}
 	return tc
 }
@@ -38,7 +40,8 @@ func CountTokensBytes(payload []byte, model string) int {
 	}
 	tc, err := encoder().Count(string(payload))
 	if err != nil {
-		return 0
+		log.Warnf("tokenizer.CountTokensBytes failed, using len/4 estimate: %v", err)
+		return len(payload) / 4
 	}
 	return tc
 }

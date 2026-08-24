@@ -1024,6 +1024,11 @@ func (i *MessagesInbound) TransformStreamEvents(ctx context.Context, events []mo
 			if event.Error == nil {
 				continue
 			}
+			// 错误事件只允许输出一次：上游重复 error 或 relay 重试重复投递时，
+			// 不应给客户端发送多个 event: error。
+			if i.messageStopped {
+				continue
+			}
 			errType := event.Error.Detail.Type
 			if errType == "" {
 				errType = "api_error"

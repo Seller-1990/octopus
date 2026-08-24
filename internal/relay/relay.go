@@ -1751,6 +1751,12 @@ func (ra *relayAttempt) collectPassthroughMetrics(ctx context.Context, rawStream
 	if len(rawStream) == 0 {
 		return
 	}
+	// 一次 attempt 只采集一次：StreamProcessor 断连路径会经 OnFinish 采集，
+	// relay 的断连分支不应把同一份 rawStreamBuf 再喂给聚合器（会导致日志正文/
+	// tool call 参数重复拼接）。幂等开关防止两条路径都触发时重复采集。
+	if !ra.passthroughMetricsCollected.CompareAndSwap(false, true) {
+		return
+	}
 
 	// Try stream event adapter first (preferred)
 	outEventAdapter, outOk := ra.outAdapter.(model.OutboundStreamEventTransformer)

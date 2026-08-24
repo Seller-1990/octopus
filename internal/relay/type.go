@@ -152,6 +152,10 @@ type relayAttempt struct {
 	// 终态失败分支的 attempt.Msg 就只剩事件名而丢失上游错误详情。
 	// 仅在流回调（请求 goroutine 内顺序调用）中写入，无需加锁。
 	streamErrorDetail string
+	// passthroughMetricsCollected 保证 passthrough 流在一次 attempt 中只做一次
+	// 指标/聚合采集。StreamProcessor 的 handleDisconnect 已通过 OnFinish 采集过
+	// 部分流数据后，relay 断连分支不应再重复采集同一份 rawStreamBuf。
+	passthroughMetricsCollected atomic.Bool
 }
 
 // attemptResult 封装单次尝试的结果

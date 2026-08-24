@@ -136,25 +136,33 @@ func mergeChoiceDelta(existingChoice *Choice, choice Choice) {
 
 func MergeToolCallDelta(toolCalls []ToolCall, delta ToolCall) []ToolCall {
 	for i, tc := range toolCalls {
-		if tc.Index == delta.Index {
-			if delta.ID != "" {
-				toolCalls[i].ID = delta.ID
-			}
-			if delta.Type != "" {
-				toolCalls[i].Type = delta.Type
-			}
-			if delta.Function.Name != "" {
-				if toolCalls[i].Function.Name == "" {
-					toolCalls[i].Function.Name = delta.Function.Name
-				} else if toolCalls[i].Function.Name != delta.Function.Name {
-					toolCalls[i].Function.Name += delta.Function.Name
-				}
-			}
-			if delta.Function.Arguments != "" {
-				toolCalls[i].Function.Arguments += delta.Function.Arguments
-			}
-			return toolCalls
+		if tc.Index != delta.Index {
+			continue
 		}
+		// Index 不是唯一标识：Responses API 的 output_index 可能在
+		// message/reasoning item 之后重新从 0 计数。两侧 ID 均已存在且不同时，
+		// 不能把两个不同 tool call 的 name/arguments 拼接在一起；继续查找
+		// 是否有 ID 匹配的条目，找不到则按新 tool call 追加。
+		if delta.ID != "" && tc.ID != "" && delta.ID != tc.ID {
+			continue
+		}
+		if delta.ID != "" {
+			toolCalls[i].ID = delta.ID
+		}
+		if delta.Type != "" {
+			toolCalls[i].Type = delta.Type
+		}
+		if delta.Function.Name != "" {
+			if toolCalls[i].Function.Name == "" {
+				toolCalls[i].Function.Name = delta.Function.Name
+			} else if toolCalls[i].Function.Name != delta.Function.Name {
+				toolCalls[i].Function.Name += delta.Function.Name
+			}
+		}
+		if delta.Function.Arguments != "" {
+			toolCalls[i].Function.Arguments += delta.Function.Arguments
+		}
+		return toolCalls
 	}
 	return append(toolCalls, delta)
 }

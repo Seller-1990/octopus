@@ -55,3 +55,34 @@ func TestMergeToolCallDeltaSetsFunctionNameWhenMissing(t *testing.T) {
 		t.Fatalf("function name not set: %q", toolCalls[0].Function.Name)
 	}
 }
+
+func TestMergeToolCallDeltaTreatsIndexReuseWithDifferentIDAsNewCall(t *testing.T) {
+	toolCalls := []ToolCall{{
+		Index: 0,
+		ID:    "call_1",
+		Type:  "function",
+		Function: FunctionCall{
+			Name:      "Write",
+			Arguments: `{"file":1}`,
+		},
+	}}
+
+	// Responses API 的 output_index 可能复用；ID 不同时必须作为新的 tool call，
+	// 不能把两个不同调用的 arguments 拼接在一起。
+	toolCalls = MergeToolCallDelta(toolCalls, ToolCall{
+		Index: 0,
+		ID:    "call_2",
+		Type:  "function",
+		Function: FunctionCall{
+			Name:      "Read",
+			Arguments: `{"file":2}`,
+		},
+	})
+
+	if len(toolCalls) != 2 {
+		t.Fatalf("expected two tool calls, got %d", len(toolCalls))
+	}
+	if toolCalls[0].Function.Arguments != `{"file":1}` || toolCalls[1].Function.Arguments != `{"file":2}` {
+		t.Fatalf("tool calls corrupted: %#v", toolCalls)
+	}
+}

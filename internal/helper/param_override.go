@@ -7,6 +7,8 @@ import (
 	"io"
 	"net/http"
 	"strings"
+
+	"github.com/bestruirui/octopus/internal/utils/log"
 )
 
 // ApplyParamOverride merges a JSON-object override into an outbound JSON request body.
@@ -32,12 +34,14 @@ func ApplyParamOverride(request *http.Request, paramOverride *string) error {
 	var bodyMap map[string]any
 	if err := json.Unmarshal(body, &bodyMap); err != nil {
 		restoreBody()
+		log.Warnf("param_override skipped: request body is not a JSON object: %v", err)
 		return nil
 	}
 
 	var override map[string]any
 	if err := json.Unmarshal([]byte(*paramOverride), &override); err != nil {
 		restoreBody()
+		log.Warnf("param_override skipped: invalid override JSON: %v", err)
 		return nil
 	}
 

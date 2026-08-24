@@ -16,7 +16,6 @@ import (
 
 	"github.com/bestruirui/octopus/internal/db"
 	"github.com/bestruirui/octopus/internal/model"
-	"gorm.io/gorm"
 )
 
 type ClashControllerInput struct {
@@ -364,30 +363,4 @@ func validateHTTPURL(value string) error {
 		return fmt.Errorf("host is required")
 	}
 	return nil
-}
-
-func ClashControllerProxyConfiguration(ctx context.Context, controllerID int) (*model.ProxyConfiguration, error) {
-	controller, err := ClashControllerGet(ctx, controllerID)
-	if err != nil {
-		return nil, err
-	}
-	var item model.ProxyConfiguration
-	err = db.GetDB().WithContext(ctx).Where("clash_controller_id = ?", controllerID).First(&item).Error
-	if err == nil {
-		return &item, nil
-	}
-	if err != gorm.ErrRecordNotFound {
-		return nil, err
-	}
-	item = model.ProxyConfiguration{
-		Name:              "Clash - " + controller.Name,
-		URL:               controller.ProxyURL,
-		ClashControllerID: &controller.ID,
-		Enabled:           true,
-		Remark:            "Managed by Clash controller",
-	}
-	if err := ProxyConfigurationCreate(&item, ctx); err != nil {
-		return nil, err
-	}
-	return &item, nil
 }

@@ -549,3 +549,20 @@ func TestTransformRequestPreservesServerToolOnInternalRequest(t *testing.T) {
 		t.Fatalf("function tool name mismatch, got %q", fn.Function.Name)
 	}
 }
+
+func TestTransformStreamEventsOnlyEmitsSingleErrorEvent(t *testing.T) {
+	inbound := &MessagesInbound{}
+	out, err := inbound.TransformStreamEvents(context.Background(), []model.StreamEvent{
+		{Kind: model.StreamEventKindError, Error: &model.ResponseError{Detail: model.ErrorDetail{Type: "api_error", Message: "first"}}},
+		{Kind: model.StreamEventKindError, Error: &model.ResponseError{Detail: model.ErrorDetail{Type: "api_error", Message: "second"}}},
+	})
+	if err != nil {
+		t.Fatalf("error events: %v", err)
+	}
+	if count := strings.Count(string(out), `"type":"error"`); count != 1 {
+		t.Fatalf("expected exactly one error event, got %d: %s", count, out)
+	}
+	if !strings.Contains(string(out), `"message":"first"`) {
+		t.Fatalf("expected first error message, got %s", out)
+	}
+}

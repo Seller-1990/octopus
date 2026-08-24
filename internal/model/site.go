@@ -807,25 +807,6 @@ func SiteModelRouteTypeSuffix(routeType SiteModelRouteType) string {
 	}
 }
 
-func SiteModelRouteTypeName(routeType SiteModelRouteType) string {
-	switch NormalizeSiteModelRouteType(routeType) {
-	case SiteModelRouteTypeOpenAIResponse:
-		return "OpenAI Response"
-	case SiteModelRouteTypeAnthropic:
-		return "Anthropic"
-	case SiteModelRouteTypeGemini:
-		return "Gemini"
-	case SiteModelRouteTypeVolcengine:
-		return "Volcengine"
-	case SiteModelRouteTypeOpenAIEmbedding:
-		return "OpenAI Embedding"
-	case SiteModelRouteTypeUnknown:
-		return "Unsupported"
-	default:
-		return ""
-	}
-}
-
 func CompactSiteModelRouteTypeName(routeType SiteModelRouteType) string {
 	switch NormalizeSiteModelRouteType(routeType) {
 	case SiteModelRouteTypeOpenAIChat:

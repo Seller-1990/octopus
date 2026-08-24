@@ -28,10 +28,6 @@ type MigrationRecord struct {
 var beforeAutoMigrations = make([]Migration, 0)
 var afterAutoMigrations = make([]Migration, 0)
 
-func RegisterBeforeAutoMigration(m Migration) {
-	beforeAutoMigrations = append(beforeAutoMigrations, m)
-}
-
 func RegisterAfterAutoMigration(m Migration) {
 	afterAutoMigrations = append(afterAutoMigrations, m)
 }

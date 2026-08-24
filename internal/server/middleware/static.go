@@ -22,11 +22,6 @@ func StaticEmbed(urlPrefix string, embedFS fs.FS) gin.HandlerFunc {
 	return static(urlPrefix, fs)
 }
 
-func StaticLocal(urlPrefix string, localPath string) gin.HandlerFunc {
-	fs := http.Dir(localPath)
-	return static(urlPrefix, fs)
-}
-
 func static(urlPrefix string, fileSystem http.FileSystem) gin.HandlerFunc {
 	fileserver := http.FileServer(fileSystem)
 	if urlPrefix != "" {

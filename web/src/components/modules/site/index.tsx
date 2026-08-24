@@ -1111,7 +1111,7 @@ export function Site() {
     }
   }
 
-  async function handleBrowserSync(account: SiteAccount, site: SiteRecord) {
+  async function handleBrowserSync(account: SiteAccount) {
     setBrowserSyncAccountIds((current) => new Set(current).add(account.id));
     try {
       const result = await oneClickBrowserSync.mutateAsync({
@@ -1977,7 +1977,7 @@ export function Site() {
                                       <IconActionButton
                                         label={tRecovery("verification.browserSync.button")}
                                         disabled={browserSyncAccountIds.has(account.id)}
-                                        onClick={() => handleBrowserSync(account, site)}
+                                        onClick={() => handleBrowserSync(account)}
                                       >
                                         <Globe className="size-4" />
                                       </IconActionButton>

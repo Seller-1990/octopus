@@ -99,22 +99,26 @@ export function UsageAnalytics({ filters, dimension, onDrilldown }: UsageAnalyti
         [metricLabel, t],
     );
 
-    if (summaryQuery.isLoading && !summary) {
+    if (!summary) {
+        if (summaryQuery.isLoading) {
+            return (
+                <div className="flex min-h-64 items-center justify-center">
+                    <Loader2 className="size-6 animate-spin text-muted-foreground" />
+                </div>
+            );
+        }
+
+        const initialError = summaryQuery.error ?? timeseriesQuery.error ?? breakdownQuery.error;
         return (
-            <div className="flex min-h-64 items-center justify-center">
-                <Loader2 className="size-6 animate-spin text-muted-foreground" />
+            <div className="rounded-lg border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm text-destructive">
+                {initialError instanceof Error ? initialError.message : t('error')}
             </div>
         );
     }
 
-    if (summaryQuery.error || timeseriesQuery.error || breakdownQuery.error) {
-        const error = summaryQuery.error ?? timeseriesQuery.error ?? breakdownQuery.error;
-        return (
-            <div className="rounded-lg border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm text-destructive">
-                {error instanceof Error ? error.message : t('error')}
-            </div>
-        );
-    }
+    // 已有 summary 数据时，任何后台 refetch 失败都只降级为顶部提示条，
+    // 不能把整页有效旧数据替换为错误页。
+    const pageError = summaryQuery.error ?? timeseriesQuery.error ?? breakdownQuery.error;
 
     const kpis = summary ? buildKPIs(summary, metricLabel, t) : [];
     const chartData = timeseriesQuery.data?.points ?? [];
@@ -141,6 +145,11 @@ export function UsageAnalytics({ filters, dimension, onDrilldown }: UsageAnalyti
 
     return (
         <div className="min-h-0 flex-1 overflow-auto pb-24 md:pb-4">
+            {pageError ? (
+                <div className="mb-3 rounded-lg border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm text-destructive">
+                    {pageError instanceof Error ? pageError.message : t('error')}
+                </div>
+            ) : null}
             <section className="grid grid-cols-2 gap-2 pb-4 md:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-9">
                 {kpis.map((item) => (
                     <div key={item.label} className="min-w-0 rounded-lg border border-border/70 bg-card px-3 py-3">

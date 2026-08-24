@@ -216,10 +216,6 @@ func DiscardRelayLogPending() {
 	relayLogRecentLock.Unlock()
 }
 
-func RelayLogDroppedTotal() uint64 {
-	return 0
-}
-
 func relayLogDrainPending(ctx context.Context, maxBatches int) error {
 	if maxBatches <= 0 {
 		maxBatches = 1

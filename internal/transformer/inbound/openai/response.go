@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/samber/lo"
@@ -843,8 +844,17 @@ func (i *ResponseInbound) closeCurrentOutputItem() [][]byte {
 		events = append(events, i.closeReasoningItem()...)
 	}
 
-	// Close any open tool call items
-	for idx, tc := range i.toolCalls {
+	// Close any open tool call items in deterministic output_index order.
+	// toolCalls is a map; range order is randomized and strict clients
+	// expect response.function_call_arguments.done / output_item.done to be
+	// delivered in increasing output_index order.
+	indices := make([]int, 0, len(i.toolCalls))
+	for idx := range i.toolCalls {
+		indices = append(indices, idx)
+	}
+	sort.Ints(indices)
+	for _, idx := range indices {
+		tc := i.toolCalls[idx]
 		if i.toolCallItemStarted[idx] {
 			itemID := tc.ID
 			if itemID == "" {

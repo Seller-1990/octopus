@@ -18,7 +18,11 @@ var groupMap = cache.New[string, model.Group](16)
 func GroupList(ctx context.Context) ([]model.Group, error) {
 	groups := make([]model.Group, 0, groupCache.Len())
 	for _, group := range groupCache.GetAll() {
-		group.Items = applyGroupItemMultiplierPolicies(ctx, group.Items)
+		// groupCache.GetAll 是浅拷贝：Group 结构体被复制，但 Items 底层数组
+		// 仍与缓存共享。必须先把 items 拷到新 slice，再写入派生策略字段，
+		// 否则管理端列表请求会原地改写缓存数据，并与 relay 路径的读形成竞争。
+		items := append([]model.GroupItem(nil), group.Items...)
+		group.Items = applyGroupItemMultiplierPolicies(ctx, items)
 		// 能力标识（分组名 → CanonicalModel 能力，并集聚合，只读徽标）。
 		// 规范化名匹配（NormalizeModelIdentity 已小写化），改名/手建分组无匹配 → 空（可接受）。
 		if caps, ok := canonicalCapabilitiesByName(NormalizeModelIdentity(group.Name)); ok {
@@ -111,6 +115,7 @@ func GroupUpdate(req *model.GroupUpdateRequest, ctx context.Context) (*model.Gro
 	defer func() {
 		if r := recover(); r != nil {
 			tx.Rollback()
+			panic(r)
 		}
 	}()
 
@@ -285,6 +290,7 @@ func GroupDel(id int, ctx context.Context) error {
 	defer func() {
 		if r := recover(); r != nil {
 			tx.Rollback()
+			panic(r)
 		}
 	}()
 
