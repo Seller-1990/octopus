@@ -40,6 +40,9 @@ type Client struct {
 	DialTimeoutSeconds int `mapstructure:"dial_timeout_seconds"`
 	// TLSHandshakeTimeoutSeconds 上游 TLS 握手超时，默认 5。
 	TLSHandshakeTimeoutSeconds int `mapstructure:"tls_handshake_timeout_seconds"`
+	// ResponseTimeoutSeconds 非流式上游整体响应超时（含读取 body），默认 120。
+	// 流式请求不受此限制，仍由首 token 超时与客户端断开控制。
+	ResponseTimeoutSeconds int `mapstructure:"response_timeout_seconds"`
 }
 
 type Startup struct {
@@ -84,6 +87,14 @@ func ClientTLSHandshakeTimeout() time.Duration {
 	seconds := AppConfig.Client.TLSHandshakeTimeoutSeconds
 	if seconds <= 0 {
 		seconds = 5
+	}
+	return time.Duration(seconds) * time.Second
+}
+
+func ClientResponseTimeout() time.Duration {
+	seconds := AppConfig.Client.ResponseTimeoutSeconds
+	if seconds <= 0 {
+		seconds = 120
 	}
 	return time.Duration(seconds) * time.Second
 }
@@ -172,5 +183,6 @@ func setDefaults() {
 	viper.SetDefault("startup.cache_init_timeout_seconds", 120)
 	viper.SetDefault("client.dial_timeout_seconds", 5)
 	viper.SetDefault("client.tls_handshake_timeout_seconds", 5)
+	viper.SetDefault("client.response_timeout_seconds", 120)
 	viper.SetDefault("bootstrap.password", "")
 }

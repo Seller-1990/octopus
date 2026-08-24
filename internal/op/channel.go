@@ -750,6 +750,7 @@ func persistedSiteGroupMultiplierMap(ctx context.Context, accountIDs []int) map[
 		Find(&groups).Error; err != nil {
 		// 阶段 2 补充：查询失败保持「未知→放行」（与两态一致，避免 DB 抖动误拦 503），
 		// 但必须告警让 cap 失效可观测（cap 是成本控制点）。
+		multiplierLookupFailureTotal.Add(1)
 		log.Warnf("load site group multipliers failed, treating as unknown (cap inactive): %v", err)
 		return result
 	}

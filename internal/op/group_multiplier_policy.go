@@ -57,6 +57,7 @@ func evaluateGroupItemMultiplierPolicies(ctx context.Context, items []model.Grou
 	bindingMap, bindingErr := SiteChannelBindingMapByChannelIDs(channelIDs, ctx)
 	if bindingErr != nil {
 		// 阶段 2 补充：绑定查询失败保持「未知→放行」（与两态一致），但告警让 cap 失效可观测
+		multiplierBindingFailureTotal.Add(1)
 		log.Warnf("load site channel bindings failed, treating multipliers as unknown: %v", bindingErr)
 	}
 	groupMultipliers := channelGroupMultiplierMap(ctx, bindingMap)

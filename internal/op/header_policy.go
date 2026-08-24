@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 	"unicode"
@@ -94,6 +95,7 @@ func HeaderPolicyRegistry() model.HeaderPolicyRegistry {
 }
 
 func HeaderPolicyFailureFallback() model.ResolvedHeaderPolicy {
+	headerPolicyFallbackTotal.Add(1)
 	return model.ResolvedHeaderPolicy{
 		ForwardClientHeaders: false,
 		SetHeaders:           []model.CustomHeader{},
@@ -158,6 +160,7 @@ func HeaderPolicyUpsert(ctx context.Context, item model.HeaderPolicy) (*model.He
 	if err != nil {
 		return nil, err
 	}
+	clearHeaderPolicyCache()
 	return &saved, nil
 }
 
@@ -178,7 +181,11 @@ func HeaderPolicyDelete(ctx context.Context, id int) error {
 	if id <= 0 {
 		return fmt.Errorf("header policy id is required")
 	}
-	return db.GetDB().WithContext(ctx).Delete(&model.HeaderPolicy{}, id).Error
+	if err := db.GetDB().WithContext(ctx).Delete(&model.HeaderPolicy{}, id).Error; err != nil {
+		return err
+	}
+	clearHeaderPolicyCache()
+	return nil
 }
 
 func validateHeaderPolicy(item *model.HeaderPolicy) error {
@@ -375,20 +382,26 @@ func ResolveHeaderPolicy(
 		}{scope: model.HeaderPolicyScopeRouteCandidate, id: routeCandidateID})
 	}
 
+	policies, err := enabledHeaderPolicies(ctx)
+	if err != nil {
+		return HeaderPolicyFailureFallback(), err
+	}
+	policyByScope := make(map[string]model.HeaderPolicy, len(policies))
+	for _, policy := range policies {
+		policyByScope[headerPolicyScopeKey(policy.Scope, policy.ScopeID)] = policy
+	}
 	for _, scope := range scopes {
-		var policy model.HeaderPolicy
-		err := db.GetDB().WithContext(ctx).
-			Where("scope = ? AND scope_id = ? AND enabled = ?", scope.scope, scope.id, true).
-			First(&policy).Error
-		if err == gorm.ErrRecordNotFound {
+		policy, ok := policyByScope[headerPolicyScopeKey(scope.scope, scope.id)]
+		if !ok {
 			continue
-		}
-		if err != nil {
-			return HeaderPolicyFailureFallback(), err
 		}
 		applyHeaderPolicyLayer(&result, policy)
 	}
 	return result, nil
+}
+
+func headerPolicyScopeKey(scope model.HeaderPolicyScope, scopeID int) string {
+	return string(scope) + "|" + strconv.Itoa(scopeID)
 }
 
 func ResolveSiteHeaderPolicy(ctx context.Context, siteID, accountID int) (model.ResolvedHeaderPolicy, error) {
@@ -412,16 +425,19 @@ func ResolveSiteHeaderPolicy(ctx context.Context, siteID, accountID int) (model.
 			id    int
 		}{scope: model.HeaderPolicyScopeSiteAccount, id: accountID})
 	}
+
+	policies, err := enabledHeaderPolicies(ctx)
+	if err != nil {
+		return HeaderPolicyFailureFallback(), err
+	}
+	policyByScope := make(map[string]model.HeaderPolicy, len(policies))
+	for _, policy := range policies {
+		policyByScope[headerPolicyScopeKey(policy.Scope, policy.ScopeID)] = policy
+	}
 	for _, scope := range scopes {
-		var policy model.HeaderPolicy
-		err := db.GetDB().WithContext(ctx).
-			Where("scope = ? AND scope_id = ? AND enabled = ?", scope.scope, scope.id, true).
-			First(&policy).Error
-		if err == gorm.ErrRecordNotFound {
+		policy, ok := policyByScope[headerPolicyScopeKey(scope.scope, scope.id)]
+		if !ok {
 			continue
-		}
-		if err != nil {
-			return HeaderPolicyFailureFallback(), err
 		}
 		applyHeaderPolicyLayer(&result, policy)
 	}

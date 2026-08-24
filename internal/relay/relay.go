@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/bestruirui/octopus/internal/client"
+	"github.com/bestruirui/octopus/internal/conf"
 	"github.com/bestruirui/octopus/internal/helper"
 	dbmodel "github.com/bestruirui/octopus/internal/model"
 	"github.com/bestruirui/octopus/internal/op"
@@ -1476,6 +1477,20 @@ func (ra *relayAttempt) recordHeaderPolicyTrace(policy dbmodel.ResolvedHeaderPol
 	}
 }
 
+func (ra *relayAttempt) isNonStreaming() bool {
+	return ra == nil || ra.internalRequest == nil || ra.internalRequest.Stream == nil || !*ra.internalRequest.Stream
+}
+
+// applyNonStreamingTimeout 为非流式请求施加整体响应超时。流式请求不能设置
+// 整体超时（长生成会误杀），只依赖首 token 超时与客户端断开。
+func (ra *relayAttempt) applyNonStreamingTimeout(req *http.Request) (*http.Request, context.CancelFunc) {
+	if ra == nil || !ra.isNonStreaming() {
+		return req, func() {}
+	}
+	ctx, cancel := context.WithTimeout(req.Context(), conf.ClientResponseTimeout())
+	return req.WithContext(ctx), cancel
+}
+
 // sendRequest 发送 HTTP 请求
 func (ra *relayAttempt) sendRequest(req *http.Request) (*http.Response, error) {
 	if ra.channel.TLSFingerprint != "" {
@@ -1489,13 +1504,16 @@ func (ra *relayAttempt) sendRequest(req *http.Request) (*http.Response, error) {
 	}
 
 	req = ra.attachFirstTokenBudget(req)
+	req, cancelNonStreaming := ra.applyNonStreamingTimeout(req)
 	if err := ra.applyChannelCFCookie(req); err != nil {
 		ra.closeFirstTokenBudget()
+		cancelNonStreaming()
 		return nil, err
 	}
 
 	response, err := httpClient.Do(req)
 	if err != nil {
+		cancelNonStreaming()
 		if timeoutErr := ra.firstTokenTimeoutIfNeeded(req.Context(), err); timeoutErr != nil {
 			ra.closeFirstTokenBudget()
 			return nil, timeoutErr
@@ -1509,10 +1527,16 @@ func (ra *relayAttempt) sendRequest(req *http.Request) (*http.Response, error) {
 		return nil, err
 	}
 
-	if response != nil && response.Body != nil && ra.firstTokenBudget != nil {
+	var onClose func()
+	if ra.firstTokenBudget != nil {
+		onClose = ra.closeFirstTokenBudget
+	} else {
+		onClose = cancelNonStreaming
+	}
+	if response != nil && response.Body != nil && onClose != nil {
 		response.Body = &closeWithFuncReadCloser{
 			ReadCloser: response.Body,
-			onClose:    ra.closeFirstTokenBudget,
+			onClose:    onClose,
 		}
 	}
 
@@ -1529,8 +1553,10 @@ func (ra *relayAttempt) sendFingerprintedRequest(req *http.Request) (*http.Respo
 	}
 
 	req = ra.attachFirstTokenBudget(req)
+	req, cancelNonStreaming := ra.applyNonStreamingTimeout(req)
 	if err := ra.applyChannelCFCookie(req); err != nil {
 		ra.closeFirstTokenBudget()
+		cancelNonStreaming()
 		return nil, err
 	}
 
@@ -1550,6 +1576,7 @@ func (ra *relayAttempt) sendFingerprintedRequest(req *http.Request) (*http.Respo
 		flatHeaders,
 	)
 	if err != nil {
+		cancelNonStreaming()
 		if timeoutErr := ra.firstTokenTimeoutIfNeeded(req.Context(), err); timeoutErr != nil {
 			ra.closeFirstTokenBudget()
 			return nil, timeoutErr
@@ -1563,10 +1590,16 @@ func (ra *relayAttempt) sendFingerprintedRequest(req *http.Request) (*http.Respo
 		return nil, err
 	}
 
-	if response != nil && response.Body != nil && ra.firstTokenBudget != nil {
+	var onClose func()
+	if ra.firstTokenBudget != nil {
+		onClose = ra.closeFirstTokenBudget
+	} else {
+		onClose = cancelNonStreaming
+	}
+	if response != nil && response.Body != nil && onClose != nil {
 		response.Body = &closeWithFuncReadCloser{
 			ReadCloser: response.Body,
-			onClose:    ra.closeFirstTokenBudget,
+			onClose:    onClose,
 		}
 	}
 
@@ -1952,104 +1985,4 @@ func (ra *relayAttempt) collectResponse() {
 		actualModel = strings.TrimSpace(ra.internalRequest.Model)
 	}
 	ra.metrics.SetInternalResponse(internalResponse, actualModel)
-}
-
-func clientSuccessTerminalEvents(format model.APIFormat) map[string]struct{} {
-	switch format {
-	case model.APIFormatOpenAIResponse:
-		return map[string]struct{}{
-			"response.completed":  {},
-			"response.failed":     {},
-			"response.incomplete": {},
-			"response.cancelled":  {},
-			"response.canceled":   {},
-		}
-	case model.APIFormatAnthropicMessage:
-		return map[string]struct{}{"message_stop": {}, "error": {}}
-	case model.APIFormatOpenAIChatCompletion:
-		return map[string]struct{}{"[DONE]": {}}
-	default:
-		return nil
-	}
-}
-
-func requestOutcomeForTerminalEvent(event string) dbmodel.RequestOutcome {
-	switch strings.TrimSpace(event) {
-	case "response.incomplete":
-		return dbmodel.RequestOutcomeIndeterminate
-	case "response.cancelled", "response.canceled":
-		return dbmodel.RequestOutcomeIndeterminate
-	case "response.failed", "response.error", "error":
-		return dbmodel.RequestOutcomeFailed
-	default:
-		return dbmodel.RequestOutcomeSuccess
-	}
-}
-
-func inboundProtocolName(value inbound.InboundType) dbmodel.ProtocolName {
-	switch value {
-	case inbound.InboundTypeOpenAIResponse:
-		return dbmodel.ProtocolOpenAIResponses
-	case inbound.InboundTypeAnthropic:
-		return dbmodel.ProtocolAnthropic
-	case inbound.InboundTypeOpenAIEmbedding:
-		return dbmodel.ProtocolOpenAIEmbedding
-	default:
-		return dbmodel.ProtocolOpenAIChat
-	}
-}
-
-func routeDecisionMap(preview dbmodel.RoutePreview) map[string]dbmodel.RouteDecisionReason {
-	decisions := make(map[string]dbmodel.RouteDecisionReason, len(preview.Decisions))
-	for _, decision := range preview.Decisions {
-		if !decision.Included {
-			continue
-		}
-		decisions[relayRouteDecisionKey(decision.ChannelID, decision.UpstreamModel)] = decision
-	}
-	return decisions
-}
-
-func recordProtocolPlanningSkips(
-	ctx context.Context,
-	iter *balancer.Iterator,
-	preview dbmodel.RoutePreview,
-) {
-	if iter == nil {
-		return
-	}
-	for _, decision := range preview.Decisions {
-		if decision.Included {
-			continue
-		}
-		channelName := fmt.Sprintf("channel_%d", decision.ChannelID)
-		if channel, err := op.ChannelGet(decision.ChannelID, ctx); err == nil {
-			channelName = channel.Name
-		}
-		reason := strings.TrimSpace(decision.Reason)
-		if reason == "" {
-			reason = "excluded by protocol planning"
-		}
-		iter.RecordPlanningSkip(
-			decision.ChannelID,
-			channelName,
-			decision.UpstreamModel,
-			decision.RouteCandidateID,
-			reason,
-		)
-	}
-}
-
-func relayRouteDecisionKey(channelID int, modelName string) string {
-	return fmt.Sprintf("%d\x00%s", channelID, modelName)
-}
-
-func setProtocolWarningHeader(c *gin.Context, warnings []string) {
-	if c == nil {
-		return
-	}
-	c.Writer.Header().Del("X-Octopus-Warning")
-	if len(warnings) > 0 {
-		c.Header("X-Octopus-Warning", strings.Join(warnings, "; "))
-	}
 }

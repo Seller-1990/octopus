@@ -45,10 +45,12 @@ func InitDB(dbType, dsn string, debug bool) error {
 
 	switch dbType {
 	case "sqlite":
-		// SQLite 单写模型：限制为单连接，避免连接池内自相竞争 SQLITE_BUSY；
-		// WAL 模式下读连接由驱动内部处理，不会被该限制阻塞。
-		sqlDB.SetMaxOpenConns(1)
-		sqlDB.SetMaxIdleConns(1)
+		// SQLite 为 WAL 模式，支持一写多读；busy_timeout(5000) 让写事务在
+		// 连接被占用时等待而不是立刻 SQLITE_BUSY。这里放开读连接池到 4，
+		// 避免每请求路由查询被单个连接上的日志批量写事务排队；写竞争仍由
+		// busy_timeout 兜底。
+		sqlDB.SetMaxOpenConns(4)
+		sqlDB.SetMaxIdleConns(4)
 		sqlDB.SetConnMaxLifetime(0)
 		sqlDB.SetConnMaxIdleTime(0)
 	default:
