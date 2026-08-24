@@ -866,3 +866,30 @@ Overall         ██████░░░░  6.4  B
 - `c516a70` refactor: fail-closed multiplier fallback, extract site format utils
 - `30a7f1d` perf: add non-streaming timeout, SQLite read pool, header policy cache
 - `5afefb0` fix: address audit findings (stability, protocol, dead code)
+
+---
+
+## 17. 第四批推进记录（2026-08-23）
+
+### 17.1 已实施
+
+| 项目 | 实施内容 |
+|------|----------|
+| binding 缓存 + 失效钩子 | 新增 `site_binding_cache.go`：`SiteChannelBindingGetByChannelID` / `SiteChannelBindingMapByChannelIDs` 从缓存读取；新增 `InvalidateSiteChannelBindingCache()`，在 op 删除站点/账号、备份导入事务提交后、sitesync 绑定创建/更新/删除共 8 个写入点精准失效 |
+| 前端 site-channel 拆分 | 从 3405 行 `site-channel/index.tsx` 抽取模型/汇总/排序/状态辅助函数到 `model-utils.ts`（250 行），index 降至 3191 行 |
+
+### 17.2 验证结果
+
+| 检查 | 结果 |
+|------|------|
+| `go test ./...` | ✅ 通过 |
+| `go vet ./...` | ✅ 零告警 |
+| `go test -race ./internal/op ./internal/sitesync` | ✅ 通过 |
+| `pnpm lint` | ✅ 零告警 |
+| `pnpm build` | ✅ 构建成功 |
+
+### 17.3 提交
+
+- `db012c9` refactor: extract site-channel model utilities
+- `5e1122b` perf: cache site channel bindings with write invalidation hooks
+- `c516a70` refactor: fail-closed multiplier fallback, extract site format utils
