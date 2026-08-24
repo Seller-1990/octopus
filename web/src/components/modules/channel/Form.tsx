@@ -521,11 +521,11 @@ export function ChannelForm({
                                     {t('tlsFingerprint')}
                                 </label>
                                 <Select
-                                    value={formData.tls_fingerprint}
+                                    value={formData.tls_fingerprint || 'none'}
                                     onValueChange={(value) =>
                                         onFormDataChange({
                                             ...formData,
-                                            tls_fingerprint: value as Channel['tls_fingerprint'],
+                                            tls_fingerprint: value === 'none' ? '' : value as Channel['tls_fingerprint'],
                                         })
                                     }
                                 >
@@ -536,7 +536,7 @@ export function ChannelForm({
                                         <SelectValue />
                                     </SelectTrigger>
                                     <SelectContent className="rounded-xl">
-                                        <SelectItem className="rounded-xl" value="">{t('tlsFingerprintNone')}</SelectItem>
+                                        <SelectItem className="rounded-xl" value="none">{t('tlsFingerprintNone')}</SelectItem>
                                         <SelectItem className="rounded-xl" value="chrome">{t('tlsFingerprintChrome')}</SelectItem>
                                         <SelectItem className="rounded-xl" value="firefox">{t('tlsFingerprintFirefox')}</SelectItem>
                                     </SelectContent>
