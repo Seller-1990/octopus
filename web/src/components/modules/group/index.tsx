@@ -7,38 +7,116 @@ import { useGroupList, useApplyGroupDefaults, type Group } from '@/api/endpoints
 import { useSearchStore, useToolbarViewOptionsStore } from '@/components/modules/toolbar';
 import { VirtualizedGrid } from '@/components/common/VirtualizedGrid';
 import { VendorIcon } from '@/components/shared/VendorIcon';
+import { vendorOption } from '@/components/modules/model/vendor-options';
 import { toast } from '@/components/common/Toast';
 import { cn } from '@/lib/utils';
 import { EyeOff, Settings2, Wrench } from 'lucide-react';
 
-function detectVendorFromModel(modelName: string): string | null {
-    const lower = modelName.toLowerCase();
-    if (lower.startsWith('gpt-') || lower.startsWith('o1') || lower.startsWith('o3') || lower.startsWith('o4')) return 'openai';
-    if (lower.startsWith('claude-')) return 'anthropic';
-    if (lower.startsWith('gemini-')) return 'google';
-    if (lower.startsWith('deepseek')) return 'deepseek';
-    if (lower.startsWith('grok')) return 'xai';
-    if (lower.startsWith('qwen')) return 'alibaba';
-    if (lower.startsWith('llama')) return 'meta';
-    if (lower.startsWith('mistral') || lower.startsWith('codestral') || lower.startsWith('pixtral')) return 'mistral';
-    if (lower.startsWith('moonshot') || lower.startsWith('kimi')) return 'moonshotai';
-    if (lower.startsWith('glm') || lower.startsWith('chatglm')) return 'zhipuai';
-    if (lower.startsWith('doubao') || lower.startsWith('skylark')) return 'bytedance';
-    if (lower.startsWith('ernie')) return 'baidu';
-    if (lower.startsWith('hunyuan')) return 'tencent';
-    return null;
+// 与后端 internal/modelvendor 的识别规则保持一致（本地回退用）：
+// 先识别显式 "vendor/model" 前缀，再按模型名 token 前缀匹配。
+const VENDOR_PREFIX_ALIASES: Record<string, string> = {
+    openai: 'openai', 'azure-openai': 'openai',
+    anthropic: 'anthropic', claude: 'anthropic',
+    google: 'google', 'google-vertex': 'google', googleai: 'google', vertex: 'google', gemini: 'google',
+    deepseek: 'deepseek', 'deepseek-ai': 'deepseek',
+    xai: 'xai', 'x-ai': 'xai', grok: 'xai',
+    alibaba: 'alibaba', alibabacloud: 'alibaba', dashscope: 'alibaba', tongyi: 'alibaba', qwen: 'alibaba',
+    zhipuai: 'zhipuai', zhipu: 'zhipuai', 'z-ai': 'zhipuai', bigmodel: 'zhipuai', thudm: 'zhipuai', glm: 'zhipuai',
+    minimax: 'minimax', minimaxai: 'minimax', 'minimax-ai': 'minimax',
+    moonshotai: 'moonshotai', moonshot: 'moonshotai', kimi: 'moonshotai',
+    meta: 'meta', 'meta-llama': 'meta', llama: 'meta',
+    mistral: 'mistral', mistralai: 'mistral',
+    bytedance: 'bytedance', volcengine: 'bytedance', doubao: 'bytedance', ark: 'bytedance',
+    baidu: 'baidu', ernie: 'baidu', wenxin: 'baidu',
+    tencent: 'tencent', hunyuan: 'tencent',
+    stepfun: 'stepfun', step: 'stepfun',
+    '01ai': '01ai', '01-ai': '01ai', yi: '01ai',
+    cohere: 'cohere',
+    perplexity: 'perplexity', 'perplexity-ai': 'perplexity',
+    amazon: 'amazon', 'amazon-bedrock': 'amazon', aws: 'amazon', bedrock: 'amazon',
+    microsoft: 'microsoft',
+    nvidia: 'nvidia',
+    v0: 'v0',
+    xiaomi: 'xiaomi', xiaomimimo: 'xiaomi', mimo: 'xiaomi',
+    baai: 'baai', flagembedding: 'baai',
+    jina: 'jina', jinaai: 'jina', 'jina-ai': 'jina',
+    voyage: 'voyageai', voyageai: 'voyageai', 'voyage-ai': 'voyageai',
+    internlm: 'internlm', 'intern-ai': 'internlm', opengvlab: 'internlm',
+    sensetime: 'sensetime', sensenova: 'sensetime',
+    inclusionai: 'inclusionai', 'inclusion-ai': 'inclusionai',
+    nomic: 'nomic', 'nomic-ai': 'nomic',
+    zeroentropy: 'zeroentropy', 'zero-entropy': 'zeroentropy',
+    poolside: 'poolside',
+};
+
+const VENDOR_NAME_PATTERNS: Array<{ vendor: string; tokens: string[] }> = [
+    { vendor: 'anthropic', tokens: ['claude'] },
+    { vendor: 'openai', tokens: ['gpt', 'chatgpt', 'codex', 'o1', 'o3', 'o4', 'text-embedding-3', 'text-embedding-ada', 'dall-e', 'whisper', 'sora', 'tts-'] },
+    { vendor: 'google', tokens: ['gemini', 'gemma', 'diffusiongemma', 'nano-banana', 'imagen', 'veo'] },
+    { vendor: 'deepseek', tokens: ['deepseek'] },
+    { vendor: 'xai', tokens: ['grok'] },
+    { vendor: 'alibaba', tokens: ['qwen', 'qwq', 'qvq', 'wan', 'tongyi'] },
+    { vendor: 'zhipuai', tokens: ['glm', 'chatglm', 'codegeex', 'cogview', 'cogvideo'] },
+    { vendor: 'moonshotai', tokens: ['kimi', 'moonshot'] },
+    { vendor: 'minimax', tokens: ['minimax', 'abab', 'speech-01', 'speech-02', 'speech-2.'] },
+    { vendor: 'meta', tokens: ['llama', 'codellama'] },
+    { vendor: 'mistral', tokens: ['mistral', 'mixtral', 'ministral', 'magistral', 'codestral', 'devstral', 'pixtral'] },
+    { vendor: 'bytedance', tokens: ['doubao', 'seed', 'seedream', 'seedance', 'skylark'] },
+    { vendor: 'baidu', tokens: ['ernie', 'wenxin'] },
+    { vendor: 'tencent', tokens: ['hunyuan', 'hy3'] },
+    { vendor: 'stepfun', tokens: ['step'] },
+    { vendor: '01ai', tokens: ['yi'] },
+    { vendor: 'cohere', tokens: ['command', 'north-mini-code', 'embed-english', 'embed-multilingual', 'embed-v3', 'embed-v4', 'rerank-english', 'rerank-multilingual', 'rerank-v3', 'rerank-v4'] },
+    { vendor: 'perplexity', tokens: ['sonar'] },
+    { vendor: 'amazon', tokens: ['nova', 'titan'] },
+    { vendor: 'microsoft', tokens: ['phi'] },
+    { vendor: 'nvidia', tokens: ['nemotron'] },
+    { vendor: 'v0', tokens: ['v0'] },
+    { vendor: 'xiaomi', tokens: ['mimo'] },
+    { vendor: 'baai', tokens: ['bge'] },
+    { vendor: 'jina', tokens: ['jina'] },
+    { vendor: 'voyageai', tokens: ['voyage'] },
+    { vendor: 'internlm', tokens: ['internlm', 'internvl', 'intern-s'] },
+    { vendor: 'sensetime', tokens: ['sensenova'] },
+    { vendor: 'inclusionai', tokens: ['ling', 'ring'] },
+    { vendor: 'nomic', tokens: ['nomic'] },
+    { vendor: 'zeroentropy', tokens: ['zembed', 'zerank'] },
+    { vendor: 'poolside', tokens: ['laguna'] },
+];
+
+const SHORT_TOKEN_MAX_LEN = 4;
+
+function matchVendorToken(name: string, token: string): boolean {
+    if (!name.startsWith(token)) return false;
+    const rest = name.slice(token.length);
+    if (rest === '' || token.length > SHORT_TOKEN_MAX_LEN) return true;
+    const next = rest.charCodeAt(0);
+    return next < 97 || next > 122;
 }
 
-const VENDOR_LABELS: Record<string, string> = {
-    openai: 'OpenAI', anthropic: 'Anthropic', google: 'Google', deepseek: 'DeepSeek',
-    xai: 'xAI', alibaba: 'Qwen', meta: 'Meta', mistral: 'Mistral',
-    moonshotai: 'Moonshot', zhipuai: 'Zhipu', bytedance: 'Bytedance', baidu: 'Baidu', tencent: 'Tencent',
-};
+function detectVendorFromModel(modelName: string): string | null {
+    const normalized = modelName.trim().toLowerCase();
+    if (!normalized) return null;
+
+    const segments = normalized.split('/');
+    const base = segments[segments.length - 1];
+    for (const segment of segments.slice(0, -1)) {
+        const vendor = VENDOR_PREFIX_ALIASES[segment.trim()];
+        if (vendor) return vendor;
+    }
+
+    for (const pattern of VENDOR_NAME_PATTERNS) {
+        for (const token of pattern.tokens) {
+            if (matchVendorToken(base, token)) return pattern.vendor;
+        }
+    }
+    return null;
+}
 
 function getGroupVendors(group: Group): Set<string> {
     const vendors = new Set<string>();
     for (const item of group.items ?? []) {
-        const vendor = detectVendorFromModel(item.model_name ?? '');
+        const vendor = (item.vendor ?? '').trim().toLowerCase() || detectVendorFromModel(item.model_name ?? '');
         if (vendor) vendors.add(vendor);
     }
     return vendors;
@@ -118,9 +196,9 @@ export function Group() {
         return 1;
     }, []);
 
-    // R10 修复：tools 筛选与 applyDefaults 独立渲染，不依赖 allVendors.length——
-    // 否则单 vendor 部署时整个控制区消失（tools 筛选 + 默认策略按钮都看不到）。
-    const vendorChips = allVendors.length > 1 ? (
+    // 所有已创建分组包含的厂商标签均完整展示（含单厂商分组），
+    // tools 筛选与 applyDefaults 独立渲染，不依赖 allVendors.length。
+    const vendorChips = allVendors.length > 0 ? (
         <div className="flex flex-wrap items-center gap-1.5 px-1 pb-2">
             <button
                 type="button"
@@ -147,7 +225,7 @@ export function Group() {
                     )}
                 >
                     <VendorIcon vendor={vendor} className="size-3.5" />
-                    {VENDOR_LABELS[vendor] ?? vendor}
+                    {vendorOption(vendor)?.label ?? vendor}
                 </button>
             ))}
         </div>

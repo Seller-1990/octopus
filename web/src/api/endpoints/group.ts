@@ -13,6 +13,8 @@ export interface GroupItem {
     model_name: string;
     priority: number;
     weight: number;
+    /** 后端 modelvendor.Detect 推断的厂商 ID，仅分组列表返回，用于顶部厂商筛选标签。 */
+    vendor?: string;
     multiplier?: number | null;
     group_multiplier?: number | null;
     effective_multiplier?: number | null;

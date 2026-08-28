@@ -165,6 +165,8 @@ export interface UseLogsOptions {
     pageSize?: number;
     filters?: Omit<LogListParams, 'page' | 'page_size'>;
     enabled?: boolean;
+    /** 自动刷新间隔（毫秒）。日志明细页传入以实现实时刷新，缺省不轮询。 */
+    refetchInterval?: number | false;
 }
 
 const logFiltersKey = (filters?: UseLogsOptions['filters']) => ({
@@ -275,7 +277,7 @@ const logsInfiniteQueryKey = (pageSize: number, filters?: UseLogsOptions['filter
  * if (hasMore && !isLoadingMore) loadMore();
  */
 export function useLogs(options: UseLogsOptions = {}) {
-    const { pageSize = 20, filters, enabled = true } = options;
+    const { pageSize = 20, filters, enabled = true, refetchInterval } = options;
 
     const queryClient = useQueryClient();
 
@@ -313,6 +315,7 @@ export function useLogs(options: UseLogsOptions = {}) {
         staleTime: 0,
         refetchOnMount: 'always',
         refetchOnWindowFocus: false,
+        refetchInterval,
         enabled,
     });
 

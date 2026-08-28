@@ -71,6 +71,16 @@ func retryVerificationSession(
 				result.Status != model.SiteExecutionStatusFailed &&
 				result.Status != model.SiteExecutionStatusSkipped
 		}
+		// 验证桥同步成功意味着账号凭据已恢复，此时补一次签到状态刷新，
+		// 避免签到此前因账号问题失败后状态一直停留在失败。
+		if success {
+			message = refreshCheckinStatusAfterSync(
+				ctx,
+				work.Session.SiteAccountID,
+				message,
+				runner,
+			)
+		}
 	case model.SiteOperationCheckin:
 		if runner.checkinAccount == nil {
 			runErr = fmt.Errorf("verification retry checkin runner is unavailable")
@@ -117,6 +127,29 @@ func retryVerificationSession(
 		return fmt.Errorf("%s", message)
 	}
 	return nil
+}
+
+func refreshCheckinStatusAfterSync(
+	ctx context.Context,
+	accountID int,
+	message string,
+	runner verificationRetryRunner,
+) string {
+	if runner.checkinAccount == nil || accountID <= 0 {
+		return message
+	}
+	account, err := op.SiteAccountGet(accountID, ctx)
+	if err != nil || account == nil || !account.AutoCheckin {
+		return message
+	}
+	result, checkinErr := runner.checkinAccount(ctx, accountID)
+	if checkinErr != nil {
+		return message + "；签到状态刷新失败：" + sanitizeSiteStatusMessage(checkinErr)
+	}
+	if result == nil {
+		return message + "；签到状态刷新未返回结果"
+	}
+	return message + "；签到状态已刷新：" + sanitizeSiteStatusText(result.Message)
 }
 
 func finishVerificationRetryFailure(

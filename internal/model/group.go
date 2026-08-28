@@ -38,6 +38,10 @@ type GroupItem struct {
 	Priority  int    `json:"priority"`
 	Weight    int    `json:"weight"`
 
+	// Vendor 是根据 ModelName 推断的厂商 ID（只读，分组列表注入），
+	// 供分组页顶部厂商筛选标签完整展示；gorm:"-" 不落库。
+	Vendor string `json:"vendor,omitempty" gorm:"-"`
+
 	// Tools capability detection (渠道×模型是否支持 tools 调用)。
 	// nil=未探测、true=探测支持（接受 tools 参数）、false=确认不支持（探测或 T9 失败反馈）。
 	SupportsTools           *bool      `json:"supports_tools,omitempty"`

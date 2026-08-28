@@ -6,6 +6,7 @@ import (
 
 	"github.com/bestruirui/octopus/internal/db"
 	"github.com/bestruirui/octopus/internal/model"
+	"github.com/bestruirui/octopus/internal/modelvendor"
 	"github.com/bestruirui/octopus/internal/utils/cache"
 	"github.com/bestruirui/octopus/internal/utils/log"
 	"gorm.io/gorm"
@@ -23,6 +24,9 @@ func GroupList(ctx context.Context) ([]model.Group, error) {
 		// 否则管理端列表请求会原地改写缓存数据，并与 relay 路径的读形成竞争。
 		items := append([]model.GroupItem(nil), group.Items...)
 		group.Items = applyGroupItemMultiplierPolicies(ctx, items)
+		for i := range group.Items {
+			group.Items[i].Vendor = modelvendor.Detect(group.Items[i].ModelName)
+		}
 		// 能力标识（分组名 → CanonicalModel 能力，并集聚合，只读徽标）。
 		// 规范化名匹配（NormalizeModelIdentity 已小写化），改名/手建分组无匹配 → 空（可接受）。
 		if caps, ok := canonicalCapabilitiesByName(NormalizeModelIdentity(group.Name)); ok {

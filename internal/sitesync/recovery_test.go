@@ -477,6 +477,78 @@ func TestRetryVerificationSessionRunsOriginalOperation(t *testing.T) {
 	}
 }
 
+func TestRetryVerificationSessionRefreshCheckinAfterSync(t *testing.T) {
+	ctx := setupProjectTestDB(t)
+	siteRecord, account := createRecoveryFixture(t, ctx)
+	if err := dbpkg.GetDB().WithContext(ctx).Model(&model.SiteAccount{}).
+		Where("id = ?", account.ID).
+		Update("auto_checkin", true).Error; err != nil {
+		t.Fatalf("enable account auto checkin: %v", err)
+	}
+	now := time.Now()
+	session := model.VerificationSession{
+		SiteID:        siteRecord.ID,
+		SiteAccountID: account.ID,
+		Status:        model.VerificationSessionCompleted,
+		ExpiresAt:     now.Add(time.Hour),
+		CompletedAt:   &now,
+		Source:        "manual",
+	}
+	if err := dbpkg.GetDB().WithContext(ctx).Create(&session).Error; err != nil {
+		t.Fatalf("create completed verification session: %v", err)
+	}
+	task := model.VerificationTask{
+		SessionID:   session.ID,
+		Status:      model.VerificationTaskCompleted,
+		TargetURL:   siteRecord.BaseURL,
+		TargetHost:  "api.example.com",
+		ExpiresAt:   session.ExpiresAt,
+		CompletedAt: &now,
+		Operation:   model.SiteOperationSync,
+		RetryStatus: model.VerificationRetryPending,
+	}
+	if err := dbpkg.GetDB().WithContext(ctx).Create(&task).Error; err != nil {
+		t.Fatalf("create completed verification task: %v", err)
+	}
+
+	syncCalls := 0
+	checkinCalls := 0
+	err := retryVerificationSession(ctx, session.ID, verificationRetryRunner{
+		syncAccount: func(_ context.Context, accountID int) (*model.SiteSyncResult, error) {
+			syncCalls++
+			return &model.SiteSyncResult{
+				AccountID: accountID,
+				SiteID:    siteRecord.ID,
+				Status:    model.SiteExecutionStatusSuccess,
+				Message:   "sync restored",
+			}, nil
+		},
+		checkinAccount: func(_ context.Context, accountID int) (*model.SiteCheckinResult, error) {
+			checkinCalls++
+			return &model.SiteCheckinResult{
+				AccountID: accountID,
+				SiteID:    siteRecord.ID,
+				Status:    model.SiteExecutionStatusSuccess,
+				Message:   "checkin restored",
+			}, nil
+		},
+	})
+	if err != nil {
+		t.Fatalf("retry sync with checkin refresh: %v", err)
+	}
+	if syncCalls != 1 || checkinCalls != 1 {
+		t.Fatalf("expected one sync and one checkin refresh, got sync=%d checkin=%d", syncCalls, checkinCalls)
+	}
+	var reloaded model.VerificationTask
+	if err := dbpkg.GetDB().WithContext(ctx).First(&reloaded, task.ID).Error; err != nil {
+		t.Fatalf("reload retry task: %v", err)
+	}
+	if reloaded.RetryStatus != model.VerificationRetrySucceeded ||
+		!strings.Contains(reloaded.RetryMessage, "签到状态已刷新：checkin restored") {
+		t.Fatalf("retry result did not include checkin refresh: %+v", reloaded)
+	}
+}
+
 func TestRetryVerificationSessionInjectsBrowserTransport(t *testing.T) {
 	ctx := setupProjectTestDB(t)
 	siteRecord, account := createRecoveryFixture(t, ctx)

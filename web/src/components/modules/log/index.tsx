@@ -116,6 +116,7 @@ function LogDetailList() {
         pageSize: LOG_PAGE_SIZE,
         filters: logFilters,
         enabled: true,
+        refetchInterval: 5000,
     });
     const logs = dbLogsQuery.logs;
     const hasMore = dbLogsQuery.hasMore;
