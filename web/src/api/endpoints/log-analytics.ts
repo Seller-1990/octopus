@@ -266,7 +266,11 @@ export function useRelayLogRepairExecute() {
                 confirm: true,
             }),
         onSuccess: () => {
-            queryClient.invalidateQueries({ queryKey: ['logs'] });
+            // 不整体 invalidate ['logs']：infinite query 会被按序重取所有已加载页。
+            queryClient.invalidateQueries({ queryKey: ['logs', 'head'] });
+            queryClient.invalidateQueries({ queryKey: ['logs', 'analytics'] });
+            queryClient.invalidateQueries({ queryKey: ['logs', 'site-action-targets'] });
+            queryClient.removeQueries({ queryKey: ['logs', 'infinite'] });
         },
     });
 }

@@ -246,7 +246,8 @@
         "label": "最大冷卻時間（秒）",
         "placeholder": "請輸入最大冷卻時間"
       },
-      "hint": "當渠道連續失敗達到閾值後觸發熔斷，冷卻時間按指數退避增長，上限為最大冷卻時間"
+      "hint": "當渠道連續失敗達到閾值後觸發熔斷，冷卻時間按指數退避增長，上限為最大冷卻時間",
+      "statusLink": "查看熔斷狀態"
     },
     "usageRetention": {
       "title": "使用分析",
@@ -1179,7 +1180,14 @@
       "retry": "重試",
       "streamDisconnected": "即時日誌連線已中斷",
       "streamTokenFailed": "取得即時日誌串流權杖失敗",
-      "empty": "暫無日誌"
+      "empty": "暫無日誌",
+      "updatedAt": "數據截至 {time}",
+      "autoRefresh": " · 自動刷新中",
+      "refreshFailed": "自動刷新失敗",
+      "newLogs": "有 {count} 條新日誌，點擊查看",
+      "emptyHint": "試試調整時間範圍或清除篩選條件",
+      "removeFilter": "移除篩選",
+      "channelCount": "{count} 個渠道"
     },
     "card": {
       "error": "錯誤",
@@ -1249,7 +1257,8 @@
     "analytics": {
       "view": {
         "analytics": "使用分析",
-        "detail": "日誌明細"
+        "detail": "日誌明細",
+        "live": "即時"
       },
       "range": {
         "today": "今天",
@@ -1286,12 +1295,13 @@
         "all_request_model": "全部請求模型",
         "actual_model": "實際模型",
         "all_actual_model": "全部實際模型",
-        "canonical_model": "Canonical Model",
-        "all_canonical_model": "全部 Canonical Model",
+        "canonical_model": "規範模型",
+        "all_canonical_model": "全部規範模型",
         "search": "搜尋維度",
         "noOptions": "沒有匹配項",
         "timezone": "時區",
-        "clear": "清除業務篩選"
+        "clear": "清除業務篩選",
+        "timezoneHint": "影響統計分桶與日期範圍的時間基準"
       },
       "kpi": {
         "requests": "請求數",
@@ -1378,7 +1388,8 @@
       "stopping": "停止中",
       "attempts": "嘗試",
       "attemptIndex": "第 {index} 次嘗試",
-      "keyMultiplier": "Key 倍率"
+      "keyMultiplier": "Key 倍率",
+      "empty": "暫無即時請求"
     }
   },
   "channel": {
@@ -2160,7 +2171,8 @@
       "half_open": "半開",
       "unknown": "未知"
     },
-    "channel": "管道"
+    "channel": "管道",
+    "alertBanner": "{open} 個通道熔斷中、{halfOpen} 個試探中，點擊查看詳情"
   },
   "visionBridge": {
     "title": "視覺橋接",

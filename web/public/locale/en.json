@@ -246,7 +246,8 @@
         "label": "Max Cooldown (seconds)",
         "placeholder": "Enter max cooldown in seconds"
       },
-      "hint": "When a channel fails consecutively up to the threshold, circuit breaker trips. Cooldown grows exponentially up to the max cooldown"
+      "hint": "When a channel fails consecutively up to the threshold, circuit breaker trips. Cooldown grows exponentially up to the max cooldown",
+      "statusLink": "View circuit status"
     },
     "usageRetention": {
       "title": "Usage Analytics",
@@ -1179,7 +1180,14 @@
       "retry": "Retry",
       "streamDisconnected": "Live log connection disconnected",
       "streamTokenFailed": "Failed to get live log stream token",
-      "empty": "No logs yet"
+      "empty": "No logs yet",
+      "updatedAt": "Data as of {time}",
+      "autoRefresh": " · auto-refreshing",
+      "refreshFailed": "auto-refresh failed",
+      "newLogs": "{count} new logs, click to view",
+      "emptyHint": "Try adjusting the time range or clearing filters",
+      "removeFilter": "Remove filter",
+      "channelCount": "{count} channels"
     },
     "card": {
       "error": "Error",
@@ -1249,7 +1257,8 @@
     "analytics": {
       "view": {
         "analytics": "Usage analytics",
-        "detail": "Log details"
+        "detail": "Log details",
+        "live": "Live"
       },
       "range": {
         "today": "Today",
@@ -1291,7 +1300,8 @@
         "search": "Search dimensions",
         "noOptions": "No matching options",
         "timezone": "Timezone",
-        "clear": "Clear business filters"
+        "clear": "Clear business filters",
+        "timezoneHint": "Time basis for bucketing statistics and date ranges"
       },
       "kpi": {
         "requests": "Requests",
@@ -1378,7 +1388,8 @@
       "stopping": "Stopping",
       "attempts": "Attempts",
       "attemptIndex": "Attempt #{index}",
-      "keyMultiplier": "Key multiplier"
+      "keyMultiplier": "Key multiplier",
+      "empty": "No live requests"
     }
   },
   "channel": {
@@ -2160,7 +2171,8 @@
       "half_open": "Half-open",
       "unknown": "Unknown"
     },
-    "channel": "Ch"
+    "channel": "Ch",
+    "alertBanner": "{open} channel(s) tripped, {halfOpen} probing — click for details"
   },
   "visionBridge": {
     "title": "Vision Bridge",

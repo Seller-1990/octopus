@@ -4,7 +4,7 @@ import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import type { UsageDimension, UsageMetricScope } from '@/api/endpoints/log-analytics';
 
-export type LogView = 'analytics' | 'detail';
+export type LogView = 'analytics' | 'detail' | 'live';
 
 function browserTimezone() {
     try {
@@ -62,7 +62,9 @@ export const useLogAnalyticsStore = create<LogAnalyticsState>()(
             setScope: (scope) => set({ scope }),
             setDimension: (dimension) => set({ dimension }),
             setTimezone: (timezone) => set({ timezone }),
-            setSiteIds: (siteIds) => set({ siteIds, siteAccountIds: [] }),
+            // 纯赋值，不清空 siteAccountIds：下钻/筛选是叠加语义，静默清除其他维度
+            // 会让用户的对比基准消失；站点-账号归属校验由 Controls 的站点下拉负责。
+            setSiteIds: (siteIds) => set({ siteIds }),
             setSiteAccountIds: (siteAccountIds) => set({ siteAccountIds }),
             setAPIKeyIds: (apiKeyIds) => set({ apiKeyIds }),
             setRequestModels: (requestModels) => set({ requestModels }),

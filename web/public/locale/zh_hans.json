@@ -246,7 +246,8 @@
         "label": "最大冷却时间（秒）",
         "placeholder": "请输入最大冷却时间"
       },
-      "hint": "当渠道连续失败达到阈值后触发熔断，冷却时间按指数退避增长，上限为最大冷却时间"
+      "hint": "当渠道连续失败达到阈值后触发熔断，冷却时间按指数退避增长，上限为最大冷却时间",
+      "statusLink": "查看熔断状态"
     },
     "usageRetention": {
       "title": "使用分析",
@@ -1179,7 +1180,14 @@
       "retry": "重试",
       "streamDisconnected": "实时日志连接已断开",
       "streamTokenFailed": "获取实时日志流令牌失败",
-      "empty": "暂无日志"
+      "empty": "暂无日志",
+      "updatedAt": "数据截至 {time}",
+      "autoRefresh": " · 自动刷新中",
+      "refreshFailed": "自动刷新失败",
+      "newLogs": "有 {count} 条新日志，点击查看",
+      "emptyHint": "试试调整时间范围或清除筛选条件",
+      "removeFilter": "移除筛选",
+      "channelCount": "{count} 个渠道"
     },
     "card": {
       "error": "错误",
@@ -1249,7 +1257,8 @@
     "analytics": {
       "view": {
         "analytics": "使用分析",
-        "detail": "日志明细"
+        "detail": "日志明细",
+        "live": "实时"
       },
       "range": {
         "today": "今天",
@@ -1286,12 +1295,13 @@
         "all_request_model": "全部请求模型",
         "actual_model": "实际模型",
         "all_actual_model": "全部实际模型",
-        "canonical_model": "Canonical Model",
-        "all_canonical_model": "全部 Canonical Model",
+        "canonical_model": "规范模型",
+        "all_canonical_model": "全部规范模型",
         "search": "搜索维度",
         "noOptions": "没有匹配项",
         "timezone": "时区",
-        "clear": "清除业务筛选"
+        "clear": "清除业务筛选",
+        "timezoneHint": "影响统计分桶与日期范围的时间基准"
       },
       "kpi": {
         "requests": "请求数",
@@ -1378,7 +1388,8 @@
       "stopping": "停止中",
       "attempts": "尝试",
       "attemptIndex": "第 {index} 次尝试",
-      "keyMultiplier": "Key 倍率"
+      "keyMultiplier": "Key 倍率",
+      "empty": "暂无实时请求"
     }
   },
   "channel": {
@@ -2160,7 +2171,8 @@
       "half_open": "半开",
       "unknown": "未知"
     },
-    "channel": "渠道"
+    "channel": "渠道",
+    "alertBanner": "{open} 个通道熔断中、{halfOpen} 个试探中，点击查看详情"
   },
   "visionBridge": {
     "title": "视觉桥接",

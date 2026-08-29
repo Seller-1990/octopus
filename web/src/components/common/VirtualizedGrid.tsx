@@ -36,6 +36,8 @@ interface VirtualizedGridProps<T> {
     reachEndEnabled?: boolean;
     reachEndOffset?: number;
     onScroll?: (info: { scrollTop: number; scrollHeight: number; clientHeight: number }) => void;
+    /** 暴露内部滚动容器（如"回到顶部以查看新日志"的编程式滚动） */
+    onScrollContainer?: (element: HTMLDivElement | null) => void;
 }
 
 function getColumnsForWidth(
@@ -65,6 +67,7 @@ export function VirtualizedGrid<T>({
     reachEndEnabled = false,
     reachEndOffset = 1,
     onScroll,
+    onScrollContainer,
 }: VirtualizedGridProps<T>) {
     'use no memo';
 
@@ -173,7 +176,10 @@ export function VirtualizedGrid<T>({
     return (
         <div className="relative h-full min-h-0 w-full">
             <div
-                ref={containerRef}
+                ref={(element) => {
+                    containerRef.current = element;
+                    onScrollContainer?.(element);
+                }}
                 onScroll={onScroll ? (event) => {
                     const target = event.currentTarget;
                     onScroll({

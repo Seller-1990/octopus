@@ -1,7 +1,8 @@
-import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { keepPreviousData, useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { apiClient, API_BASE_URL } from '../client';
 import { logger } from '@/lib/logger';
-import { useCallback, useMemo, useState, useEffect } from 'react';
+import { LIVE_WINDOW_CLOCK_BUFFER_SECONDS, resolveLogDateRange } from '@/lib/log-range';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 
 /**
  * 尝试状态
@@ -163,15 +164,30 @@ export interface LogListParams {
 
 export interface UseLogsOptions {
     pageSize?: number;
-    filters?: Omit<LogListParams, 'page' | 'page_size'>;
+    filters?: Omit<LogListParams, 'page' | 'page_size' | 'start_time' | 'end_time'>;
+    /** 时间窗口：live 为滚动谓词（查询时求值），fixed 为冻结区间；缺省不限时间 */
+    range?: LogRangeQuery;
+    /** live 窗口求值所用时区（"今天零点"等按此时区切分） */
+    rangeTimezone?: string;
     enabled?: boolean;
-    /** 自动刷新间隔（毫秒）。日志明细页传入以实现实时刷新，缺省不轮询。 */
+    /** live 窗口下头部轮询间隔（毫秒）。fixed 窗口恒不轮询。缺省不轮询。 */
     refetchInterval?: number | false;
 }
 
+/**
+ * 时间窗口的两种语义（与 lib/log-range 的 LogDateRange 结构兼容）：
+ * - live：每次请求时求值当前窗口，新日志永远落在窗口内；
+ * - fixed：冻结区间（用户显式选定的历史范围）。
+ */
+export type LogRangeQuery =
+    | { mode: 'live'; preset: 'today' | '7d' | '30d' | 'month' }
+    | { mode: 'fixed'; start?: number; end?: number };
+
+// live 窗口的查询上界缓冲改由 lib/log-range 统一提供（分析查询共用同一口径）。
+const LIVE_CLOCK_BUFFER_SECONDS = LIVE_WINDOW_CLOCK_BUFFER_SECONDS;
+void LIVE_CLOCK_BUFFER_SECONDS;
+
 const logFiltersKey = (filters?: UseLogsOptions['filters']) => ({
-    start_time: filters?.start_time ?? null,
-    end_time: filters?.end_time ?? null,
     channel_ids: filters?.channel_ids?.filter((id) => id > 0).sort((a, b) => a - b) ?? [],
     site_ids: filters?.site_ids?.filter((id) => id > 0).sort((a, b) => a - b) ?? [],
     site_account_ids: filters?.site_account_ids?.filter((id) => id > 0).sort((a, b) => a - b) ?? [],
@@ -185,9 +201,14 @@ const logFiltersKey = (filters?: UseLogsOptions['filters']) => ({
     keyword_mode: filters?.keyword_mode ?? 'default',
 });
 
+const logRangeKey = (range?: LogRangeQuery, timezone?: string) => {
+    if (!range || range.mode === 'fixed') {
+        return ['fixed', range?.start ?? null, range?.end ?? null] as const;
+    }
+    return ['live', range.preset, timezone ?? null] as const;
+};
+
 function appendLogListParams(params: URLSearchParams, filters?: UseLogsOptions['filters']) {
-    if (filters?.start_time) params.set('start_time', String(filters.start_time));
-    if (filters?.end_time) params.set('end_time', String(filters.end_time));
     const channelIds = filters?.channel_ids?.filter((id) => id > 0) ?? [];
     if (channelIds.length > 0) params.set('channel_ids', channelIds.join(','));
     const siteIds = filters?.site_ids?.filter((id) => id > 0) ?? [];
@@ -204,6 +225,16 @@ function appendLogListParams(params: URLSearchParams, filters?: UseLogsOptions['
     if (keyword) params.set('keyword', keyword);
     if (filters?.keyword_scope && filters.keyword_scope !== 'default') params.set('keyword_scope', filters.keyword_scope);
     if (filters?.keyword_mode && filters.keyword_mode !== 'default') params.set('keyword_mode', filters.keyword_mode);
+}
+
+/** 时间窗口入参：live 在请求时求值（end 额外加时钟缓冲），fixed 原样使用。 */
+function appendRangeParams(params: URLSearchParams, range?: LogRangeQuery, timezone?: string) {
+    const resolved = resolveLogDateRange(range, timezone);
+    const endTime = range?.mode === 'live' && resolved.end != null
+        ? resolved.end + LIVE_WINDOW_CLOCK_BUFFER_SECONDS
+        : resolved.end;
+    if (resolved.start) params.set('start_time', String(resolved.start));
+    if (endTime) params.set('end_time', String(endTime));
 }
 
 /**
@@ -253,7 +284,12 @@ export function useClearLogs() {
         },
         onSuccess: () => {
             logger.log('日志清空成功');
-            queryClient.invalidateQueries({ queryKey: ['logs'] });
+            // 不整体 invalidate ['logs']：那会让 infinite query 按序重取所有已加载页。
+            // 分页缓存直接移除（挂载中的 observer 会自动重取第一页），其余按需失效。
+            queryClient.removeQueries({ queryKey: ['logs', 'infinite'] });
+            queryClient.invalidateQueries({ queryKey: ['logs', 'head'] });
+            queryClient.invalidateQueries({ queryKey: ['logs', 'analytics'] });
+            queryClient.invalidateQueries({ queryKey: ['logs', 'site-action-targets'] });
         },
         onError: (error) => {
             logger.error('日志清空失败:', error);
@@ -261,30 +297,67 @@ export function useClearLogs() {
     });
 }
 
-const logsInfiniteQueryKey = (pageSize: number, filters?: UseLogsOptions['filters']) => ['logs', 'infinite', pageSize, logFiltersKey(filters)] as const;
-
 /**
- * 日志管理 Hook
- * 整合初始加载与滚动加载更多；实时日志由 useLiveLogs 独立承担。
+ * 日志管理 Hook。
  *
- * @example
- * const { logs, hasMore, isLoadingMore, loadMore, clear } = useLogs();
- *
- * // logs 按时间倒序
- * logs.forEach(log => console.log(log.request_model_name));
- *
- * // 滚动到底部时加载更多
- * if (hasMore && !isLoadingMore) loadMore();
+ * 查询架构（head + pages 分离）：
+ * - head：独立轮询最新一页（live 窗口下每 refetchInterval 毫秒一次，且后台 tab 不停），
+ *   实时性由它承担。固定窗口不轮询（历史报表语义，无需实时）。
+ * - pages：游标分页历史，不自动轮询。v5 的 infinite refetch 会按序重取所有已加载页，
+ *   深翻页时轮询会放大成串行请求风暴，且 page 1 重取后与后续页的游标错位会产生缺缝；
+ *   让轮询只打 head（恒定 1 个请求）可以从根上避开这两个问题。
+ * - 合并：pages 先填、head 后写覆盖（运行中请求完成后，attempt/价格字段以 head 快照为准）。
  */
 export function useLogs(options: UseLogsOptions = {}) {
-    const { pageSize = 20, filters, enabled = true, refetchInterval } = options;
+    const { pageSize = 20, filters, range, rangeTimezone, enabled = true, refetchInterval } = options;
 
     const queryClient = useQueryClient();
 
     type CursorPage = { logs: RelayLog[]; next_cursor?: LogCursor | null; has_more: boolean; warning?: string; search_mode?: string };
 
+    const baseFiltersKey = useMemo(() => logFiltersKey(filters), [filters]);
+    const rangeKey = useMemo(() => logRangeKey(range, rangeTimezone), [range, rangeTimezone]);
+    const headQueryKey = useMemo(
+        () => ['logs', 'head', pageSize, baseFiltersKey, rangeKey] as const,
+        [pageSize, baseFiltersKey, rangeKey],
+    );
+    const infiniteQueryKey = useMemo(
+        () => ['logs', 'infinite', pageSize, baseFiltersKey, rangeKey] as const,
+        [pageSize, baseFiltersKey, rangeKey],
+    );
+
+    const headQuery = useQuery({
+        queryKey: headQueryKey,
+        queryFn: async () => {
+            const params = new URLSearchParams();
+            params.set('limit', String(pageSize));
+            params.set('with_total', 'false');
+            params.set('include_content', 'false');
+            params.set('pagination', 'cursor');
+            appendLogListParams(params, filters);
+            appendRangeParams(params, range, rangeTimezone);
+            const result = await apiClient.get<{ logs: RelayLog[] | null; has_more?: boolean; warning?: string; search_mode?: string } | null>(
+                `/api/v1/log/list?${params.toString()}`,
+            );
+            return {
+                logs: result?.logs ?? [],
+                warning: result?.warning,
+                search_mode: result?.search_mode,
+            } satisfies Pick<CursorPage, 'logs' | 'warning' | 'search_mode'>;
+        },
+        enabled,
+        staleTime: 0,
+        refetchOnMount: 'always',
+        refetchOnWindowFocus: false,
+        // 固定窗口是历史报表语义，不轮询；live 窗口按传入间隔轮询且后台 tab 不停
+        //（监控面板挂着就是要在后台持续收新日志）。
+        refetchInterval: range?.mode === 'live' ? (refetchInterval ?? false) : false,
+        refetchIntervalInBackground: true,
+        placeholderData: keepPreviousData,
+    });
+
     const logsQuery = useInfiniteQuery({
-        queryKey: logsInfiniteQueryKey(pageSize, filters),
+        queryKey: infiniteQueryKey,
         initialPageParam: null as LogCursor | null,
         queryFn: async ({ pageParam }) => {
             const params = new URLSearchParams();
@@ -297,6 +370,7 @@ export function useLogs(options: UseLogsOptions = {}) {
                 params.set('before_id', String(pageParam.id));
             }
             appendLogListParams(params, filters);
+            appendRangeParams(params, range, rangeTimezone);
             const result = await apiClient.get<{ logs: RelayLog[] | null; has_more?: boolean; next_cursor?: LogCursor | null; warning?: string; search_mode?: string } | null>(
                 `/api/v1/log/list?${params.toString()}`,
             );
@@ -313,59 +387,98 @@ export function useLogs(options: UseLogsOptions = {}) {
             return lastPage.next_cursor ?? undefined;
         },
         staleTime: 0,
-        refetchOnMount: 'always',
+        // 不用 'always'：重挂载触发 infinite refetch 会按序重取所有已加载页
+        //（深翻页时是请求风暴）。顶部新鲜度由 head 承担，深度重建走 resetInfinite/refresh。
+        refetchOnMount: false,
         refetchOnWindowFocus: false,
-        refetchInterval,
+        placeholderData: keepPreviousData,
         enabled,
     });
 
-    const logs = useMemo(() => {
-        const pages = logsQuery.data?.pages ?? [];
-        const seen = new Set<number>();
-        const merged: RelayLog[] = [];
-
-        for (const page of pages) {
-            for (const log of page.logs) {
-                if (seen.has(log.id)) continue;
-                seen.add(log.id);
-                merged.push(log);
-            }
+    // head 与 page 1 无重叠时（两次轮询间隔内到达超过一页容量的突发流量），
+    // 两段之间的日志既不在 head 也不在已缓存页，游标分页永远取不到。
+    // 检测到断档就重置分页缓存，page 1 重取后自然补桥。
+    const gapBridgeEffectEnabled = enabled;
+    useEffect(() => {
+        if (!gapBridgeEffectEnabled) return;
+        const headLogs = headQuery.data?.logs ?? [];
+        const page1 = logsQuery.data?.pages?.[0]?.logs ?? [];
+        if (headLogs.length === 0 || page1.length === 0) return;
+        const headOldest = headLogs[headLogs.length - 1];
+        const page1Newest = page1[0];
+        // 列表按 time DESC, id DESC：head 最旧一条严格新于 page 1 最新一条即断档
+        const hasGap =
+            headOldest.time > page1Newest.time ||
+            (headOldest.time === page1Newest.time && headOldest.id > page1Newest.id);
+        if (hasGap) {
+            void queryClient.resetQueries({ queryKey: infiniteQueryKey });
         }
+    }, [gapBridgeEffectEnabled, headQuery.data, logsQuery.data, queryClient, infiniteQueryKey]);
 
-        merged.sort((a, b) => b.time - a.time);
-        return merged;
-    }, [logsQuery.data]);
+    const logs = useMemo(() => {
+        const merged = new Map<number, RelayLog>();
+        for (const page of logsQuery.data?.pages ?? []) {
+            for (const log of page.logs) merged.set(log.id, log);
+        }
+        for (const log of headQuery.data?.logs ?? []) merged.set(log.id, log);
+        return Array.from(merged.values()).sort((a, b) => b.time - a.time || b.id - a.id);
+    }, [logsQuery.data, headQuery.data]);
 
-    // 解构出稳定字段再 memoize：函数体直接访问 logsQuery 对象会捕获整个
+    // 解构出稳定字段再 memoize：函数体直接访问 query 对象会捕获整个
     // 每次渲染都变化的对象引用，无法保留 useCallback 的记忆化。
-    const { hasNextPage, isFetchingNextPage, fetchNextPage } = logsQuery;
+    const { hasNextPage, isFetchingNextPage, fetchNextPage, isFetching } = logsQuery;
+    const { refetch: refetchHead, dataUpdatedAt: headUpdatedAt } = headQuery;
+    const [loadMoreError, setLoadMoreError] = useState<Error | null>(null);
     const loadMore = useCallback(async () => {
         if (!hasNextPage) return;
-        if (isFetchingNextPage) return;
+        // 同时挡 isFetching：fetchNextPage 默认 cancelRefetch: true 会丢弃在途请求，
+        // 与游标加载交错时会造成页间缺缝（去重只能吃重复，补不回缝隙）。
+        if (isFetchingNextPage || isFetching) return;
 
+        setLoadMoreError(null);
         try {
             await fetchNextPage();
         } catch (e) {
+            setLoadMoreError(e instanceof Error ? e : new Error(String(e)));
             logger.error('加载更多日志失败:', e);
         }
-    }, [hasNextPage, isFetchingNextPage, fetchNextPage]);
+    }, [hasNextPage, isFetchingNextPage, isFetching, fetchNextPage]);
+
+    // 手动刷新：先重建分页缓存（page 1 按当前窗口重取），完成后串行刷新 head。
+    // 串行保证 head 的返回不早于 page 1，避免旧 head 快照覆盖新 page 1 数据
+    //（fixed 窗口无轮询，覆盖后不会自愈）。不做 infinite refetch —— 全页重取会让
+    // 旧游标链与新窗口错位产生缺缝；深翻页后刷新回到最新视图也是"刷新"的自然语义。
+    const resetInfinite = useCallback(() => {
+        void queryClient.resetQueries({ queryKey: infiniteQueryKey });
+    }, [queryClient, infiniteQueryKey]);
+    const refresh = useCallback(async () => {
+        await queryClient.resetQueries({ queryKey: infiniteQueryKey });
+        await refetchHead();
+    }, [queryClient, infiniteQueryKey, refetchHead]);
 
     const clear = useCallback(() => {
-        queryClient.removeQueries({ queryKey: logsInfiniteQueryKey(pageSize, filters) });
-    }, [pageSize, filters, queryClient]);
+        queryClient.removeQueries({ queryKey: infiniteQueryKey });
+        queryClient.removeQueries({ queryKey: headQueryKey });
+    }, [infiniteQueryKey, headQueryKey, queryClient]);
 
     return {
         logs,
         error: logsQuery.error,
+        headError: headQuery.error,
         hasMore: !!logsQuery.hasNextPage,
         isLoading: logsQuery.isLoading,
         isLoadingMore: logsQuery.isFetchingNextPage,
-        refetch: logsQuery.refetch,
-        isRefetching: logsQuery.isRefetching,
+        refetch: refresh,
+        isRefetching: logsQuery.isRefetching || headQuery.isFetching,
         loadMore,
+        loadMoreError,
         clear,
-        warning: logsQuery.data?.pages?.[0]?.warning ?? null,
-        searchMode: logsQuery.data?.pages?.[0]?.search_mode ?? null,
+        /** 重置分页缓存并重取第一页（live 窗口跳变时由调用方触发补齐） */
+        resetInfinite,
+        /** 最近一次 head 成功拉取的时间戳（数据新鲜度标识用） */
+        updatedAt: headUpdatedAt,
+        warning: headQuery.data?.warning ?? logsQuery.data?.pages?.[0]?.warning ?? null,
+        searchMode: headQuery.data?.search_mode ?? logsQuery.data?.pages?.[0]?.search_mode ?? null,
     };
 }
 

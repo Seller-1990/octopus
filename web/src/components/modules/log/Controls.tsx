@@ -1,5 +1,6 @@
 'use client';
 
+import { useEffect, useMemo, useState } from 'react';
 import dayjs from 'dayjs';
 import timezonePlugin from 'dayjs/plugin/timezone';
 import utc from 'dayjs/plugin/utc';
@@ -13,6 +14,7 @@ import type {
 import { useSiteList } from '@/api/endpoints/site';
 import { Tabs, TabsList, TabsTrigger } from '@/components/animate-ui/components/animate/tabs';
 import { useToolbarViewOptionsStore } from '@/components/modules/toolbar/view-options-store';
+import { resolveLogDateRange } from '@/lib/log-range';
 import { cn } from '@/lib/utils';
 import { useLogAnalyticsStore, type LogView } from './analytics-store';
 import { DimensionPicker } from './DimensionPicker';
@@ -75,9 +77,23 @@ export function LogControls({ tabIds }: { tabIds: LogViewTabIds }) {
         requestModels.length > 0 ||
         actualModels.length > 0 ||
         canonicalModels.length > 0;
-    const dimensionFilters: UsageAnalyticsFilters = {
-        start_time: logDateRange.start,
-        end_time: logDateRange.end,
+    // 每半分钟更新一次分钟刻度：live 预设的求值窗口随时间推进，
+    // 保证 HistoricalRepairDialog 打开时拿到的是当前窗口而非预设点击时刻。
+    const [minuteTick, setMinuteTick] = useState(() => Math.floor(Date.now() / 60_000));
+    useEffect(() => {
+        const timer = window.setInterval(() => setMinuteTick(Math.floor(Date.now() / 60_000)), 30_000);
+        return () => window.clearInterval(timer);
+    }, []);
+    // useMemo 保持引用稳定：DimensionPicker 以 filters 构建查询 key，
+    // live 窗口每次求值 end 都不同，引用不稳定会造成渲染级查询风暴。
+    const resolvedRange = useMemo(
+        () => resolveLogDateRange(logDateRange, timezone),
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+        [logDateRange, timezone, minuteTick],
+    );
+    const dimensionFilters: UsageAnalyticsFilters = useMemo(() => ({
+        start_time: resolvedRange.start,
+        end_time: resolvedRange.end,
         timezone,
         metric_scope: scope,
         site_ids: siteIds.length ? siteIds : undefined,
@@ -87,30 +103,48 @@ export function LogControls({ tabIds }: { tabIds: LogViewTabIds }) {
         request_models: requestModels.length ? requestModels : undefined,
         actual_models: actualModels.length ? actualModels : undefined,
         canonical_models: canonicalModels.length ? canonicalModels : undefined,
-    };
+    }), [
+        actualModels,
+        apiKeyIds,
+        canonicalModels,
+        logChannelIds,
+        requestModels,
+        resolvedRange,
+        scope,
+        siteAccountIds,
+        siteIds,
+        timezone,
+    ]);
 
     const applyPreset = (preset: 'today' | 'yesterday' | '7d' | '30d' | 'month') => {
-        const now = dayjs().tz(timezone);
-        switch (preset) {
-            case 'yesterday': {
-                const value = now.subtract(1, 'day');
-                setLogDateRange({
-                    start: value.startOf('day').unix(),
-                    end: value.endOf('day').unix(),
-                });
-                break;
-            }
-            case '7d':
-                setLogDateRange({ start: now.subtract(6, 'day').startOf('day').unix(), end: now.unix() });
-                break;
-            case '30d':
-                setLogDateRange({ start: now.subtract(29, 'day').startOf('day').unix(), end: now.unix() });
-                break;
-            case 'month':
-                setLogDateRange({ start: now.startOf('month').unix(), end: now.unix() });
-                break;
-            default:
-                setLogDateRange({ start: now.startOf('day').unix(), end: now.unix() });
+        if (preset === 'yesterday') {
+            const now = dayjs().tz(timezone);
+            const yesterday = now.subtract(1, 'day');
+            // "昨天"是天然完整的历史时段，冻结区间
+            setLogDateRange({
+                mode: 'fixed',
+                start: yesterday.startOf('day').unix(),
+                end: yesterday.endOf('day').unix(),
+            });
+            return;
+        }
+        // 今天/近 7 天/近 30 天/本月存为滚动谓词：查询时求值当前窗口，
+        // 页面挂着不动时新日志不会落在窗外（此前 end 冻结在点击时刻导致"不实时"）。
+        setLogDateRange({ mode: 'live', preset });
+    };
+    const activeLivePreset = logDateRange.mode === 'live' ? logDateRange.preset : null;
+
+    const handleSiteChange = (value: number) => {
+        setSiteIds(value > 0 ? [value] : []);
+        // 账号随站点联动：仅当当前账号不属于新站点时才清空，避免误伤合法组合；
+        // 站点列表尚未加载时无法判断归属，保持现状不清空。
+        if (siteAccountIds.length > 0 && sites) {
+            const belongs =
+                value > 0 &&
+                sites
+                    .find((site) => site.id === value)
+                    ?.accounts.some((account) => account.id === siteAccountIds[0]);
+            if (!belongs) setSiteAccountIds([]);
         }
     };
 
@@ -133,6 +167,13 @@ export function LogControls({ tabIds }: { tabIds: LogViewTabIds }) {
                         >
                             {t('view.detail')}
                         </TabsTrigger>
+                        <TabsTrigger
+                            value="live"
+                            id={tabIds.live.trigger}
+                            panelId={tabIds.live.panel}
+                        >
+                            {t('view.live')}
+                        </TabsTrigger>
                     </TabsList>
                 </Tabs>
                 <div className="flex flex-wrap items-center gap-1">
@@ -141,7 +182,13 @@ export function LogControls({ tabIds }: { tabIds: LogViewTabIds }) {
                             key={preset}
                             type="button"
                             onClick={() => applyPreset(preset)}
-                            className="h-8 rounded-md border border-border/70 px-2.5 text-[11px] text-muted-foreground hover:bg-muted/50 hover:text-foreground"
+                            aria-pressed={activeLivePreset === preset}
+                            className={cn(
+                                'h-8 rounded-md border px-2.5 text-[11px] transition-colors',
+                                activeLivePreset === preset
+                                    ? 'border-primary/40 bg-primary/10 text-primary'
+                                    : 'border-border/70 text-muted-foreground hover:bg-muted/50 hover:text-foreground',
+                            )}
                         >
                             {t(`range.${preset}`)}
                         </button>
@@ -177,7 +224,7 @@ export function LogControls({ tabIds }: { tabIds: LogViewTabIds }) {
                 ) : null}
                 <select
                     value={selectedSite}
-                    onChange={(event) => setSiteIds(Number(event.target.value) > 0 ? [Number(event.target.value)] : [])}
+                    onChange={(event) => handleSiteChange(Number(event.target.value))}
                     className={selectClassName}
                     aria-label={t('filters.site')}
                 >
@@ -202,6 +249,7 @@ export function LogControls({ tabIds }: { tabIds: LogViewTabIds }) {
                     onChange={(event) => setTimezone(event.target.value)}
                     className={cn(selectClassName, 'max-w-48')}
                     aria-label={t('filters.timezone')}
+                    title={t('filters.timezoneHint')}
                 >
                     {timezoneOptions.map((value) => (
                         <option key={value} value={value}>{value}</option>
@@ -246,7 +294,7 @@ export function LogControls({ tabIds }: { tabIds: LogViewTabIds }) {
                         <X className="size-3.5" />
                     </button>
                 ) : null}
-                <HistoricalRepairDialog startTime={logDateRange.start} endTime={logDateRange.end} />
+                <HistoricalRepairDialog startTime={resolvedRange.start} endTime={resolvedRange.end} />
             </div>
         </div>
     );

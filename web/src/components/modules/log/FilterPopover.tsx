@@ -15,6 +15,8 @@ import { useSiteChannelList } from '@/api/endpoints/site-channel';
 import { SettingKey, useSettingValue } from '@/api/endpoints/setting';
 import { useToolbarViewOptionsStore } from '@/components/modules/toolbar/view-options-store';
 import { useSearchStore } from '@/components/modules/toolbar/search-store';
+import { useLogAnalyticsStore } from './analytics-store';
+import { resolveLogDateRange } from '@/lib/log-range';
 
 type ChannelEntry = {
     id: number;
@@ -152,6 +154,15 @@ export function LogFilterPopover() {
     const setLogChannelIds = useToolbarViewOptionsStore((s) => s.setLogChannelIds);
     const setLogKeywordMode = useToolbarViewOptionsStore((s) => s.setLogKeywordMode);
     const setLogKeywordScope = useToolbarViewOptionsStore((s) => s.setLogKeywordScope);
+    const siteIds = useLogAnalyticsStore((s) => s.siteIds);
+    const siteAccountIds = useLogAnalyticsStore((s) => s.siteAccountIds);
+    const apiKeyIds = useLogAnalyticsStore((s) => s.apiKeyIds);
+    const requestModels = useLogAnalyticsStore((s) => s.requestModels);
+    const actualModels = useLogAnalyticsStore((s) => s.actualModels);
+    const canonicalModels = useLogAnalyticsStore((s) => s.canonicalModels);
+    const clearBusinessFilters = useLogAnalyticsStore((s) => s.clearBusinessFilters);
+    const timezone = useLogAnalyticsStore((s) => s.timezone);
+    const setSearchTerm = useSearchStore((s) => s.setSearchTerm);
     const { value: logKeepPeriodValue } = useSettingValue(SettingKey.RelayLogKeepPeriod, '0');
     const { data: channels } = useChannelList();
     const { data: sites } = useSiteChannelList({ includeHistory: false });
@@ -160,6 +171,12 @@ export function LogFilterPopover() {
     const [expanded, setExpanded] = useState<Set<string>>(new Set(['__manual__']));
 
     const logKeepPeriod = Number.parseInt(logKeepPeriodValue, 10) || 0;
+    // live 预设显示其当前求值窗口；时区必须与查询链共用同一来源（analytics-store），
+    // 否则显示的窗口与真实查询窗口错位数小时，改动端点还会把错误起点固化成选区。
+    const resolvedRange = useMemo(
+        () => resolveLogDateRange(logDateRange, timezone),
+        [logDateRange, timezone],
+    );
 
     const groups = useMemo<ChannelGroup[]>(() => {
         if (!channels) return [];
@@ -242,10 +259,13 @@ export function LogFilterPopover() {
     };
 
     const handleClear = () => {
-        setLogDateRange({});
+        // 清除全部生效筛选：日期/渠道/关键词模式与本体 + 六维业务筛选
+        setLogDateRange({ mode: 'live', preset: 'today' });
         setLogChannelIds([]);
         setLogKeywordMode('default');
         setLogKeywordScope('default');
+        setSearchTerm('log', '');
+        clearBusinessFilters();
         setSearch('');
     };
 
@@ -254,40 +274,61 @@ export function LogFilterPopover() {
         if (logKeepPeriod > 0) {
             matchers.push({ before: dayjs().subtract(logKeepPeriod, 'day').startOf('day').toDate() });
         }
-        if (logDateRange.end) {
-            matchers.push({ after: new Date(logDateRange.end * 1000) });
+        if (resolvedRange.end) {
+            matchers.push({ after: new Date(resolvedRange.end * 1000) });
         }
         return matchers;
-    }, [logKeepPeriod, logDateRange.end]);
+    }, [logKeepPeriod, resolvedRange.end]);
 
     const endDisabled = useMemo<Matcher[]>(() => {
         const matchers: Matcher[] = [{ after: new Date() }];
         if (logKeepPeriod > 0) {
             matchers.push({ before: dayjs().subtract(logKeepPeriod, 'day').startOf('day').toDate() });
         }
-        if (logDateRange.start) {
-            matchers.push({ before: new Date(logDateRange.start * 1000) });
+        if (resolvedRange.start) {
+            matchers.push({ before: new Date(resolvedRange.start * 1000) });
         }
         return matchers;
-    }, [logKeepPeriod, logDateRange.start]);
+    }, [logKeepPeriod, resolvedRange.start]);
+
+    // live 预设下改动任一端点即转为固定区间（显式选区才冻结窗口）。
+    // patch 端点用 number | null：undefined 表示"未提供"（保持另一侧原值），
+    // null 表示"清除该端点"——否则日期选择器的清除按钮会变成 no-op。
+    const pinRange = (patch: { start?: number | null; end?: number | null }) => {
+        const base = logDateRange.mode === 'fixed'
+            ? { start: logDateRange.start, end: logDateRange.end }
+            : { start: resolvedRange.start, end: resolvedRange.end };
+        const start = patch.start === undefined ? base.start : patch.start ?? undefined;
+        const end = patch.end === undefined ? base.end : patch.end ?? undefined;
+        setLogDateRange({ mode: 'fixed', start, end });
+    };
 
     const handleStartChange = (value: number | undefined) => {
-        setLogDateRange({ ...logDateRange, start: value });
+        pinRange({ start: value ?? null });
     };
 
     const handleEndChange = (value: number | undefined) => {
-        setLogDateRange({ ...logDateRange, end: value });
+        pinRange({ end: value ?? null });
     };
 
-    const dateActive = !!logDateRange.start || !!logDateRange.end;
+    // 只有显式选定的固定区间算"日期筛选已激活"；live 预设（今天/近 7 天等）是默认滚动窗口
+    const dateActive = logDateRange.mode === 'fixed';
     const logKeyword = useSearchStore((s) => s.getSearchTerm('log'));
     const hasKeyword = logKeyword.trim().length > 0;
     const keywordModeActive = hasKeyword && logKeywordMode !== 'default' && logKeywordMode !== 'prefix';
     const keywordScopeActive = hasKeyword && logKeywordScope === 'content';
+    const hasBusinessFilters =
+        siteIds.length > 0 ||
+        siteAccountIds.length > 0 ||
+        apiKeyIds.length > 0 ||
+        requestModels.length > 0 ||
+        actualModels.length > 0 ||
+        canonicalModels.length > 0;
     const activeCount =
         (dateActive ? 1 : 0) +
         (logChannelIds.length > 0 ? 1 : 0) +
-        (keywordModeActive || keywordScopeActive ? 1 : 0);
+        (keywordModeActive || keywordScopeActive || hasKeyword ? 1 : 0) +
+        (hasBusinessFilters ? 1 : 0);
 
     return (
         <Popover>
@@ -334,14 +375,14 @@ export function LogFilterPopover() {
                         <p className="text-xs font-medium text-muted-foreground">{t('popover.logFilter.date.title')}</p>
                         <div className="grid grid-cols-1 gap-2">
                             <DateTimePicker
-                                value={logDateRange.start}
+                                value={resolvedRange.start || undefined}
                                 placeholder={t('popover.logFilter.date.startPlaceholder')}
                                 defaultTime="start"
                                 disabledRange={startDisabled}
                                 onChange={handleStartChange}
                             />
                             <DateTimePicker
-                                value={logDateRange.end}
+                                value={resolvedRange.end || undefined}
                                 placeholder={t('popover.logFilter.date.endPlaceholder')}
                                 defaultTime="end"
                                 disabledRange={endDisabled}

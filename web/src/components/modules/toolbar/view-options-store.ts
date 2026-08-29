@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
+import { DEFAULT_LOG_DATE_RANGE, isLogDateRange, type LogDateRange } from '@/lib/log-range';
 
 export type ToolbarLayout = 'grid' | 'list';
 export type ToolbarSortOrder = 'asc' | 'desc';
@@ -7,7 +8,7 @@ export type ToolbarSortField = 'default' | 'name' | 'created' | 'balance';
 export type ToolbarSortablePage = 'site' | 'channel' | 'group';
 export const TOOLBAR_PAGES = ['site', 'channel', 'group', 'model', 'log'] as const;
 export type ToolbarPage = (typeof TOOLBAR_PAGES)[number];
-export type LogDateRange = { start?: number; end?: number };
+export type { LogDateRange };
 export type LogKeywordMode = 'default' | 'prefix' | 'exact' | 'contains';
 export type LogKeywordScope = 'default' | 'content';
 
@@ -45,7 +46,7 @@ export const useToolbarViewOptionsStore = create<ToolbarViewOptionsState>()(
             layouts: {},
             sortFields: {},
             sortOrders: {},
-            logDateRange: {},
+            logDateRange: DEFAULT_LOG_DATE_RANGE,
             logChannelIds: [],
             logKeywordMode: 'default',
             logKeywordScope: 'default',
@@ -86,6 +87,18 @@ export const useToolbarViewOptionsStore = create<ToolbarViewOptionsState>()(
         }),
         {
             name: 'toolbar-view-options-storage',
+            version: 1,
+            // v0 的 logDateRange 是 {start,end} 时间戳快照（冻结窗口 bug 的载体）。
+            // 旧数据无法与真实的历史选区区分，统一重置为默认 live 窗口。
+            migrate: (persisted) => {
+                const state = (persisted ?? {}) as Partial<ToolbarViewOptionsState> & { logDateRange?: unknown };
+                return {
+                    ...state,
+                    logDateRange: isLogDateRange(state.logDateRange)
+                        ? state.logDateRange
+                        : DEFAULT_LOG_DATE_RANGE,
+                } as ToolbarViewOptionsState;
+            },
             partialize: (state) => ({
                 layouts: state.layouts,
                 sortFields: state.sortFields,
