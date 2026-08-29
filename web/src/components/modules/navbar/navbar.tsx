@@ -34,7 +34,7 @@ export function NavBar() {
                     initial="initial"
                     animate="animate"
                 >
-                    {ROUTES.map((route, index) => {
+                    {ROUTES.filter((route) => !route.hiddenFromNav).map((route, index) => {
                         const isActive = activeItem === route.id
                         return (
                             <Tooltip key={route.id} side="top">

@@ -1511,7 +1511,7 @@ export function Site() {
                 ) : null}
               </div>
 
-              <div className="flex max-w-full shrink-0 items-center gap-4">
+              <div className="flex max-w-full shrink-0 items-center gap-3">
                 <div className="flex flex-wrap items-center justify-end gap-x-4 gap-y-1">
                   <CompactMetric label="账号" value={summary.accountCount} />
                   <CompactMetric label="密钥" value={summary.keyCount} />
@@ -1523,7 +1523,7 @@ export function Site() {
                   />
                 </div>
 
-                <div className="flex items-center gap-1">
+                <div className="flex items-center gap-1.5 sm:border-l sm:border-border/60 sm:pl-3">
                   {site.accounts.length === 0 ? (
                     <IconActionButton
                       label="新增账号"
@@ -1571,6 +1571,7 @@ export function Site() {
                         : t("siteManagement.siteForm.setRelay")}
                     </TooltipContent>
                   </Tooltip>
+                  <span className="mx-0.5 hidden h-5 w-px bg-border/60 sm:block" aria-hidden />
                   {site.accounts.length === 1 ? (
                     <IconActionButton
                       label="同步账号"

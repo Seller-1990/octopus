@@ -5,6 +5,7 @@ import { SettingAppearance } from './Appearance';
 import { SettingAccount } from './Account';
 import { SettingInfo } from './Info';
 import { SettingNetwork } from './Network';
+import { SettingVisionBridge } from './VisionBridge';
 import { SettingReliability } from './Reliability';
 import { SettingRouting } from './Routing';
 import { SettingSyncTasks } from './SyncTasks';
@@ -18,6 +19,7 @@ export function Setting() {
                 <SettingInfo key="setting-info" />
                 <SettingAppearance key="setting-appearance" />
                 <SettingNetwork key="setting-network" />
+                <SettingVisionBridge key="setting-vision-bridge" />
                 <SettingAccount key="setting-account" />
                 <SettingReliability key="setting-reliability" />
                 <SettingRouting key="setting-routing" />

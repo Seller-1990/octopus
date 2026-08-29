@@ -5,7 +5,8 @@ import { CalendarClock, Hash, HeartPulse, MessageSquareText, ShieldCheck, Timer,
 import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
 import { SettingKey } from '@/api/endpoints/setting';
-import { SettingCard, SettingRow, SettingSection, useSettingField, useSettingToggle } from './shared';
+import { useNavStore } from '@/components/modules/navbar';
+import { useSettingField, useSettingToggle, SettingCard, SettingRow, SettingSection } from './shared';
 
 // min/max 与后端 model.Setting.Validate() 的边界保持一致，前端先行约束整数范围。
 const OUTLIER_FIELDS: { key: string; labelKey: string; min: number; max?: number }[] = [
@@ -91,6 +92,16 @@ export function SettingReliability() {
                 placeholder={t('circuitBreaker.maxCooldown.placeholder')}
                 icon={TimerOff}
             />
+            {/* 熔断页从主导航降级后的入口：查看当前熔断通道/倒计时/手动重置 */}
+            <div className="flex justify-end pt-1">
+                <button
+                    type="button"
+                    onClick={() => useNavStore.getState().setActiveItem('circuit')}
+                    className="rounded-xl border border-border/70 px-3 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground"
+                >
+                    {t('circuitBreaker.statusLink')}
+                </button>
+            </div>
 
             <SettingSection title={t('usageRetention.title')} tooltip={t('usageRetention.description')} />
             <NumberFieldRow

@@ -29,7 +29,6 @@ import { useGroupList } from '@/api/endpoints/group';
 import { useStatsAPIKey } from '@/api/endpoints/stats';
 import type { StatsAPIKeyFormatted } from '@/api/endpoints/stats';
 import { useSettingValue, SettingKey } from '@/api/endpoints/setting';
-import { useNavStore } from '@/components/modules/navbar/nav-store';
 import { APIKeyExportOverlay } from './APIKeyExport';
 import { OverlayPortal } from './OverlayPortal';
 import { cn } from '@/lib/utils';
@@ -476,14 +475,7 @@ function APIKeyForm({ apiKey, isPending, submitLabel, onSubmit, onClose }: APIKe
                     />
                 </div>
                 <div className="text-[11px] text-muted-foreground/80">
-                    {t('apiKey.form.visionBridgeHint')}{' '}
-                    <button
-                        type="button"
-                        onClick={() => useNavStore.getState().setActiveItem('visionbridge')}
-                        className="underline underline-offset-2 hover:text-foreground"
-                    >
-                        {t('apiKey.form.visionBridgeGoto')}
-                    </button>
+                    {t('apiKey.form.visionBridgeHint')}
                 </div>
             </div>
 
@@ -749,20 +741,6 @@ function APIKeyKeyItem({
             </div>
 
             <div className="flex items-center justify-end gap-1.5">
-                <div className="mr-1 flex shrink-0 flex-col items-end gap-1">
-                    <label className="flex cursor-pointer items-center gap-1.5" title={t('apiKey.form.enabled')}>
-                        <span className="text-[10px] text-muted-foreground">{t('apiKey.form.enabled')}</span>
-                        <Switch checked={apiKey.enabled} onCheckedChange={onToggleEnabled} aria-label={t('apiKey.form.enabled')} />
-                    </label>
-                    <label className="flex cursor-pointer items-center gap-1.5" title={t('apiKey.form.toolsOnly')}>
-                        <span className="text-[10px] text-muted-foreground">{t('apiKey.form.toolsOnly')}</span>
-                        <Switch checked={apiKey.tools_only ?? false} onCheckedChange={onToggleToolsOnly} aria-label={t('apiKey.form.toolsOnly')} />
-                    </label>
-                    <label className="flex cursor-pointer items-center gap-1.5" title={t('apiKey.form.visionBridge')}>
-                        <span className="text-[10px] text-muted-foreground">{t('apiKey.form.visionBridge')}</span>
-                        <Switch checked={apiKey.vision_bridge ?? false} onCheckedChange={onToggleVisionBridge} aria-label={t('apiKey.form.visionBridge')} />
-                    </label>
-                </div>
                 <motion.button
                     type="button"
                     layoutId={statsLayoutId}
@@ -813,6 +791,23 @@ function APIKeyKeyItem({
                         <Trash2 className="size-4" />
                     </motion.button>
                 )}
+            </div>
+
+            {/* 三个生效开关横排于卡片底部：状态切换与操作按钮分区，
+                低频的仅 tools/视觉桥仍可一键切换而无需进编辑弹窗 */}
+            <div className="flex flex-wrap items-center gap-x-5 gap-y-2 border-t border-border/50 pt-2.5 sm:col-span-2">
+                <label className="flex cursor-pointer items-center gap-1.5" title={t('apiKey.form.enabled')}>
+                    <span className="text-[11px] text-muted-foreground">{t('apiKey.form.enabled')}</span>
+                    <Switch checked={apiKey.enabled} onCheckedChange={onToggleEnabled} aria-label={t('apiKey.form.enabled')} />
+                </label>
+                <label className="flex cursor-pointer items-center gap-1.5" title={t('apiKey.form.toolsOnly')}>
+                    <span className="text-[11px] text-muted-foreground">{t('apiKey.form.toolsOnly')}</span>
+                    <Switch checked={apiKey.tools_only ?? false} onCheckedChange={onToggleToolsOnly} aria-label={t('apiKey.form.toolsOnly')} />
+                </label>
+                <label className="flex cursor-pointer items-center gap-1.5" title={t('apiKey.form.visionBridge')}>
+                    <span className="text-[11px] text-muted-foreground">{t('apiKey.form.visionBridge')}</span>
+                    <Switch checked={apiKey.vision_bridge ?? false} onCheckedChange={onToggleVisionBridge} aria-label={t('apiKey.form.visionBridge')} />
+                </label>
             </div>
 
             <AnimatePresence>

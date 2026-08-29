@@ -118,7 +118,7 @@ export function Activity() {
                                         setTooltip({ day, x: rect.left + rect.width / 2, y: rect.top, visible: true });
                                     }}
                                     onMouseLeave={() => setTooltip(prev => prev ? { ...prev, visible: false } : null)}
-                                    style={{ backgroundColor: level === 0 ? 'var(--muted)' : `color-mix(in oklch, var(--primary) ${level * 25}%, var(--muted))` }}
+                                    style={{ backgroundColor: level === 0 ? 'color-mix(in oklch, var(--muted) 45%, transparent)' : `color-mix(in oklch, var(--primary) ${level * 25}%, var(--muted))` }}
                                 />
                             );
                         })}
