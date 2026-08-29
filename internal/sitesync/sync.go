@@ -21,9 +21,17 @@ func isAlreadyCheckedInMessage(message string) bool {
 		strings.Contains(lowered, "already check") ||
 		strings.Contains(lowered, "checked in today") ||
 		strings.Contains(lowered, "already signed") ||
+		strings.Contains(lowered, "repeat") ||
+		strings.Contains(lowered, "duplicate") ||
+		strings.Contains(lowered, "resubmit") ||
+		strings.Contains(lowered, "re-submit") ||
 		strings.Contains(message, "已签到") ||
 		strings.Contains(message, "已经签到") ||
-		strings.Contains(message, "签到过")
+		strings.Contains(message, "签到过") ||
+		strings.Contains(message, "重复签到") ||
+		strings.Contains(message, "请勿重复") ||
+		strings.Contains(message, "今日已签") ||
+		strings.Contains(message, "已签过")
 }
 
 func syncAccountState(ctx context.Context, siteRecord *model.Site, account *model.SiteAccount) (*syncSnapshot, error) {

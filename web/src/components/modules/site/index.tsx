@@ -1535,7 +1535,8 @@ export function Site() {
                     <>
                       <Tooltip>
                         <TooltipTrigger asChild>
-                          <span>
+                          <label className="flex cursor-pointer items-center gap-1">
+                            <span className="text-[10px] text-muted-foreground">同步</span>
                             <Switch
                               checked={site.accounts[0].auto_sync}
                               disabled={updateSiteAccount.isPending}
@@ -1544,7 +1545,7 @@ export function Site() {
                                 handleToggleAutoSync(site.accounts[0])
                               }
                             />
-                          </span>
+                          </label>
                         </TooltipTrigger>
                         <TooltipContent>
                           {site.accounts[0].auto_sync
@@ -1556,14 +1557,15 @@ export function Site() {
                   ) : null}
                   <Tooltip>
                     <TooltipTrigger asChild>
-                      <span>
+                      <label className="flex cursor-pointer items-center gap-1">
+                        <span className="text-[10px] text-muted-foreground">中转</span>
                         <Switch
                           checked={site.is_reserve}
                           disabled={updateSite.isPending}
                           onCheckedChange={() => handleToggleReserve(site)}
                           aria-label={t("siteManagement.siteForm.relayPolicy")}
                         />
-                      </span>
+                      </label>
                     </TooltipTrigger>
                     <TooltipContent>
                       {site.is_reserve
@@ -1812,7 +1814,8 @@ export function Site() {
                                     <div className="flex shrink-0 items-center gap-2">
                                       <Tooltip>
                                         <TooltipTrigger asChild>
-                                          <span>
+                                          <label className="flex cursor-pointer items-center gap-1">
+                                            <span className="text-[10px] text-muted-foreground">启用</span>
                                             <Switch
                                               checked={account.enabled}
                                               disabled={enableSiteAccount.isPending}
@@ -1821,7 +1824,7 @@ export function Site() {
                                                 handleToggleAccount(account)
                                               }
                                             />
-                                          </span>
+                                          </label>
                                         </TooltipTrigger>
                                         <TooltipContent>
                                           {account.enabled ? "停用账号" : "启用账号"}
@@ -1830,7 +1833,8 @@ export function Site() {
 
                                       <Tooltip>
                                         <TooltipTrigger asChild>
-                                          <span>
+                                          <label className="flex cursor-pointer items-center gap-1">
+                                            <span className="text-[10px] text-muted-foreground">同步</span>
                                             <Switch
                                               checked={account.auto_sync}
                                               disabled={updateSiteAccount.isPending}
@@ -1839,7 +1843,7 @@ export function Site() {
                                                 handleToggleAutoSync(account)
                                               }
                                             />
-                                          </span>
+                                          </label>
                                         </TooltipTrigger>
                                         <TooltipContent>
                                           {account.auto_sync

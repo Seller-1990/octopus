@@ -47,6 +47,7 @@ const (
 	SiteBatchReasonUpstreamDecodeFailed    SiteBatchReason = "upstream_decode_failed"
 	SiteBatchReasonUpstreamHTMLResponse    SiteBatchReason = "upstream_html_response"
 	SiteBatchReasonScheduledLater          SiteBatchReason = "scheduled_later"
+	SiteBatchReasonAlreadyCheckedInToday   SiteBatchReason = "already_checked_in_today"
 	SiteBatchReasonBatchCanceled           SiteBatchReason = "batch_canceled"
 	SiteBatchReasonTimeout                 SiteBatchReason = "timeout"
 	SiteBatchReasonContextCanceled         SiteBatchReason = "context_canceled"
