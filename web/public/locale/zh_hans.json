@@ -1187,7 +1187,8 @@
       "newLogs": "有 {count} 条新日志，点击查看",
       "emptyHint": "试试调整时间范围或清除筛选条件",
       "removeFilter": "移除筛选",
-      "channelCount": "{count} 个渠道"
+      "channelCount": "{count} 个渠道",
+      "streamLive": " · 实时推送中"
     },
     "card": {
       "error": "错误",

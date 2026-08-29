@@ -2,7 +2,7 @@ import { keepPreviousData, useInfiniteQuery, useMutation, useQuery, useQueryClie
 import { apiClient, API_BASE_URL } from '../client';
 import { logger } from '@/lib/logger';
 import { LIVE_WINDOW_CLOCK_BUFFER_SECONDS, resolveLogDateRange } from '@/lib/log-range';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 /**
  * 尝试状态
@@ -469,6 +469,8 @@ export function useLogs(options: UseLogsOptions = {}) {
         isLoading: logsQuery.isLoading,
         isLoadingMore: logsQuery.isFetchingNextPage,
         refetch: refresh,
+        /** 仅刷新头部最新页（SSE 推送事件的即时刷新入口，比完整 refresh 轻量） */
+        refetchHead,
         isRefetching: logsQuery.isRefetching || headQuery.isFetching,
         loadMore,
         loadMoreError,
@@ -646,6 +648,76 @@ export function useLiveLogs(enabled = true) {
     }, [enabled]);
 
     return { logs, isLoading, error };
+}
+
+// 事件流断线重连的起始与上限（指数退避）。
+const LOG_STREAM_RETRY_BASE_MS = 1000;
+const LOG_STREAM_RETRY_MAX_MS = 30_000;
+
+/**
+ * 订阅日志事件流（/api/v1/log/overview/stream），只消费"有新日志"信号：
+ * 每收到一条事件即调用 onLogEvent（由调用方去抖刷新头部查询）。
+ * 与 useLiveLogs 不同，本 hook 不维护事件数据列表——明细页的数据始终
+ * 来自完整字段的 head 查询，SSE 只负责把刷新延迟从秒级轮询降到毫秒级推送。
+ * 返回连接状态：在线时调用方可将轮询间隔放宽为兜底频率。
+ */
+export function useLogStreamEvents(onLogEvent: () => void, enabled: boolean) {
+    const [connected, setConnected] = useState(false);
+    // 回调走 ref：SSE 连接不因回调引用变化而重建
+    const handlerRef = useRef(onLogEvent);
+    handlerRef.current = onLogEvent;
+
+    useEffect(() => {
+        if (!enabled) return;
+        let cancelled = false;
+        let eventSource: EventSource | null = null;
+        let retryTimer: ReturnType<typeof setTimeout> | null = null;
+        let retryDelay = LOG_STREAM_RETRY_BASE_MS;
+
+        const scheduleRetry = () => {
+            if (cancelled) return;
+            setConnected(false);
+            retryTimer = setTimeout(() => {
+                if (!cancelled) void connect();
+            }, retryDelay);
+            retryDelay = Math.min(retryDelay * 2, LOG_STREAM_RETRY_MAX_MS);
+        };
+
+        const connect = async () => {
+            try {
+                const token = await fetchLogStreamToken();
+                if (cancelled) return;
+                eventSource = new EventSource(`${API_BASE_URL}/api/v1/log/overview/stream?token=${token}`);
+                eventSource.onopen = () => {
+                    if (cancelled) return;
+                    // 连接恢复后重置退避
+                    retryDelay = LOG_STREAM_RETRY_BASE_MS;
+                    setConnected(true);
+                };
+                eventSource.addEventListener('log', () => {
+                    if (!cancelled) handlerRef.current();
+                });
+                eventSource.onerror = () => {
+                    if (cancelled) return;
+                    eventSource?.close();
+                    eventSource = null;
+                    scheduleRetry();
+                };
+            } catch {
+                scheduleRetry();
+            }
+        };
+
+        void connect();
+
+        return () => {
+            cancelled = true;
+            if (retryTimer) clearTimeout(retryTimer);
+            eventSource?.close();
+        };
+    }, [enabled]);
+
+    return connected;
 }
 
 // useLiveLogDetail 订阅运行中请求的尝试级详情流。

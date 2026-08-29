@@ -1187,7 +1187,8 @@
       "newLogs": "{count} new logs, click to view",
       "emptyHint": "Try adjusting the time range or clearing filters",
       "removeFilter": "Remove filter",
-      "channelCount": "{count} channels"
+      "channelCount": "{count} channels",
+      "streamLive": " · live stream"
     },
     "card": {
       "error": "Error",

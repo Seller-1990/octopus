@@ -5,6 +5,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import {
     useLogs,
     useLogSiteActionTargets,
+    useLogStreamEvents,
     type LogKeywordMode,
     type LogKeywordScope,
     type RelayLog,
@@ -51,7 +52,7 @@ function useDebouncedValue<T>(value: T, delay = 200) {
     return debounced;
 }
 
-function FreshnessBadge({ updatedAt, live, hasError }: { updatedAt: number; live: boolean; hasError: boolean }) {
+function FreshnessBadge({ updatedAt, live, streamed, hasError }: { updatedAt: number; live: boolean; streamed: boolean; hasError: boolean }) {
     const t = useTranslations('log');
     if (!updatedAt) return null;
     const time = new Date(updatedAt).toLocaleTimeString([], {
@@ -68,7 +69,7 @@ function FreshnessBadge({ updatedAt, live, hasError }: { updatedAt: number; live
             />
             <span className="truncate tabular-nums">
                 {t('list.updatedAt', { time })}
-                {live ? t('list.autoRefresh') : ''}
+                {live && streamed ? t('list.streamLive') : live ? t('list.autoRefresh') : ''}
             </span>
             {hasError ? <span className="shrink-0 text-destructive">{t('list.refreshFailed')}</span> : null}
         </div>
@@ -268,14 +269,31 @@ function LogDetailList() {
         actual_models: debouncedFilters.actualModels.length > 0 ? debouncedFilters.actualModels : undefined,
         canonical_models: debouncedFilters.canonicalModels.length > 0 ? debouncedFilters.canonicalModels : undefined,
     }), [debouncedFilters]);
+    // SSE 推送作为明细刷新的信号源：日志事件到达 → 300ms 去抖后仅刷新 head
+    //（合并突发日志为一次请求）。hook 需在 useLogs 之前调用（其结果决定轮询频率），
+    // refetchHead 经 ref 桥接以打破"hook 参数依赖 hook 返回值"的顺序环。
+    const refetchHeadRef = useRef<() => Promise<unknown>>(async () => {});
+    const headRefreshTimerRef = useRef<number | null>(null);
+    const handleStreamEvent = useCallback(() => {
+        if (headRefreshTimerRef.current != null) return;
+        headRefreshTimerRef.current = window.setTimeout(() => {
+            headRefreshTimerRef.current = null;
+            void refetchHeadRef.current();
+        }, 300);
+    }, []);
+    const sseConnected = useLogStreamEvents(handleStreamEvent, logDateRange.mode === 'live');
+
     const dbLogsQuery = useLogs({
         pageSize: LOG_PAGE_SIZE,
         filters: logFilters,
         range: logDateRange,
         rangeTimezone: timezone,
         enabled: true,
-        refetchInterval: 5000,
+        // 推送在线时轮询仅作 30s 兜底；断线回退 5s 轮询
+        refetchInterval: sseConnected ? 30_000 : 5_000,
     });
+    const { refetch: refreshLogs, refetchHead } = dbLogsQuery;
+    refetchHeadRef.current = refetchHead;
     const allLogs = dbLogsQuery.logs;
     const logsError = dbLogsQuery.error;
 
@@ -367,7 +385,6 @@ function LogDetailList() {
         void dbLogsQuery.loadMore();
     }, [canLoadMore, dbLogsQuery]);
 
-    const { refetch: refreshLogs } = dbLogsQuery;
     const handleRefresh = useCallback(async () => {
         setRefreshing(true);
         try {
@@ -389,6 +406,7 @@ function LogDetailList() {
                 <FreshnessBadge
                     updatedAt={dbLogsQuery.updatedAt}
                     live={logDateRange.mode === 'live'}
+                    streamed={sseConnected}
                     hasError={!!dbLogsQuery.headError}
                 />
                 <ActiveFilterChips />
