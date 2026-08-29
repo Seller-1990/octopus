@@ -293,7 +293,9 @@ function LogDetailList() {
         refetchInterval: sseConnected ? 30_000 : 5_000,
     });
     const { refetch: refreshLogs, refetchHead } = dbLogsQuery;
-    refetchHeadRef.current = refetchHead;
+    useEffect(() => {
+        refetchHeadRef.current = refetchHead;
+    }, [refetchHead]);
     const allLogs = dbLogsQuery.logs;
     const logsError = dbLogsQuery.error;
 
@@ -301,7 +303,11 @@ function LogDetailList() {
     const [frozenLogs, setFrozenLogs] = useState<RelayLog[] | null>(null);
     const [pendingNewCount, setPendingNewCount] = useState(0);
     const logsRef = useRef(allLogs);
-    logsRef.current = allLogs;
+    // 渲染期不得写 ref（react-compiler 规则），经 effect 与最新列表同步；
+    // 滚动事件只可能发生在 effect 之后，无时序风险
+    useEffect(() => {
+        logsRef.current = allLogs;
+    }, [allLogs]);
     const atTopRef = useRef(true);
     const scrollContainerRef = useRef<HTMLDivElement | null>(null);
 
@@ -423,18 +429,19 @@ function LogDetailList() {
         </div>
     );
 
+    const { hasMore, loadMoreError, loadMore } = dbLogsQuery;
     const footer = useMemo(() => {
         if (isFrozen) return null;
-        if (dbLogsQuery.loadMoreError) {
+        if (loadMoreError) {
             return (
                 <div className="flex justify-center py-4">
-                    <Button type="button" variant="outline" size="sm" onClick={() => void dbLogsQuery.loadMore()}>
+                    <Button type="button" variant="outline" size="sm" onClick={() => void loadMore()}>
                         {t('list.retry')}
                     </Button>
                 </div>
             );
         }
-        if (dbLogsQuery.hasMore) {
+        if (hasMore) {
             return (
                 <div className="flex justify-center py-4">
                     <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
@@ -449,7 +456,7 @@ function LogDetailList() {
             );
         }
         return null;
-    }, [dbLogsQuery.hasMore, dbLogsQuery.loadMoreError, dbLogsQuery.loadMore, displayLogs.length, isFrozen, t]);
+    }, [hasMore, loadMoreError, loadMore, displayLogs.length, isFrozen, t]);
 
     if (dbLogsQuery.isLoading && displayLogs.length === 0) {
         return (
@@ -575,6 +582,9 @@ export function Log() {
     }, [queryClient, refreshRequestId, setRefreshing]);
 
     const analyticsFilters = useMemo<UsageAnalyticsFilters>(() => {
+        // 显式引用 minuteTick：它是 live 滚动窗口的时钟驱动，作为真实依赖
+        // 让查询 key 周期性吸收新的窗口端点（否则 KPI 冻结在首次求值时刻）
+        void minuteTick;
         const resolved = resolveLogDateRange(logDateRange, timezone);
         // live 窗口与明细查询使用同一时钟缓冲，避免"明细有、统计没有"的口径分裂
         const endTime = logDateRange.mode === 'live' && resolved.end != null

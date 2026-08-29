@@ -663,9 +663,11 @@ const LOG_STREAM_RETRY_MAX_MS = 30_000;
  */
 export function useLogStreamEvents(onLogEvent: () => void, enabled: boolean) {
     const [connected, setConnected] = useState(false);
-    // 回调走 ref：SSE 连接不因回调引用变化而重建
+    // 回调走 ref：SSE 连接不因回调引用变化而重建（渲染期不得写 ref，经 effect 同步）
     const handlerRef = useRef(onLogEvent);
-    handlerRef.current = onLogEvent;
+    useEffect(() => {
+        handlerRef.current = onLogEvent;
+    }, [onLogEvent]);
 
     useEffect(() => {
         if (!enabled) return;
