@@ -1,6 +1,7 @@
 package balancer
 
 import (
+	"math"
 	"math/rand"
 	"sort"
 	"sync"
@@ -85,19 +86,13 @@ func (b *Weighted) Candidates(items []model.GroupItem) []model.GroupItem {
 		return nil
 	}
 
-	// 构建加权随机排序
+	// 加权随机排序（Efraimidis–Spirakis）：
+	// 给每个 item 一个 key = U^(1/w)，按 key 降序排列时，任一位次上
+	// 选中 item 的概率恰为 w/剩余总权重。线性打分 rand*w/totalWeight
+	// 会系统性高选重项（如 2:1 权重实际约 75/25，见 F05），故弃用。
 	type weightedItem struct {
-		item   model.GroupItem
-		score  float64
-	}
-
-	totalWeight := 0
-	for _, item := range items {
-		w := item.Weight
-		if w <= 0 {
-			w = 1
-		}
-		totalWeight += w
+		item  model.GroupItem
+		score float64
 	}
 
 	scored := make([]weightedItem, n)
@@ -106,10 +101,9 @@ func (b *Weighted) Candidates(items []model.GroupItem) []model.GroupItem {
 		if w <= 0 {
 			w = 1
 		}
-		// 给每个 item 一个加权随机分数：weight/totalWeight 作为概率基础，加上随机扰动
 		scored[i] = weightedItem{
 			item:  item,
-			score: rand.Float64() * float64(w) / float64(totalWeight),
+			score: weightedSampleKey(float64(w), rand.Float64()),
 		}
 	}
 
@@ -123,6 +117,15 @@ func (b *Weighted) Candidates(items []model.GroupItem) []model.GroupItem {
 		result[i] = scored[i].item
 	}
 	return result
+}
+
+// weightedSampleKey 计算加权无放回排序的 Efraimidis–Spirakis 键：U^(1/w)。
+// 对任意位次，item 以 w/剩余权重 的概率胜出；纯函数，便于单测锁定。
+func weightedSampleKey(w, u float64) float64 {
+	if w <= 0 {
+		w = 1
+	}
+	return math.Pow(u, 1/w)
 }
 
 func sortByPriority(items []model.GroupItem) []model.GroupItem {

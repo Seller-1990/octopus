@@ -334,7 +334,10 @@ func HandleResponsesCompact(c *gin.Context) {
 
 		if success {
 			op.StatsChannelUpdate(channel.ID, dbmodel.StatsMetrics{RequestSuccess: 1})
-			balancer.RecordSuccess(channel.ID, usedKey.ID, requestModel)
+			// 熔断/粘性键必须以"上游模型名"记账（与 iterator.SkipCircuitBreak
+			// 的 IsTripped 键一致）；用 requestModel（客户端模型名）会在分组
+			// 重映射模型时让熔断器永远读不到自己写下的键（F02）。
+			balancer.RecordSuccess(channel.ID, usedKey.ID, item.ModelName)
 			balancer.SetSticky(apiKeyID, requestModel, channel.ID, usedKey.ID)
 			outlierwindow.Report(channel.ID, true, statusCode, time.Now())
 			metrics.SaveWithChannelStats(c.Request.Context(), true, nil, iter.Attempts(), false)
@@ -343,7 +346,7 @@ func HandleResponsesCompact(c *gin.Context) {
 
 		op.StatsChannelUpdate(channel.ID, dbmodel.StatsMetrics{RequestFailed: 1})
 		failureKind := circuitFailureKind(group.RetryEnabled, statusCode)
-		balancer.RecordFailure(channel.ID, usedKey.ID, requestModel, failureKind)
+		balancer.RecordFailure(channel.ID, usedKey.ID, item.ModelName, failureKind)
 		outlierwindow.Report(channel.ID, false, statusCode, time.Now())
 		lastErr = attemptErr
 		lastStatusCode = statusCode
