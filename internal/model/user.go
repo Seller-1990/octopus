@@ -10,6 +10,10 @@ type User struct {
 	ID       uint   `gorm:"primaryKey"`
 	Username string `gorm:"unique"`
 	Password string `gorm:"not null"`
+	// TokenVersion 每次改密/改名时 +1，随 JWT 的 ver claim 校验：
+	// 版本不匹配的存量 token 立即失效，无需轮换签名密钥（签名密钥兼任
+	// 存量密文的 AEAD 数据密钥，绝不能随意轮换，见 op/secret.go）。
+	TokenVersion int `json:"token_version"`
 }
 
 type UserLogin struct {

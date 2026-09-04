@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"net/http"
+	"time"
 
 	"github.com/bestruirui/octopus/internal/model"
 	"github.com/bestruirui/octopus/internal/op"
@@ -9,6 +10,7 @@ import (
 	"github.com/bestruirui/octopus/internal/server/middleware"
 	"github.com/bestruirui/octopus/internal/server/resp"
 	"github.com/bestruirui/octopus/internal/server/router"
+	"github.com/bestruirui/octopus/internal/utils/log"
 	"github.com/gin-gonic/gin"
 )
 
@@ -42,10 +44,20 @@ func login(c *gin.Context) {
 		resp.InvalidJSON(c)
 		return
 	}
+	// 暴力穷举防护：窗口内连续失败达到阈值后按 IP 锁定
+	ip := c.ClientIP()
+	if allowed, retryAfter := loginThrottleCheck(ip); !allowed {
+		log.Warnf("SECURITY AUDIT: login attempt from locked IP %s, retry after %s", ip, retryAfter.Round(time.Second))
+		resp.ErrorWithCode(c, http.StatusTooManyRequests, "", "too many failed login attempts, retry later")
+		return
+	}
 	if err := op.UserVerify(user.Username, user.Password); err != nil {
+		loginThrottleFailure(ip)
+		log.Warnf("SECURITY AUDIT: failed login attempt for user %q from IP %s", user.Username, ip)
 		resp.InvalidCredentials(c)
 		return
 	}
+	loginThrottleSuccess(ip)
 	token, expire, err := auth.GenerateJWTToken(user.Expire)
 	if err != nil {
 		resp.InternalError(c)
@@ -64,6 +76,10 @@ func changePassword(c *gin.Context) {
 		resp.ErrorWithAppError(c, http.StatusInternalServerError, err)
 		return
 	}
+	// 改密在 op 层原子递增用户 token 版本（与密码同事务落库），
+	// 全部存量 JWT 因 ver claim 不匹配而立即失效；前端改密成功后会强制重新登录。
+	// 不轮换签名密钥：jwt_secret 兼任存量密文的 AEAD 数据密钥（op/secret.go）。
+	log.Warnf("SECURITY AUDIT: password changed from IP %s, all existing tokens revoked", c.ClientIP())
 	resp.Success(c, "password changed successfully")
 }
 
@@ -74,9 +90,12 @@ func changeUsername(c *gin.Context) {
 		return
 	}
 	if err := op.UserChangeUsername(user.NewUsername); err != nil {
-		resp.Error(c, http.StatusInternalServerError, err.Error())
+		log.Errorf("failed to change username: %v", err)
+		resp.InternalError(c)
 		return
 	}
+	// 与改密同策略：op 层递增 token 版本吊销全部存量 token（不轮换签名密钥）
+	log.Warnf("SECURITY AUDIT: username changed from IP %s, all existing tokens revoked", c.ClientIP())
 	resp.Success(c, "username changed successfully")
 }
 

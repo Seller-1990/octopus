@@ -1,93 +1,111 @@
 package op
 
 import (
+	"context"
+	"path/filepath"
 	"testing"
 
-	"github.com/bestruirui/octopus/internal/conf"
-	"github.com/bestruirui/octopus/internal/db"
+	dbpkg "github.com/bestruirui/octopus/internal/db"
 	"github.com/bestruirui/octopus/internal/model"
 )
 
-// setupUserTest 复用 op 包 DB 基建（独立 sqlite，测试后关闭）。
-// userCache 是包级变量，测试间需复位——否则残留的 ID=1/admin 会让后续
-// First 因主键命中而错误跳过 bootstrap（P2 测试隔离）。
-func setupUserTest(t *testing.T) {
+// setupUserOpTestDB 为 op/user 测试初始化独立 sqlite 库。
+func setupUserOpTestDB(t *testing.T) context.Context {
 	t.Helper()
-	_ = setupCatalogProvisionTest(t) // 独立 DB + channel cache reset
-	t.Cleanup(func() { userCache = model.User{} })
+	if dbpkg.GetDB() != nil {
+		_ = dbpkg.Close()
+	}
+	dbPath := filepath.Join(t.TempDir(), "octopus-user-test.db")
+	if err := dbpkg.InitDB("sqlite", dbPath, false); err != nil {
+		t.Fatalf("InitDB failed: %v", err)
+	}
+	clearSiteChannelBindingCache()
+	clearHeaderPolicyCache()
+	t.Cleanup(func() {
+		_ = dbpkg.Close()
+	})
+	return context.Background()
 }
 
-// TestUserInitRequiresBootstrapPassword F01 回归：空库无 bootstrap 密码必须拒绝启动（不创建固定 admin/admin）。
-func TestUserInitRequiresBootstrapPassword(t *testing.T) {
-	setupUserTest(t)
-	oldPwd := conf.AppConfig.Bootstrap.Password
-	conf.AppConfig.Bootstrap.Password = ""
-	t.Cleanup(func() { conf.AppConfig.Bootstrap.Password = oldPwd })
+// TestTokenVersionBumpsOnCredentialChange 验证 P0-1 核心语义：
+// 改密/改名在单次 DB 更新中原子递增 token 版本，版本与密码/用户名同库生效；
+// 失败路径（旧密码错误、同名改名）不递增版本。
+func TestTokenVersionBumpsOnCredentialChange(t *testing.T) {
+	_ = setupUserOpTestDB(t)
 
-	if err := UserInit(); err == nil {
-		t.Fatal("UserInit must fail when bootstrap password is not set (no fixed admin/admin)")
+	user := model.User{Username: "admin", Password: "oldpass123", TokenVersion: 0}
+	if err := user.HashPassword(); err != nil {
+		t.Fatalf("hash: %v", err)
 	}
-	var count int64
-	if err := db.GetDB().Model(&model.User{}).Count(&count).Error; err != nil {
-		t.Fatalf("count users: %v", err)
+	if err := dbpkg.GetDB().Create(&user).Error; err != nil {
+		t.Fatalf("create user: %v", err)
 	}
-	if count != 0 {
-		t.Fatalf("no user should be created without bootstrap password, got %d", count)
-	}
-}
 
-// TestUserInitCreatesAdminWithBootstrapPassword F01 回归：有 bootstrap 密码 → 创建 admin 且密码可验证。
-func TestUserInitCreatesAdminWithBootstrapPassword(t *testing.T) {
-	setupUserTest(t)
-	oldPwd := conf.AppConfig.Bootstrap.Password
-	conf.AppConfig.Bootstrap.Password = "test-strong-pass-123"
-	t.Cleanup(func() { conf.AppConfig.Bootstrap.Password = oldPwd })
+	prev := userCache
+	userCacheMu.Lock()
+	userCache = user
+	userCacheMu.Unlock()
+	t.Cleanup(func() {
+		userCacheMu.Lock()
+		userCache = prev
+		userCacheMu.Unlock()
+	})
 
-	if err := UserInit(); err != nil {
-		t.Fatalf("UserInit with bootstrap password should succeed: %v", err)
+	if v := UserTokenVersion(); v != 0 {
+		t.Fatalf("initial version = %d, want 0", v)
 	}
-	u := UserGet()
-	if u.Username != "admin" {
-		t.Fatalf("expected admin username, got %s", u.Username)
-	}
-	if err := UserVerify("admin", "test-strong-pass-123"); err != nil {
-		t.Fatalf("bootstrap password must be verifiable: %v", err)
-	}
-	if err := UserVerify("admin", "wrong"); err == nil {
-		t.Fatal("wrong password must fail verification")
-	}
-}
 
-// TestUserInitRejectsShortBootstrapPassword P1 修复：bootstrap 密码最小 6 位。
-func TestUserInitRejectsShortBootstrapPassword(t *testing.T) {
-	setupUserTest(t)
-	oldPwd := conf.AppConfig.Bootstrap.Password
-	conf.AppConfig.Bootstrap.Password = "12345"
-	t.Cleanup(func() { conf.AppConfig.Bootstrap.Password = oldPwd })
-
-	if err := UserInit(); err == nil {
-		t.Fatal("short bootstrap password must be rejected")
+	// 旧密码错误 → 不递增
+	if err := UserChangePassword("wrongpass", "newpass456"); err == nil {
+		t.Fatal("expected error for wrong old password")
 	}
-}
-
-// TestUserInitSkipsExistingUser F01 回归：旧库（已有用户）不受影响，不触发 bootstrap。
-func TestUserInitSkipsExistingUser(t *testing.T) {
-	setupUserTest(t)
-	oldPwd := conf.AppConfig.Bootstrap.Password
-	conf.AppConfig.Bootstrap.Password = ""
-	t.Cleanup(func() { conf.AppConfig.Bootstrap.Password = oldPwd })
-
-	// 先建用户（模拟旧库），再 UserInit（无密码也应跳过）
-	conf.AppConfig.Bootstrap.Password = "first-pass"
-	if err := UserInit(); err != nil {
-		t.Fatalf("first init: %v", err)
+	if v := UserTokenVersion(); v != 0 {
+		t.Fatalf("version bumped on failed password change: %d", v)
 	}
-	conf.AppConfig.Bootstrap.Password = ""
-	if err := UserInit(); err != nil {
-		t.Fatalf("UserInit must skip when user exists (legacy upgrade): %v", err)
+
+	// 正常改密 → 版本 +1，且密码已换
+	if err := UserChangePassword("oldpass123", "newpass456"); err != nil {
+		t.Fatalf("change password: %v", err)
 	}
-	u := UserGet()
-	if u.Username != "admin" {
-		t.Fatalf("expected existing admin preserved, got %s", u.Username)
+	if v := UserTokenVersion(); v != 1 {
+		t.Fatalf("version after password change = %d, want 1", v)
+	}
+	if err := UserVerify("admin", "newpass456"); err != nil {
+		t.Fatalf("new password should verify: %v", err)
+	}
+	if err := UserVerify("admin", "oldpass123"); err == nil {
+		t.Fatal("old password should no longer verify")
+	}
+	var row model.User
+	if err := dbpkg.GetDB().First(&row).Error; err != nil {
+		t.Fatalf("load user row: %v", err)
+	}
+	if row.TokenVersion != 1 {
+		t.Fatalf("DB token_version = %d, want 1", row.TokenVersion)
+	}
+
+	// 改同名 → 报错且不递增
+	if err := UserChangeUsername("admin"); err == nil {
+		t.Fatal("expected error for unchanged username")
+	}
+	if v := UserTokenVersion(); v != 1 {
+		t.Fatalf("version bumped on no-op username change: %d", v)
+	}
+
+	// 正常改名 → 版本 +1，DB 同步
+	if err := UserChangeUsername("admin2"); err != nil {
+		t.Fatalf("change username: %v", err)
+	}
+	if v := UserTokenVersion(); v != 2 {
+		t.Fatalf("version after username change = %d, want 2", v)
+	}
+	if err := dbpkg.GetDB().First(&row).Error; err != nil {
+		t.Fatalf("reload user row: %v", err)
+	}
+	if row.TokenVersion != 2 || row.Username != "admin2" {
+		t.Fatalf("DB row = %+v, want username admin2 version 2", row)
+	}
+	if err := UserVerify("admin2", "newpass456"); err != nil {
+		t.Fatalf("verify after username change: %v", err)
 	}
 }
