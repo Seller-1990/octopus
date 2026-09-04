@@ -20,18 +20,27 @@ type Balancer interface {
 }
 
 // GetBalancer 根据模式返回对应的负载均衡器
+// 各策略实例均无内部状态（轮转计数器为包级变量），进程级单例复用即可，
+// 避免 GetBalancer 每次调用分配新对象（F21）。
+var (
+	roundRobinBalancer = &RoundRobin{}
+	randomBalancer     = &Random{}
+	failoverBalancer   = &Failover{}
+	weightedBalancer   = &Weighted{}
+)
+
 func GetBalancer(mode model.GroupMode) Balancer {
 	switch mode {
 	case model.GroupModeRoundRobin:
-		return &RoundRobin{}
+		return roundRobinBalancer
 	case model.GroupModeRandom:
-		return &Random{}
+		return randomBalancer
 	case model.GroupModeFailover:
-		return &Failover{}
+		return failoverBalancer
 	case model.GroupModeWeighted:
-		return &Weighted{}
+		return weightedBalancer
 	default:
-		return &RoundRobin{}
+		return roundRobinBalancer
 	}
 }
 

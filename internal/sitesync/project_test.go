@@ -458,9 +458,7 @@ func TestDeleteSiteAccountRemovesManagedChannelChain(t *testing.T) {
 	}, ctx); err != nil {
 		t.Fatalf("GroupItemAdd failed: %v", err)
 	}
-	if err := op.StatsChannelUpdate(channelIDs[0], model.StatsMetrics{InputCost: 1, OutputCost: 2, RequestSuccess: 1}); err != nil {
-		t.Fatalf("StatsChannelUpdate failed: %v", err)
-	}
+	op.StatsChannelUpdate(channelIDs[0], model.StatsMetrics{InputCost: 1, OutputCost: 2, RequestSuccess: 1})
 	if err := op.StatsSaveDB(ctx); err != nil {
 		t.Fatalf("StatsSaveDB failed: %v", err)
 	}
@@ -580,9 +578,7 @@ func TestDeleteSiteRemovesManagedChannelChainForAllAccounts(t *testing.T) {
 		t.Fatalf("GroupItemAdd failed: %v", err)
 	}
 	for _, channelID := range channelIDs {
-		if err := op.StatsChannelUpdate(channelID, model.StatsMetrics{InputCost: 1, OutputCost: 2, RequestSuccess: 1}); err != nil {
-			t.Fatalf("StatsChannelUpdate failed: %v", err)
-		}
+		op.StatsChannelUpdate(channelID, model.StatsMetrics{InputCost: 1, OutputCost: 2, RequestSuccess: 1})
 	}
 	if err := op.StatsSaveDB(ctx); err != nil {
 		t.Fatalf("StatsSaveDB failed: %v", err)

@@ -278,17 +278,16 @@ func StatsDailyUpdate(ctx context.Context, metrics model.StatsMetrics) error {
 	return statsSaveDBWithDailyOverride(ctx, prevDaily)
 }
 
-func StatsTotalUpdate(metrics model.StatsMetrics) error {
+func StatsTotalUpdate(metrics model.StatsMetrics) {
 	statsTotalCacheLock.Lock()
 	defer statsTotalCacheLock.Unlock()
 	if statsTotalCache.ID == 0 {
 		statsTotalCache.ID = 1
 	}
 	statsTotalCache.StatsMetrics.Add(metrics)
-	return nil
 }
 
-func StatsChannelUpdate(channelID int, metrics model.StatsMetrics) error {
+func StatsChannelUpdate(channelID int, metrics model.StatsMetrics) {
 	unlock := lockStatsEntity(channelID)
 	channelCache, ok := statsChannelCache.Get(channelID)
 	if !ok {
@@ -302,10 +301,9 @@ func StatsChannelUpdate(channelID int, metrics model.StatsMetrics) error {
 	statsChannelCacheNeedUpdateLock.Lock()
 	statsChannelCacheNeedUpdate[channelID] = struct{}{}
 	statsChannelCacheNeedUpdateLock.Unlock()
-	return nil
 }
 
-func StatsHourlyUpdate(metrics model.StatsMetrics) error {
+func StatsHourlyUpdate(metrics model.StatsMetrics) {
 	now := time.Now()
 	nowHour := now.Hour()
 	todayDate := time.Now().Format("20060102")
@@ -321,10 +319,9 @@ func StatsHourlyUpdate(metrics model.StatsMetrics) error {
 	}
 
 	statsHourlyCache[nowHour].StatsMetrics.Add(metrics)
-	return nil
 }
 
-func StatsAPIKeyUpdate(apiKeyID int, metrics model.StatsMetrics) error {
+func StatsAPIKeyUpdate(apiKeyID int, metrics model.StatsMetrics) {
 	unlock := lockStatsEntity(apiKeyID)
 	apiKeyCache, ok := statsAPIKeyCache.Get(apiKeyID)
 	if !ok {
@@ -338,7 +335,6 @@ func StatsAPIKeyUpdate(apiKeyID int, metrics model.StatsMetrics) error {
 	statsAPIKeyCacheNeedUpdateLock.Lock()
 	statsAPIKeyCacheNeedUpdate[apiKeyID] = struct{}{}
 	statsAPIKeyCacheNeedUpdateLock.Unlock()
-	return nil
 }
 
 func StatsChannelDel(id int) error {

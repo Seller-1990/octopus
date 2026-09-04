@@ -91,3 +91,44 @@ func TestTokenRevocationOnCredentialChange(t *testing.T) {
 		t.Fatal("legacy token without ver claim must be rejected once token version > 0")
 	}
 }
+
+// TestExpireCapEnforced 覆盖 F03 收尾：客户端可控的 expire 参数服务端封顶
+// 30 天——超长正值（如 100 年）与任意负值（-2 等）一律收敛，杜绝永不过期。
+func TestExpireCapEnforced(t *testing.T) {
+	cases := []struct {
+		name       string
+		expiresMin int
+		minDays    float64
+		maxDays    float64
+	}{
+		{"huge-positive-capped", 52_560_000, 29.9, 30.1}, // 100 年 → 30 天
+		{"negative-capped", -2, 29.9, 30.1},              // 未定义负值 → 30 天
+		{"remember-me", -1, 29.9, 30.1},                  // 语义保持 30 天
+		{"fifteen-min", 0, 0.009, 0.02},                  // 默认 15 分钟不回归
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			token, _, err := GenerateJWTToken(tc.expiresMin)
+			if err != nil {
+				t.Fatalf("GenerateJWTToken: %v", err)
+			}
+			if !VerifyJWTToken(token) {
+				t.Fatal("issued token must verify")
+			}
+			parsed, err := jwt.ParseWithClaims(token, &tokenClaims{}, func(token *jwt.Token) (interface{}, error) {
+				return getJWTSecret(), nil
+			}, jwt.WithValidMethods([]string{"HS256"}))
+			if err != nil {
+				t.Fatalf("parse: %v", err)
+			}
+			claims := parsed.Claims.(*tokenClaims)
+			if claims.ExpiresAt == nil {
+				t.Fatal("ExpiresAt must always be set (never issue non-expiring tokens)")
+			}
+			days := time.Until(claims.ExpiresAt.Time).Hours() / 24
+			if days < tc.minDays || days > tc.maxDays {
+				t.Fatalf("lifetime = %.3f days, want [%.3f, %.3f]", days, tc.minDays, tc.maxDays)
+			}
+		})
+	}
+}

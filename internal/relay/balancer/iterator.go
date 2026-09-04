@@ -14,7 +14,6 @@ type Iterator struct {
 	index       int
 	stickyIdx   int // 粘性通道在 candidates 中的位置，-1 表示无
 	stickyKeyID int
-	modelName   string // 请求模型名（用于熔断检查）
 
 	// 内嵌追踪
 	attempts []model.ChannelAttempt
@@ -80,7 +79,6 @@ func NewIteratorWithPreference(group model.Group, apiKeyID int, requestModel str
 		index:       -1,
 		stickyIdx:   stickyIdx,
 		stickyKeyID: stickyKeyID,
-		modelName:   requestModel,
 	}
 }
 
@@ -254,7 +252,7 @@ func (s *AttemptSpan) SetUsage(usage *model.AttemptUsageSnapshot) {
 }
 
 // SetKeyRemark 记录本次尝试实际使用的 channel key 备注，供日志明细定位到具体 key
-//（倍率随 Usage 快照记录；两者合起来支撑「哪个 key、什么倍率、怎么失败的」排查）。
+// （倍率随 Usage 快照记录；两者合起来支撑「哪个 key、什么倍率、怎么失败的」排查）。
 func (s *AttemptSpan) SetKeyRemark(remark string) {
 	if s == nil || s.ended {
 		return

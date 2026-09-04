@@ -91,12 +91,12 @@ func Update(name string, interval time.Duration) {
 	}
 }
 
-// RUN 启动所有注册的任务
+// RUN 启动所有已注册任务。
+// 调用方（cmd/start.go）在独立 goroutine 中执行；各任务循环自带生命周期，
+// 启动后 RUN 直接返回——不再 park 一个无意义的常驻 goroutine（F21），
+// 主流程由 shutdown.Listen 阻塞。
 func RUN() {
 	startScheduler()
-
-	// 阻塞主协程
-	select {}
 }
 
 func startScheduler() {
