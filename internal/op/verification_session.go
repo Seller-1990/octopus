@@ -543,6 +543,34 @@ func VerificationSessionCleanup(ctx context.Context, now time.Time) (int64, erro
 	return cleaned, err
 }
 
+// VerificationRetentionCleanup 物理删除超出保留期的验证会话/任务行（N3）。
+// VerificationSessionCleanup 只做状态标记（expired/revoked/superseded），
+// 行从不删除——线上观测 35K+ 行/月净增（15 分钟 TTL 的会话日均 ~1,030），
+// 是 DB 文件高水位膨胀的推手之一。删除条件只看 expires_at（两表均有索引）：
+// 过期即死，终态与否无关紧要；保留期默认 7 天（设置
+// verification_session_retention_days）。单事务内先删任务行（引用会话）。
+func VerificationRetentionCleanup(ctx context.Context, now time.Time, retentionDays int) (int64, error) {
+	if retentionDays <= 0 {
+		retentionDays = 7
+	}
+	cutoff := now.AddDate(0, 0, -retentionDays)
+	var deleted int64
+	err := db.GetDB().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		res := tx.Where("expires_at < ?", cutoff).Delete(&model.VerificationTask{})
+		if res.Error != nil {
+			return res.Error
+		}
+		deleted += res.RowsAffected
+		res = tx.Where("expires_at < ?", cutoff).Delete(&model.VerificationSession{})
+		if res.Error != nil {
+			return res.Error
+		}
+		deleted += res.RowsAffected
+		return nil
+	})
+	return deleted, err
+}
+
 func cancelVerificationTasksForSession(tx *gorm.DB, sessionID int64) error {
 	return tx.Model(&model.VerificationTask{}).
 		Where("session_id = ? AND status IN ?", sessionID, []model.VerificationTaskStatus{

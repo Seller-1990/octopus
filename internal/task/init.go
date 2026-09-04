@@ -18,6 +18,7 @@ const (
 	TaskWSAffinityCleanup      = "ws_affinity_cleanup"
 	TaskUsageMaintenance       = "usage_maintenance"
 	TaskVerificationRetry      = "verification_retry"
+	TaskVerificationRetention  = "verification_retention"
 	TaskSub2APIRefresh         = "sub2api_refresh"
 	TaskGroupItemOrphanCleanup = "group_item_orphan_cleanup"
 )
@@ -92,8 +93,14 @@ func Init() {
 		}
 	})
 
-	Register(TaskUsageMaintenance, 10*time.Minute, true, UsageMaintenanceTask)
+	// N2：与 stats_save（同为 10 分钟周期、同相启动）错开 90s，
+	// 避免两个周期写者每次同时抢 SQLite 写锁导致 usage 聚合整轮超时失败。
+	RegisterWithPhase(TaskUsageMaintenance, 10*time.Minute, 90*time.Second, true, UsageMaintenanceTask)
 	Register(TaskVerificationRetry, time.Minute, true, VerificationRetryTask)
+	// N3：每日物理清理超出保留期的终态验证会话/任务行
+	// （VerificationSessionCleanup 只标记不删除，行以 ~1K/日净增）。
+	// runOnStart=true：升级后首次启动即清理存量积压。
+	Register(TaskVerificationRetention, 24*time.Hour, true, VerificationRetentionTask)
 	Register(TaskSub2APIRefresh, site.Sub2APIRefreshTaskInterval, true, Sub2APIRefreshTask)
 
 	// 孤儿组成员兜底清理：正常删渠道时 channelDel 已同步删除其组成员；

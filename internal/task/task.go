@@ -13,6 +13,7 @@ type taskEntry struct {
 	name        string
 	fn          func()
 	runOnStart  bool
+	phase       time.Duration
 	ticker      *time.Ticker
 	stopCh      chan struct{}
 	doneCh      chan struct{}
@@ -32,6 +33,18 @@ var (
 // Register 注册一个定时任务
 // runOnStart: 是否在启动时立即执行一次
 func Register(name string, interval time.Duration, runOnStart bool, fn func()) {
+	registerTask(name, interval, 0, runOnStart, fn)
+}
+
+// RegisterWithPhase 注册带相位偏移的定时任务：首个 ticker 事件延后 phase
+// 再触发。用于错开同周期任务，避免多个周期写者同相启动、每次同时抢
+// SQLite 写锁（N2：stats_save 与 usage_maintenance 同为 10 分钟且同相，
+// 观测到 usage 聚合每轮 busy_timeout 超时失败）。
+func RegisterWithPhase(name string, interval, phase time.Duration, runOnStart bool, fn func()) {
+	registerTask(name, interval, phase, runOnStart, fn)
+}
+
+func registerTask(name string, interval, phase time.Duration, runOnStart bool, fn func()) {
 	tasksMu.Lock()
 	if _, exists := tasks[name]; exists {
 		tasksMu.Unlock()
@@ -43,6 +56,7 @@ func Register(name string, interval time.Duration, runOnStart bool, fn func()) {
 		name:       name,
 		fn:         fn,
 		runOnStart: runOnStart,
+		phase:      phase,
 		stopCh:     make(chan struct{}),
 		doneCh:     make(chan struct{}),
 		updateCh:   make(chan struct{}, 1),
@@ -54,7 +68,7 @@ func Register(name string, interval time.Duration, runOnStart bool, fn func()) {
 	if schedulerStarted.Load() {
 		startTaskLoop(entry)
 	}
-	log.Debugf("task %s registered with interval %v, runOnStart: %v", name, interval, runOnStart)
+	log.Debugf("task %s registered with interval %v, phase %v, runOnStart: %v", name, interval, phase, runOnStart)
 }
 
 // Update 更新任务的执行间隔
@@ -109,6 +123,16 @@ func runTask(entry *taskEntry) {
 	// 根据配置决定是否在启动时立即执行
 	if entry.runOnStart && time.Duration(entry.interval.Load()) > 0 {
 		triggerTask(entry, "startup")
+	}
+
+	// 相位偏移：先等 phase 再启动 ticker，使同周期任务彼此错开
+	// （仅启动时生效；Update 重置 ticker 沿用既有相位语义）。
+	if entry.phase > 0 {
+		select {
+		case <-time.After(entry.phase):
+		case <-entry.stopCh:
+			return
+		}
 	}
 
 	var tickerC <-chan time.Time
