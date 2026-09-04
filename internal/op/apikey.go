@@ -10,6 +10,7 @@ import (
 	"github.com/bestruirui/octopus/internal/db"
 	"github.com/bestruirui/octopus/internal/model"
 	"github.com/bestruirui/octopus/internal/utils/cache"
+	"github.com/bestruirui/octopus/internal/utils/log"
 	"gorm.io/gorm"
 )
 
@@ -139,15 +140,19 @@ func APIKeyDelete(id int, ctx context.Context) error {
 	if !ok {
 		return fmt.Errorf("API key not found")
 	}
-	if err := StatsAPIKeyDel(id); err != nil {
-		return fmt.Errorf("failed to delete stats API key: %v", err)
-	}
 	result := db.GetDB().WithContext(ctx).Delete(&k)
+	// Error 必须先于 RowsAffected 检查：DB 故障时 RowsAffected 恒为 0，
+	// 先查行数会把真实错误误报成 "API key not found"（F15）。
+	if result.Error != nil {
+		return fmt.Errorf("failed to delete API key: %w", result.Error)
+	}
 	if result.RowsAffected == 0 {
 		return fmt.Errorf("API key not found")
 	}
-	if result.Error != nil {
-		return fmt.Errorf("failed to delete API key: %w", result.Error)
+	// 行删除成功后再清统计：避免 DELETE 失败时 stats 已丢失
+	// （旧序 StatsAPIKeyDel 在前，键还在但统计已删）。
+	if err := StatsAPIKeyDel(id); err != nil {
+		log.Warnf("failed to delete stats for API key %d after row removal: %v", id, err)
 	}
 	RateLimitDel(id)
 	apiKeyCache.Del(k.ID)
