@@ -877,26 +877,64 @@ func channelRefreshCache(ctx context.Context) error {
 }
 
 func channelRefreshCacheByID(id int, ctx context.Context) error {
-	if old, ok := channelCache.Get(id); ok {
-		for _, k := range old.Keys {
-			if k.ID != 0 {
-				channelKeyCache.Del(k.ID)
-			}
-		}
-	}
+	// 持与 ChannelKeyRecordUse 相同的渠道锁:刷新与运行态增量串行化——
+	// 增量要么先入缓存被本次刷新合并保留,要么在刷新后写入新缓存,都不会被 DB 旧快照覆盖。
+	unlock := lockChannelKeyUpdates(id)
+	defer unlock()
+	// 先读 DB,成功后才改缓存:查询失败时旧缓存(含未落库增量)原样保留,flush 仍可落库。
 	var channel model.Channel
 	if err := db.GetDB().WithContext(ctx).
 		Preload("Keys").
 		First(&channel, id).Error; err != nil {
 		return err
 	}
-	normalizeChannelProxyFields(&channel)
-	channel.Stats = nil
-	channelCache.Set(channel.ID, channel)
-	for _, k := range channel.Keys {
+	old, hadOld := channelCache.Get(id)
+	oldKeyState := make(map[int]model.ChannelKey, len(old.Keys))
+	for _, k := range old.Keys {
 		if k.ID != 0 {
-			channelKeyCache.Set(k.ID, k)
+			oldKeyState[k.ID] = k
 		}
 	}
+	normalizeChannelProxyFields(&channel)
+	channel.Stats = nil
+	for i := range channel.Keys {
+		k := &channel.Keys[i]
+		if k.ID == 0 {
+			continue
+		}
+		if cached, ok := oldKeyState[k.ID]; ok {
+			// 运行态字段以缓存为权威(DB 是上次 flush 的快照);配置字段(密钥/启用/备注)以 DB 为准。
+			if cached.TotalCost != k.TotalCost || cached.StatusCode != k.StatusCode || cached.LastUseTimeStamp != k.LastUseTimeStamp {
+				k.TotalCost = cached.TotalCost
+				k.StatusCode = cached.StatusCode
+				k.LastUseTimeStamp = cached.LastUseTimeStamp
+				channelKeyCacheNeedUpdateLock.Lock()
+				channelKeyCacheNeedUpdate[k.ID] = struct{}{}
+				channelKeyCacheNeedUpdateLock.Unlock()
+			}
+		}
+		channelKeyCache.Set(k.ID, *k)
+	}
+	if hadOld {
+		// 从 DB 消失的 key 连同缓存与脏标记一起移除:已删除的 key 不再把运行态回写。
+		newKeyIDs := make(map[int]struct{}, len(channel.Keys))
+		for _, k := range channel.Keys {
+			if k.ID != 0 {
+				newKeyIDs[k.ID] = struct{}{}
+			}
+		}
+		for _, k := range old.Keys {
+			if k.ID == 0 {
+				continue
+			}
+			if _, stillThere := newKeyIDs[k.ID]; !stillThere {
+				channelKeyCache.Del(k.ID)
+				channelKeyCacheNeedUpdateLock.Lock()
+				delete(channelKeyCacheNeedUpdate, k.ID)
+				channelKeyCacheNeedUpdateLock.Unlock()
+			}
+		}
+	}
+	channelCache.Set(channel.ID, channel)
 	return nil
 }
