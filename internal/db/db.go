@@ -16,8 +16,18 @@ import (
 
 var db *gorm.DB
 
+// dbEngine 记录 InitDB 实际使用的数据库引擎（"sqlite"/"mysql"/"postgres"），
+// 供引擎专属运维操作（如 SQLite VACUUM）做类型守卫。
+var dbEngine string
+
+// IsSQLite 报告当前是否运行在 SQLite 引擎上。db 未初始化时返回 false。
+func IsSQLite() bool {
+	return dbEngine == "sqlite" && db != nil
+}
+
 func InitDB(dbType, dsn string, debug bool) error {
 	var err error
+	dbEngine = dbType
 	gormConfig := gorm.Config{Logger: logger.Discard}
 	if debug {
 		gormConfig.Logger = logger.Default.LogMode(logger.Info)

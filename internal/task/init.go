@@ -21,6 +21,7 @@ const (
 	TaskVerificationRetention  = "verification_retention"
 	TaskSub2APIRefresh         = "sub2api_refresh"
 	TaskGroupItemOrphanCleanup = "group_item_orphan_cleanup"
+	TaskDBVacuum               = "db_vacuum"
 )
 
 func Init() {
@@ -101,6 +102,10 @@ func Init() {
 	// （VerificationSessionCleanup 只标记不删除，行以 ~1K/日净增）。
 	// runOnStart=true：升级后首次启动即清理存量积压。
 	Register(TaskVerificationRetention, 24*time.Hour, true, VerificationRetentionTask)
+
+	// SQLite 文件高水位回收：DELETE 不缩小文件，freelist 占比超阈值才执行
+	// VACUUM（独占写锁）。错相 5 分钟启动，避免与其他周期写者同相抢锁。
+	RegisterWithPhase(TaskDBVacuum, 24*time.Hour, 5*time.Minute, false, DBVacuumTask)
 	Register(TaskSub2APIRefresh, site.Sub2APIRefreshTaskInterval, true, Sub2APIRefreshTask)
 
 	// 孤儿组成员兜底清理：正常删渠道时 channelDel 已同步删除其组成员；
