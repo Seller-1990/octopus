@@ -10,6 +10,7 @@ import (
 	"github.com/bestruirui/octopus/internal/server/middleware"
 	"github.com/bestruirui/octopus/internal/server/resp"
 	"github.com/bestruirui/octopus/internal/server/router"
+	"github.com/bestruirui/octopus/internal/utils/log"
 	"github.com/dlclark/regexp2"
 	"github.com/gin-gonic/gin"
 )
@@ -43,7 +44,8 @@ func init() {
 func getGroupList(c *gin.Context) {
 	groups, err := op.GroupList(c.Request.Context())
 	if err != nil {
-		resp.Error(c, http.StatusInternalServerError, err.Error())
+		log.Errorf("failed to group list: %v", err)
+		resp.InternalError(c)
 		return
 	}
 	resp.Success(c, groups)

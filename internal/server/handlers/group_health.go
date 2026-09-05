@@ -13,6 +13,7 @@ import (
 	"github.com/bestruirui/octopus/internal/server/middleware"
 	"github.com/bestruirui/octopus/internal/server/resp"
 	"github.com/bestruirui/octopus/internal/server/router"
+	"github.com/bestruirui/octopus/internal/utils/log"
 	"github.com/bestruirui/octopus/internal/utils/safe"
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
@@ -48,7 +49,8 @@ func init() {
 func ensureGroupHealthEnabled(c *gin.Context) bool {
 	enabled, err := op.SettingGetBool(model.SettingKeyGroupHealthEnabled)
 	if err != nil {
-		resp.Error(c, http.StatusInternalServerError, err.Error())
+		log.Errorf("failed to setting get bool: %v", err)
+		resp.InternalError(c)
 		return false
 	}
 	if !enabled {
@@ -64,7 +66,8 @@ func listGroupHealth(c *gin.Context) {
 	}
 	views, err := defaultGroupHealthService.ListGroupHealthViews(c.Request.Context())
 	if err != nil {
-		resp.Error(c, http.StatusInternalServerError, err.Error())
+		log.Errorf("failed to list group health views: %v", err)
+		resp.InternalError(c)
 		return
 	}
 	resp.Success(c, views)
@@ -81,7 +84,8 @@ func getGroupHealth(c *gin.Context) {
 	}
 	view, err := defaultGroupHealthService.GetGroupHealthViewByID(c.Request.Context(), groupID)
 	if err != nil {
-		resp.Error(c, http.StatusInternalServerError, err.Error())
+		log.Errorf("failed to get group health view by id: %v", err)
+		resp.InternalError(c)
 		return
 	}
 	resp.Success(c, view)
@@ -129,7 +133,8 @@ func runGroupHealth(c *gin.Context) {
 		return
 	}
 	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
-		resp.Error(c, http.StatusInternalServerError, err.Error())
+		log.Errorf("failed in runGroupHealth: %v", err)
+		resp.InternalError(c)
 		return
 	}
 

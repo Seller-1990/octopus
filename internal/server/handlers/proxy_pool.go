@@ -9,6 +9,7 @@ import (
 	"github.com/bestruirui/octopus/internal/server/middleware"
 	"github.com/bestruirui/octopus/internal/server/resp"
 	"github.com/bestruirui/octopus/internal/server/router"
+	"github.com/bestruirui/octopus/internal/utils/log"
 	"github.com/gin-gonic/gin"
 )
 
@@ -30,7 +31,8 @@ func init() {
 func listProxyConfigurations(c *gin.Context) {
 	items, err := op.ProxyConfigurationList(c.Request.Context())
 	if err != nil {
-		resp.Error(c, http.StatusInternalServerError, err.Error())
+		log.Errorf("failed to proxy configuration list: %v", err)
+		resp.InternalError(c)
 		return
 	}
 	resp.Success(c, items)
@@ -117,7 +119,8 @@ func testProxyConfiguration(c *gin.Context) {
 	}
 	result, err := op.ProxyConfigurationTest(req, c.Request.Context())
 	if err != nil {
-		resp.Error(c, http.StatusInternalServerError, err.Error())
+		log.Errorf("failed to proxy configuration test: %v", err)
+		resp.InternalError(c)
 		return
 	}
 	resp.Success(c, result)

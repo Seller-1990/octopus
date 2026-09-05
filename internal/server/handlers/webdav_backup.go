@@ -7,6 +7,7 @@ import (
 	"github.com/bestruirui/octopus/internal/server/resp"
 	"github.com/bestruirui/octopus/internal/server/router"
 	"github.com/bestruirui/octopus/internal/task"
+	"github.com/bestruirui/octopus/internal/utils/log"
 	"github.com/bestruirui/octopus/internal/webdav"
 	"github.com/gin-gonic/gin"
 )
@@ -49,8 +50,11 @@ func testWebDAVConnection(c *gin.Context) {
 }
 
 func triggerWebDAVBackup(c *gin.Context) {
+	// WebDAV 备份包含全部站点凭证，触发行为必须留痕
+	log.Warnf("SECURITY AUDIT: WebDAV backup triggered from IP %s", c.ClientIP())
 	if err := webdav.RunBackup(c.Request.Context()); err != nil {
-		resp.Error(c, http.StatusInternalServerError, err.Error())
+		log.Errorf("failed to run backup: %v", err)
+		resp.InternalError(c)
 		return
 	}
 
@@ -60,7 +64,8 @@ func triggerWebDAVBackup(c *gin.Context) {
 func listWebDAVBackups(c *gin.Context) {
 	backups, err := webdav.ListBackups(c.Request.Context())
 	if err != nil {
-		resp.Error(c, http.StatusInternalServerError, err.Error())
+		log.Errorf("failed to list backups: %v", err)
+		resp.InternalError(c)
 		return
 	}
 
@@ -78,11 +83,13 @@ func restoreWebDAVBackup(c *gin.Context) {
 
 	result, err := webdav.RestoreFromBackup(c.Request.Context(), req.Filename)
 	if err != nil {
-		resp.Error(c, http.StatusInternalServerError, err.Error())
+		log.Errorf("failed to restore from backup: %v", err)
+		resp.InternalError(c)
 		return
 	}
 	if err := task.ReloadSettingIntervals(); err != nil {
-		resp.Error(c, http.StatusInternalServerError, err.Error())
+		log.Errorf("failed to reload setting intervals: %v", err)
+		resp.InternalError(c)
 		return
 	}
 

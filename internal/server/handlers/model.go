@@ -11,6 +11,7 @@ import (
 	"github.com/bestruirui/octopus/internal/server/middleware"
 	"github.com/bestruirui/octopus/internal/server/resp"
 	"github.com/bestruirui/octopus/internal/server/router"
+	"github.com/bestruirui/octopus/internal/utils/log"
 	"github.com/gin-gonic/gin"
 	"github.com/samber/lo"
 )
@@ -101,7 +102,8 @@ func listSiteModelPrices(c *gin.Context) {
 	candidateID, _ := strconv.Atoi(c.Query("route_candidate_id"))
 	items, err := op.SiteModelPriceQuoteList(c.Request.Context(), canonicalID, candidateID)
 	if err != nil {
-		resp.Error(c, http.StatusInternalServerError, err.Error())
+		log.Errorf("failed to site model price quote list: %v", err)
+		resp.InternalError(c)
 		return
 	}
 	resp.Success(c, items)
@@ -152,7 +154,8 @@ func previewEffectivePrice(c *gin.Context) {
 func listCurrencyRates(c *gin.Context) {
 	items, err := op.CurrencyRateList(c.Request.Context())
 	if err != nil {
-		resp.Error(c, http.StatusInternalServerError, err.Error())
+		log.Errorf("failed to currency rate list: %v", err)
+		resp.InternalError(c)
 		return
 	}
 	resp.Success(c, items)
@@ -175,7 +178,8 @@ func upsertCurrencyRate(c *gin.Context) {
 func listModelCatalog(c *gin.Context) {
 	items, err := op.CatalogList(c.Request.Context())
 	if err != nil {
-		resp.Error(c, http.StatusInternalServerError, err.Error())
+		log.Errorf("failed to catalog list: %v", err)
+		resp.InternalError(c)
 		return
 	}
 	resp.Success(c, items)
@@ -184,7 +188,8 @@ func listModelCatalog(c *gin.Context) {
 func listCatalogPriceOverview(c *gin.Context) {
 	items, err := op.CatalogPriceOverviewList(c.Request.Context())
 	if err != nil {
-		resp.Error(c, http.StatusInternalServerError, err.Error())
+		log.Errorf("failed to catalog price overview list: %v", err)
+		resp.InternalError(c)
 		return
 	}
 	resp.Success(c, items)
@@ -193,7 +198,8 @@ func listCatalogPriceOverview(c *gin.Context) {
 func syncModelCatalog(c *gin.Context) {
 	result, err := op.CatalogSync(c.Request.Context())
 	if err != nil {
-		resp.Error(c, http.StatusInternalServerError, err.Error())
+		log.Errorf("failed to catalog sync: %v", err)
+		resp.InternalError(c)
 		return
 	}
 	resp.Success(c, result)
@@ -202,7 +208,8 @@ func syncModelCatalog(c *gin.Context) {
 func listDiscoveredModels(c *gin.Context) {
 	items, err := op.CatalogDiscoveredModels(c.Request.Context())
 	if err != nil {
-		resp.Error(c, http.StatusInternalServerError, err.Error())
+		log.Errorf("failed to catalog discovered models: %v", err)
+		resp.InternalError(c)
 		return
 	}
 	resp.Success(c, items)
@@ -323,7 +330,8 @@ func previewModelRoute(c *gin.Context) {
 		Features:        request.Features,
 	}, group)
 	if err != nil {
-		resp.Error(c, http.StatusInternalServerError, err.Error())
+		log.Errorf("failed in operation: %v", err)
+		resp.InternalError(c)
 		return
 	}
 	resp.Success(c, preview)
@@ -336,13 +344,15 @@ func listProtocolCapabilities(c *gin.Context) {
 func getModelList(c *gin.Context) {
 	models, err := op.GroupListModel(c.Request.Context())
 	if err != nil {
-		resp.Error(c, http.StatusInternalServerError, err.Error())
+		log.Errorf("failed to group list model: %v", err)
+		resp.InternalError(c)
 		return
 	}
 	apiKeyId := c.GetInt("api_key_id")
 	apiKey, err := op.APIKeyGet(apiKeyId, c.Request.Context())
 	if err != nil {
-		resp.Error(c, http.StatusInternalServerError, err.Error())
+		log.Errorf("failed to get api key: %v", err)
+		resp.InternalError(c)
 		return
 	}
 	if apiKey.SupportedModels != "" {
@@ -394,7 +404,8 @@ func getModelList(c *gin.Context) {
 func listLLM(c *gin.Context) {
 	models, err := op.LLMList(c.Request.Context())
 	if err != nil {
-		resp.Error(c, http.StatusInternalServerError, err.Error())
+		log.Errorf("failed to llm list: %v", err)
+		resp.InternalError(c)
 		return
 	}
 	resp.Success(c, models)
@@ -403,7 +414,8 @@ func listLLM(c *gin.Context) {
 func listLLMByChannel(c *gin.Context) {
 	channels, err := op.ChannelLLMList(c.Request.Context())
 	if err != nil {
-		resp.Error(c, http.StatusInternalServerError, err.Error())
+		log.Errorf("failed to channel llm list: %v", err)
+		resp.InternalError(c)
 		return
 	}
 	resp.Success(c, channels)

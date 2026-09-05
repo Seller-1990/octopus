@@ -9,6 +9,7 @@ import (
 	"github.com/bestruirui/octopus/internal/server/middleware"
 	"github.com/bestruirui/octopus/internal/server/resp"
 	"github.com/bestruirui/octopus/internal/server/router"
+	"github.com/bestruirui/octopus/internal/utils/log"
 	"github.com/gin-gonic/gin"
 )
 
@@ -31,7 +32,8 @@ func init() {
 func listHeaderPolicies(c *gin.Context) {
 	items, err := op.HeaderPolicyList(c.Request.Context())
 	if err != nil {
-		resp.Error(c, http.StatusInternalServerError, err.Error())
+		log.Errorf("failed to header policy list: %v", err)
+		resp.InternalError(c)
 		return
 	}
 	resp.Success(c, items)
@@ -74,7 +76,8 @@ func previewHeaderPolicy(c *gin.Context) {
 	candidateID, _ := strconv.Atoi(c.Query("route_candidate_id"))
 	item, err := op.ResolveHeaderPolicy(c.Request.Context(), channelID, canonicalID, candidateID)
 	if err != nil {
-		resp.Error(c, http.StatusInternalServerError, err.Error())
+		log.Errorf("failed to resolve header policy: %v", err)
+		resp.InternalError(c)
 		return
 	}
 	resp.Success(c, item)
@@ -83,7 +86,8 @@ func previewHeaderPolicy(c *gin.Context) {
 func listUserAgentProfiles(c *gin.Context) {
 	items, err := op.UserAgentProfileList(c.Request.Context())
 	if err != nil {
-		resp.Error(c, http.StatusInternalServerError, err.Error())
+		log.Errorf("failed to user agent profile list: %v", err)
+		resp.InternalError(c)
 		return
 	}
 	resp.Success(c, items)
