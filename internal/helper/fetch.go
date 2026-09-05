@@ -1,6 +1,7 @@
 package helper
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -213,14 +214,39 @@ func decodeModelJSONResponse(resp *http.Response, result any) error {
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return formatModelHTTPError(resp.StatusCode, resp.Header.Get("Content-Type"), bodyBytes)
 	}
-	if len(bodyBytes) == 0 {
-		return nil
+	trimmed := bytes.TrimSpace(bodyBytes)
+	if len(trimmed) == 0 {
+		// 200 + 空 body 不是「零个模型」的合法表达:静默解码成空列表会让同步任务撤掉全部模型与路由。
+		return fmt.Errorf("decode response failed: upstream returned an empty body")
 	}
-	if err := json.Unmarshal(bodyBytes, result); err != nil {
+	if trimmed[0] != '{' {
+		// 模型列表端点的合法响应都是 JSON 对象(data/models 包裹),数组/null/标量均为畸形。
+		kind := "scalar"
+		switch trimmed[0] {
+		case '[':
+			kind = "array"
+		case 'n':
+			kind = "null"
+		case '"':
+			kind = "string"
+		}
+		return fmt.Errorf("decode response failed: unexpected JSON %s, want object", kind)
+	}
+	if err := json.Unmarshal(trimmed, result); err != nil {
 		if summary := extractModelHTMLResponseSummary(resp.Header.Get("Content-Type"), bodyBytes); summary != "" {
 			return fmt.Errorf("decode response failed: %s", summary)
 		}
 		return fmt.Errorf("decode response failed: %w", err)
+	}
+	// 区分「列表字段缺失」与「明确空数组」:缺失是畸形响应(错误对象/无关 JSON),明确空数组才是合法空列表。
+	var probe map[string]json.RawMessage
+	if err := json.Unmarshal(trimmed, &probe); err != nil {
+		return fmt.Errorf("decode response failed: %w", err)
+	}
+	if _, hasData := probe["data"]; !hasData {
+		if _, hasModels := probe["models"]; !hasModels {
+			return fmt.Errorf("decode response failed: response has no model list field (data/models)")
+		}
 	}
 	return nil
 }

@@ -42,6 +42,12 @@ func SyncModelsTask() {
 		}
 		oldModels := xstrings.SplitTrimCompact(",", channel.Model)
 		newModels := xstrings.TrimCompact(fetchModels)
+		if len(newModels) == 0 {
+			// 上游「明确返回空列表」也可能只是空响应/权限异常:全部撤模需要非空列表证据,
+			// 空列表只告警不删,历史模型与路由保持不变;部分撤模(列表非空)不受影响。
+			log.Warnf("channel %s upstream returned an empty model list; keeping existing models and routes", channel.Name)
+			continue
+		}
 		for _, m := range newModels {
 			m = strings.TrimSpace(m)
 			if m == "" {
