@@ -287,6 +287,8 @@ export function RunningRequests({ dbLogIds, dbLoading }: RunningRequestsProps) {
 
     // 会话跟踪：只有「亲眼见过 running」的 id 才允许在完成后继续滞留展示。
     // 初始快照里的完成态条目没有 running 历程，天然被排除。
+    // setTrackedIds 是派生状态调整（依赖 logs 收敛，changed=false 即停），
+    // 无级联渲染风险，豁免 set-state-in-effect。
     const [trackedIds, setTrackedIds] = useState<Set<number>>(() => new Set());
     useEffect(() => {
         let changed = false;
@@ -297,7 +299,10 @@ export function RunningRequests({ dbLogIds, dbLoading }: RunningRequestsProps) {
                 changed = true;
             }
         }
-        if (changed) setTrackedIds(next);
+        if (changed) {
+            // eslint-disable-next-line react-hooks/set-state-in-effect
+            setTrackedIds(next);
+        }
     }, [logs]);
 
     // TTL 逐出需要时钟：仅存在等待接管的完成条目时才启动秒级 tick。
