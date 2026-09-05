@@ -1188,7 +1188,8 @@
       "emptyHint": "試試調整時間範圍或清除篩選條件",
       "removeFilter": "移除篩選",
       "channelCount": "{count} 個渠道",
-      "streamLive": " · 即時推送中"
+      "streamLive": " · 即時推送中",
+      "retentionNotice": "明細僅保證保留最近 {days} 天，更早資料可能已被清理；更長週期的彙總請查看使用分析。"
     },
     "card": {
       "error": "錯誤",
@@ -1258,8 +1259,7 @@
     "analytics": {
       "view": {
         "analytics": "使用分析",
-        "detail": "日誌明細",
-        "live": "即時"
+        "detail": "日誌明細"
       },
       "range": {
         "today": "今天",
@@ -1390,7 +1390,7 @@
       "attempts": "嘗試",
       "attemptIndex": "第 {index} 次嘗試",
       "keyMultiplier": "Key 倍率",
-      "empty": "暫無即時請求"
+      "indeterminate": "結果不確定"
     }
   },
   "channel": {

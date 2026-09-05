@@ -4,7 +4,7 @@ import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import type { UsageDimension, UsageMetricScope } from '@/api/endpoints/log-analytics';
 
-export type LogView = 'analytics' | 'detail' | 'live';
+export type LogView = 'analytics' | 'detail';
 
 function browserTimezone() {
     try {

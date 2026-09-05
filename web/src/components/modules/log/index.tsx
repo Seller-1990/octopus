@@ -14,6 +14,7 @@ import type { UsageAnalyticsFilters, UsageBreakdownItem } from '@/api/endpoints/
 import { LIVE_WINDOW_CLOCK_BUFFER_SECONDS, resolveLogDateRange } from '@/lib/log-range';
 import { useChannelList } from '@/api/endpoints/channel';
 import { useSiteList } from '@/api/endpoints/site';
+import { SettingKey, useSettingValue } from '@/api/endpoints/setting';
 import { X } from 'lucide-react';
 import { LogCard, type LogSiteActionTargets } from './Item';
 import { Loader2 } from 'lucide-react';
@@ -26,7 +27,7 @@ import { useLogUIStore } from './ui-store';
 import { useLogAnalyticsStore } from './analytics-store';
 import { UsageAnalytics } from './Analytics';
 import { LogControls, type LogViewTabIds } from './Controls';
-import { LiveLogPanel } from './Live';
+import { RunningRequests } from './Running';
 
 type LogFilters = {
     keyword: string;
@@ -374,6 +375,34 @@ function LogDetailList() {
     const displayLogs = frozenLogs ?? allLogs;
     const isFrozen = frozenLogs !== null;
 
+    // 进行中区块的接管判定集合：完成条目一旦出现在 DB 列表即从区块逐出。
+    const dbLogIds = useMemo(() => new Set(allLogs.map((log) => log.id)), [allLogs]);
+
+    // 保留期超期提示：查询窗口起点早于保留期时告知明细可能已被清理。
+    const { value: keepPeriodValue, isLoading: keepPeriodLoading } = useSettingValue(SettingKey.RelayLogKeepPeriod, '0');
+    const { value: keepEnabledValue } = useSettingValue(SettingKey.RelayLogKeepEnabled, 'true');
+    const keepPeriod = Number.parseInt(keepPeriodValue, 10) || 0;
+    const keepEnabled = keepEnabledValue !== 'false';
+    const retentionNotice = useMemo(() => {
+        if (keepPeriodLoading || !keepEnabled || keepPeriod <= 0) return false;
+        if (rangeStart == null) return false;
+        return rangeStart < Math.floor(Date.now() / 1000) - keepPeriod * 86400;
+    }, [keepPeriodLoading, keepEnabled, keepPeriod, rangeStart]);
+
+    // 三分支（加载/空态/主布局）共用的头部扩展：提示条 + 进行中区块。
+    // 区块必须在空态分支也渲染——一天中第一条请求运行时 DB 列表为空，
+    // 若只在主布局渲染，进行中请求会完全不可见。
+    const headerExtras = (
+        <>
+            {retentionNotice ? (
+                <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-300">
+                    {t('list.retentionNotice', { days: keepPeriod })}
+                </div>
+            ) : null}
+            <RunningRequests dbLogIds={dbLogIds} dbLoading={dbLogsQuery.isLoading} />
+        </>
+    );
+
     const logIDs = useMemo(() => displayLogs.map((log) => log.id), [displayLogs]);
     const siteActionTargetsQuery = useLogSiteActionTargets(logIDs, displayLogs.length > 0);
     const siteActionTargets = useMemo(() => {
@@ -462,6 +491,7 @@ function LogDetailList() {
         return (
             <div className="flex h-full flex-col gap-3">
                 {freshnessRow}
+                {headerExtras}
                 <div className="flex h-full items-center justify-center">
                     <Loader2 className="size-6 animate-spin text-muted-foreground" />
                 </div>
@@ -473,6 +503,7 @@ function LogDetailList() {
         return (
             <div className="flex h-full flex-col gap-3">
                 {freshnessRow}
+                {headerExtras}
                 <div className="flex h-full flex-col items-center justify-center gap-1 pb-10 text-sm text-muted-foreground">
                     <span>{t('list.empty')}</span>
                     <span className="text-xs">{t('list.emptyHint')}</span>
@@ -484,6 +515,7 @@ function LogDetailList() {
     return (
         <div className="flex h-full min-h-0 flex-col gap-3">
             {freshnessRow}
+            {headerExtras}
             {dbLogsQuery.warning ? (
                 <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-300">
                     {dbLogsQuery.warning}
@@ -557,10 +589,6 @@ export function Log() {
         detail: {
             trigger: `${tabsId}-tab-detail`,
             panel: `${tabsId}-panel-detail`,
-        },
-        live: {
-            trigger: `${tabsId}-tab-live`,
-            panel: `${tabsId}-panel-live`,
         },
     }), [tabsId]);
 
@@ -678,16 +706,6 @@ export function Log() {
                 className="flex min-h-0 flex-1 flex-col"
             >
                 {view === 'detail' ? <LogDetailList /> : null}
-            </div>
-            <div
-                id={tabIds.live.panel}
-                role="tabpanel"
-                aria-labelledby={tabIds.live.trigger}
-                hidden={view !== 'live'}
-                tabIndex={view === 'live' ? 0 : -1}
-                className="flex min-h-0 flex-1 flex-col"
-            >
-                {view === 'live' ? <LiveLogPanel /> : null}
             </div>
         </div>
     );

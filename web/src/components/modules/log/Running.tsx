@@ -1,6 +1,19 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+/**
+ * 明细列表顶部的「进行中」区块。
+ *
+ * 数据源为独立的 SSE 概览流（useLiveLogs），与下方 DB 历史列表通过 id 对账：
+ * - state==='running' 的条目始终显示；
+ * - 本会话观测到 running→finished 迁移的条目，在 DB 列表接管前继续展示
+ *   （完成态字段由概览流补充），最多滞留 COMPLETED_TTL_MS；
+ * - 初始快照中的完成态条目不展示（它们属于历史，不属于「正在发生」）。
+ *
+ * TTL 兜底的原因：fixed 历史窗口、业务筛选、清空日志等场景下 DB 列表
+ * 永远不会包含这些完成请求，仅靠「出现在 DB 结果即逐出」会永久滞留。
+ */
+
+import { useEffect, useMemo, useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { ChevronDown, ChevronUp, Coins, Loader2, Square } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
@@ -11,11 +24,22 @@ import { formatAttemptFailure, formatFailureSummary } from '@/lib/attempt-failur
 import { getModelIcon } from '@/lib/model-icons';
 import {
     useLiveLogDetail,
+    useLiveLogs,
     useStopAttempt,
-    type ChannelAttempt,
     type LiveLogOverview,
     type LiveRequestState,
 } from '@/api/endpoints/log';
+
+const COMPLETED_TTL_MS = 60_000;
+const RUNNING_MAX_ENTRIES = 50;
+
+const stateStyles: Record<LiveRequestState, string> = {
+    running: 'border-blue-500/40 bg-blue-500/10 text-blue-600 dark:text-blue-300',
+    success: 'border-emerald-500/40 bg-emerald-500/10 text-emerald-600 dark:text-emerald-300',
+    failed: 'border-destructive/40 bg-destructive/10 text-destructive',
+    canceled: 'border-amber-500/40 bg-amber-500/10 text-amber-600 dark:text-amber-300',
+    indeterminate: 'border-amber-500/40 bg-amber-500/10 text-amber-600 dark:text-amber-300',
+};
 
 function formatTime(value: string): string {
     const date = new Date(value);
@@ -33,8 +57,7 @@ function formatDuration(ms: number): string {
     return `${(ms / 1000).toFixed(2)}s`;
 }
 
-// key 倍率展示：与 LogCard/分组成员倍率一致使用 `1.5x` 格式。
-// null/undefined = 未获取到倍率（不标注）；0 = 免费 Key（标注 0x）；1 = 标准（标注 1x）。
+// key 倍率展示：与明细卡片/分组成员倍率一致使用 `1.5x` 格式。
 function formatKeyMultiplier(value: number | undefined | null): string | null {
     if (value == null || !Number.isFinite(value)) return null;
     const rounded = Math.round(value * 100) / 100;
@@ -52,25 +75,20 @@ function LiveChannelName({ channelName, color, className }: { channelName: strin
     );
 }
 
-const stateStyles: Record<LiveRequestState, string> = {
-    running: 'border-blue-500/40 bg-blue-500/10 text-blue-600 dark:text-blue-300',
-    success: 'border-emerald-500/40 bg-emerald-500/10 text-emerald-600 dark:text-emerald-300',
-    failed: 'border-destructive/40 bg-destructive/10 text-destructive',
-    canceled: 'border-amber-500/40 bg-amber-500/10 text-amber-600 dark:text-amber-300',
-};
+interface RunningLogCardProps {
+    log: LiveLogOverview;
+    expanded: boolean;
+    onToggle: () => void;
+}
 
-// LiveLogCard 展示一条实时日志，可展开查看尝试详情并停止当前尝试。
-// 请求完成后，概览流会携带与 DB 历史日志一致的 attempts 与 key 倍率，
-// 因此已完成日志无需再走历史接口即可展示完整 key 切换记录。
-export function LiveLogCard({ log }: { log: LiveLogOverview }) {
+function RunningLogCard({ log, expanded, onToggle }: RunningLogCardProps) {
     const t = useTranslations('log.live');
-    const [expanded, setExpanded] = useState(false);
     const running = log.state === 'running';
     const { attempts, runningAttempt } = useLiveLogDetail(log.id, log.state, expanded);
     const stopAttempt = useStopAttempt();
     const [now, setNow] = useState(() => Date.now());
 
-    const historyAttempts: ChannelAttempt[] = log.attempts ?? [];
+    const historyAttempts = log.attempts ?? [];
     const hasHistoryAttempts = historyAttempts.length > 0;
     const attemptCount = hasHistoryAttempts ? historyAttempts.length : attempts.length;
     const keyMultiplierLabel = formatKeyMultiplier(log.price_group_multiplier);
@@ -85,9 +103,7 @@ export function LiveLogCard({ log }: { log: LiveLogOverview }) {
         return () => window.clearInterval(timer);
     }, [running]);
 
-    const durationMS = running
-        ? now - new Date(log.started_at).getTime()
-        : log.duration_ms;
+    const durationMS = running ? now - new Date(log.started_at).getTime() : log.duration_ms;
     const stateLabel = t(log.state);
 
     return (
@@ -145,7 +161,8 @@ export function LiveLogCard({ log }: { log: LiveLogOverview }) {
                     variant="ghost"
                     size="sm"
                     className="shrink-0"
-                    onClick={() => setExpanded((value) => !value)}
+                    onClick={onToggle}
+                    aria-expanded={expanded}
                 >
                     {expanded ? <ChevronUp className="size-4" /> : <ChevronDown className="size-4" />}
                 </Button>
@@ -249,6 +266,99 @@ export function LiveLogCard({ log }: { log: LiveLogOverview }) {
                     )}
                 </div>
             ) : null}
+        </div>
+    );
+}
+
+interface RunningRequestsProps {
+    /** 当前明细列表（DB 派生）中已可见的日志 id，用于完成条目的接管判定。 */
+    dbLogIds: Set<number>;
+    /** DB 列表首查未结算期间只展示 running，防止快照完成条目闪现。 */
+    dbLoading: boolean;
+}
+
+export function RunningRequests({ dbLogIds, dbLoading }: RunningRequestsProps) {
+    const tList = useTranslations('log.list');
+    const { logs, error } = useLiveLogs(true);
+
+    // 展开互斥：每张展开卡片持有独立 SSE 详情连接且断线不自动重连，
+    // 多开既增加连接数又放大静默失败面；指向已逐出卡片时为无害空转。
+    const [expandedId, setExpandedId] = useState<number | null>(null);
+
+    // 会话跟踪：只有「亲眼见过 running」的 id 才允许在完成后继续滞留展示。
+    // 初始快照里的完成态条目没有 running 历程，天然被排除。
+    const [trackedIds, setTrackedIds] = useState<Set<number>>(() => new Set());
+    useEffect(() => {
+        let changed = false;
+        const next = new Set(trackedIds);
+        for (const log of logs) {
+            if (log.state === 'running' && !next.has(log.id)) {
+                next.add(log.id);
+                changed = true;
+            }
+        }
+        if (changed) setTrackedIds(next);
+    }, [logs]);
+
+    // TTL 逐出需要时钟：仅存在等待接管的完成条目时才启动秒级 tick。
+    const [now, setNow] = useState(() => Date.now());
+    const hasWaiting = useMemo(
+        () => logs.some(
+            (log) =>
+                log.state !== 'running' &&
+                trackedIds.has(log.id) &&
+                !dbLogIds.has(log.id) &&
+                now - new Date(log.completed_at ?? log.started_at).getTime() <= COMPLETED_TTL_MS,
+        ),
+        [logs, trackedIds, dbLogIds, now],
+    );
+    useEffect(() => {
+        if (!hasWaiting) return;
+        const timer = window.setInterval(() => setNow(Date.now()), 1000);
+        return () => window.clearInterval(timer);
+    }, [hasWaiting]);
+
+    const visible = useMemo(() => {
+        const list: LiveLogOverview[] = [];
+        for (const log of logs) {
+            if (log.state === 'running') {
+                list.push(log);
+                continue;
+            }
+            if (!trackedIds.has(log.id)) continue;
+            if (dbLogIds.has(log.id)) continue;
+            if (dbLoading) continue;
+            const completedAt = new Date(log.completed_at ?? log.started_at).getTime();
+            if (now - completedAt > COMPLETED_TTL_MS) continue;
+            list.push(log);
+        }
+        return list.slice(0, RUNNING_MAX_ENTRIES);
+    }, [logs, trackedIds, dbLogIds, dbLoading, now]);
+
+    if (visible.length === 0) return null;
+
+    return (
+        <div className="flex flex-col gap-2">
+            {error ? (
+                <div
+                    role="alert"
+                    className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-300"
+                >
+                    {tList('streamDisconnected')}
+                </div>
+            ) : null}
+            <div className="max-h-[50vh] overflow-y-auto overscroll-contain">
+                <div className="flex flex-col gap-2">
+                    {visible.map((log) => (
+                        <RunningLogCard
+                            key={log.id}
+                            log={log}
+                            expanded={expandedId === log.id}
+                            onToggle={() => setExpandedId((current) => (current === log.id ? null : log.id))}
+                        />
+                    ))}
+                </div>
+            </div>
         </div>
     );
 }

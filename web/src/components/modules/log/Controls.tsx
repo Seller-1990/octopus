@@ -167,13 +167,6 @@ export function LogControls({ tabIds }: { tabIds: LogViewTabIds }) {
                         >
                             {t('view.detail')}
                         </TabsTrigger>
-                        <TabsTrigger
-                            value="live"
-                            id={tabIds.live.trigger}
-                            panelId={tabIds.live.panel}
-                        >
-                            {t('view.live')}
-                        </TabsTrigger>
                     </TabsList>
                 </Tabs>
                 <div className="flex flex-wrap items-center gap-1">

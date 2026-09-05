@@ -484,7 +484,7 @@ export function useLogs(options: UseLogsOptions = {}) {
     };
 }
 
-export type LiveRequestState = 'running' | 'success' | 'failed' | 'canceled';
+export type LiveRequestState = 'running' | 'success' | 'failed' | 'canceled' | 'indeterminate';
 
 export interface LiveAttempt {
     attempt_index: number;
@@ -516,7 +516,7 @@ export interface LiveLogOverview {
 }
 
 function isLiveFinished(state: LiveRequestState) {
-    return state === 'success' || state === 'failed' || state === 'canceled';
+    return state === 'success' || state === 'failed' || state === 'canceled' || state === 'indeterminate';
 }
 
 async function fetchLogStreamToken() {
@@ -531,6 +531,9 @@ const LIVE_LOGS_MAX_ENTRIES = 500;
 // 进入无过滤日志页时先拉取最近 N 条历史日志作为初始快照，随后由 SSE 增量更新。
 // 否则页面只在收到下一条实时事件后才显示内容，给用户「没有日志」的错觉。
 const LIVE_LOGS_SNAPSHOT_SIZE = 20;
+// 事件流断线重连的起始与上限（指数退避），与 useLogStreamEvents 对齐。
+const LIVE_LOGS_RETRY_BASE_MS = 1000;
+const LIVE_LOGS_RETRY_MAX_MS = 30_000;
 
 function relayLogToLiveOverview(log: RelayLog): LiveLogOverview {
     return {
@@ -539,7 +542,9 @@ function relayLogToLiveOverview(log: RelayLog): LiveLogOverview {
             ? 'success'
             : log.outcome === 'client_canceled'
                 ? 'canceled'
-                : 'failed',
+                : log.outcome === 'indeterminate'
+                    ? 'indeterminate'
+                    : 'failed',
         started_at: new Date(log.time * 1000).toISOString(),
         completed_at: new Date((log.time + Math.max(0, Math.floor(log.use_time / 1000))) * 1000).toISOString(),
         duration_ms: log.use_time,
@@ -568,6 +573,7 @@ export function useLiveLogs(enabled = true) {
         if (!enabled) return;
         let cancelled = false;
         let retryTimer: ReturnType<typeof setTimeout> | null = null;
+        let retryDelay = LIVE_LOGS_RETRY_BASE_MS;
         let eventSource: EventSource | null = null;
 
         const scheduleReconnect = () => {
@@ -575,7 +581,8 @@ export function useLiveLogs(enabled = true) {
             retryTimer = setTimeout(() => {
                 retryTimer = null;
                 void connect(true);
-            }, 2000);
+            }, retryDelay);
+            retryDelay = Math.min(retryDelay * 2, LIVE_LOGS_RETRY_MAX_MS);
         };
 
         const loadSnapshot = async () => {
@@ -605,6 +612,8 @@ export function useLiveLogs(enabled = true) {
                 eventSource.onopen = () => {
                     if (cancelled) return;
                     setError(null);
+                    // 连接恢复后重置退避
+                    retryDelay = LIVE_LOGS_RETRY_BASE_MS;
                     if (!isReconnect) setIsLoading(false);
                 };
                 eventSource.addEventListener('log', (event) => {

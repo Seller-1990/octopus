@@ -1188,7 +1188,8 @@
       "emptyHint": "Try adjusting the time range or clearing filters",
       "removeFilter": "Remove filter",
       "channelCount": "{count} channels",
-      "streamLive": " · live stream"
+      "streamLive": " · live stream",
+      "retentionNotice": "Logs are only guaranteed for the last {days} days; older entries may have been cleaned up. See usage analytics for longer-term summaries."
     },
     "card": {
       "error": "Error",
@@ -1258,8 +1259,7 @@
     "analytics": {
       "view": {
         "analytics": "Usage analytics",
-        "detail": "Log details",
-        "live": "Live"
+        "detail": "Log details"
       },
       "range": {
         "today": "Today",
@@ -1390,7 +1390,7 @@
       "attempts": "Attempts",
       "attemptIndex": "Attempt #{index}",
       "keyMultiplier": "Key multiplier",
-      "empty": "No live requests"
+      "indeterminate": "Indeterminate"
     }
   },
   "channel": {
