@@ -5,12 +5,20 @@
 """
 
 import json
+import os
 import re
 import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 
 LLM_PRICE_URL = "https://models.dev/api.json"
+
+# 有显式价格(input 或 output 任一为数值,含 0 的免费模型)的条目占比下限;
+# 低于该值视为上游 schema 漂移(如 cost 字段改名),拒绝生成。
+MIN_PRICED_RATIO = 0.5
+
+# model_id/别名会被原样拼进 Go map 字面量,只允许安全字符,防止上游数据注入生成代码。
+MODEL_ID_PATTERN = re.compile(r"^[a-z0-9][a-z0-9._/:\- ]*$")
 
 PROVIDERS = [
     "openai",      # GPT 系列
@@ -146,78 +154,101 @@ def generate_entry(model_id: str, cost: dict) -> str:
     return f'\t"{model_id}": {{Input: {input_price}, Output: {output_price}, CacheRead: {cache_read}, CacheWrite: {cache_write}}},'
 
 
+def validate_model_id(model_id: str) -> None:
+    """拒绝可能注入生成代码的 model id(引号、花括号、反斜杠、换行等)。"""
+    if not MODEL_ID_PATTERN.match(model_id):
+        raise ValueError(f"Model id contains unsupported characters: {model_id!r}")
+
+
+def has_explicit_price(cost: dict) -> bool:
+    """区分「显式价格(含 0 的免费模型)」与「价格字段缺失(schema 漂移)」。"""
+    return any(isinstance(cost.get(key), (int, float)) for key in ("input", "output"))
+
+
 def main():
     print(f"Fetching price data from {LLM_PRICE_URL}...")
     raw_price = fetch_price_data()
-    
-    entries = []
-    model_count = 0
-    
+
+    # (model_id, entry, has_explicit_price) 三元组;去重与守卫都基于原始 model_id。
+    collected: list[tuple[str, str, bool]] = []
+
     for provider in PROVIDERS:
         if provider not in raw_price:
-            print(f"  Provider '{provider}' not found, skipping...")
-            continue
-            
+            # 上游名单漂移会让该厂商全部模型失去全局兜底价,宁可构建失败也不静默缺价。
+            raise ValueError(
+                f"Provider '{provider}' missing from upstream catalog; existing presets were not changed"
+            )
+
         models = raw_price[provider].get("models", {})
         provider_count = 0
-        
+
         for model_data in models.values():
-            model_id = model_data.get("id", "").lower()
+            model_id = str(model_data.get("id", "")).lower()
             cost = model_data.get("cost", {})
-            
+
             if not model_id:
                 continue
-            
-            # 添加原始模型
-            entries.append(generate_entry(model_id, cost))
+
+            validate_model_id(model_id)
+            priced = has_explicit_price(cost)
+            collected.append((model_id, generate_entry(model_id, cost), priced))
             provider_count += 1
-            
+
             # 收集所有别名
             aliases = []
-            
+
             # 1. Claude 模型自动生成别名
             aliases.extend(generate_claude_aliases(model_id))
-            
+
             # 2. 静态别名映射
             if model_id in MODEL_ALIASES:
                 aliases.extend(MODEL_ALIASES[model_id])
-            
+
             # 添加别名 (去重)
             for alias in set(aliases):
-                entries.append(generate_entry(alias.lower(), cost))
-                provider_count += 1
-            
+                alias_id = alias.lower()
+                validate_model_id(alias_id)
+                collected.append((alias_id, generate_entry(alias_id, cost), priced))
+
         print(f"  {provider}: {provider_count} models")
-        model_count += provider_count
-    
+
     # 生成 Go 文件内容
-    # 修复：跨 provider / 别名可能产生重复 model_id（如 glm-5.2），Go map 字面量不允许
-    # 重复 key —— 按 model_id 全局去重（保留首个出现的条目，保序）。
+    # 跨 provider / 别名可能产生重复 model_id(如 glm-5.2),Go map 字面量不允许
+    # 重复 key —— 按原始 model_id 全局去重(保留首个出现的条目,保序)。
+    # 不解析格式化后的 entry,避免 "id:1" 与 "id:2" 这类冒号命名被 split 吞并。
     seen: set[str] = set()
     deduped: list[str] = []
-    for entry in entries:
-        # entry 形如 `  "model_id": { ... },`
-        model_key = entry.split(":", 1)[0].strip().strip('"')
-        if model_key in seen:
+    priced_count = 0
+    for model_id, entry, priced in collected:
+        if model_id in seen:
             continue
-        seen.add(model_key)
+        seen.add(model_id)
         deduped.append(entry)
+        if priced:
+            priced_count += 1
 
     if not deduped:
         raise ValueError("No supported model prices found; existing presets were not changed")
+    if priced_count < len(deduped) * MIN_PRICED_RATIO:
+        raise ValueError(
+            f"Only {priced_count}/{len(deduped)} models have explicit prices "
+            f"(minimum ratio {MIN_PRICED_RATIO:.0%}); upstream catalog schema may have drifted; "
+            "existing presets were not changed"
+        )
 
     update_time = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
     content = PRESETS_GO_TEMPLATE.format(
         update_time=update_time,
         entries="\n".join(deduped),
     )
-    
-    # 写入文件
+
+    # 写入文件:先写临时文件再原子替换,中断不会留下截断的 presets.go。
     script_dir = Path(__file__).parent
     output_path = script_dir.parent / "internal" / "globalprice" / "presets.go"
-    
-    output_path.write_text(content, encoding="utf-8")
-    print(f"\nGenerated {output_path} with {model_count} models")
+    tmp_path = output_path.with_name(output_path.name + ".tmp")
+    tmp_path.write_text(content, encoding="utf-8")
+    os.replace(tmp_path, output_path)
+    print(f"\nGenerated {output_path} with {len(deduped)} models ({priced_count} priced)")
 
 
 if __name__ == "__main__":

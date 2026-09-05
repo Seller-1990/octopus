@@ -29,6 +29,13 @@ class UpdatePriceTests(unittest.TestCase):
     def assert_presets_unchanged(self):
         self.assertEqual(self.output.read_text(encoding="utf-8"), self.original)
 
+    @staticmethod
+    def full_catalog(**providers):
+        """构造含全部 provider 的 catalog(缺失即报错),未指定的 provider 为空模型表。"""
+        catalog = {name: {"models": {}} for name in updatePrice.PROVIDERS}
+        catalog.update(providers)
+        return catalog
+
     def test_network_failure_preserves_existing_presets(self):
         with mock.patch.object(updatePrice.urllib.request, "urlopen", side_effect=urllib.error.URLError("offline")):
             with self.assertRaises(urllib.error.URLError):
@@ -51,16 +58,70 @@ class UpdatePriceTests(unittest.TestCase):
                         updatePrice.main()
                 self.assert_presets_unchanged()
 
+    def test_missing_provider_rejected_instead_of_partial_generation(self):
+        catalog = {"openai": {"models": {"a": {"id": "audit-model", "cost": {"input": 1, "output": 2}}}}}
+        response = io.BytesIO(json.dumps(catalog).encode())
+        with mock.patch.object(updatePrice.urllib.request, "urlopen", return_value=response):
+            with self.assertRaises(ValueError):
+                updatePrice.main()
+        self.assert_presets_unchanged()
+
+    def test_schema_drift_with_all_prices_missing_rejected(self):
+        # 上游把 cost 改名(如 pricing)后,每个模型都得到空 cost——必须报错而非生成全缺失表。
+        catalog = {"openai": {"models": {
+            "a": {"id": "audit-model", "pricing": {"input": 2, "output": 3}},
+            "b": {"id": "audit-model-b", "pricing": {"input": 1, "output": 1}},
+        }}}
+        response = io.BytesIO(json.dumps(catalog).encode())
+        with mock.patch.object(updatePrice.urllib.request, "urlopen", return_value=response):
+            with self.assertRaises(ValueError):
+                updatePrice.main()
+        self.assert_presets_unchanged()
+
+    def test_schema_drift_with_mostly_missing_prices_rejected(self):
+        catalog = {"openai": {"models": {
+            "priced": {"id": "audit-priced", "cost": {"input": 2, "output": 3}},
+            "missing-a": {"id": "audit-missing-a"},
+            "missing-b": {"id": "audit-missing-b"},
+        }}}
+        response = io.BytesIO(json.dumps(catalog).encode())
+        with mock.patch.object(updatePrice.urllib.request, "urlopen", return_value=response):
+            with self.assertRaises(ValueError):
+                updatePrice.main()
+        self.assert_presets_unchanged()
+
+    def test_model_id_with_injection_characters_rejected(self):
+        catalog = {"openai": {"models": {
+            "evil": {"id": 'audit-x": zombie()} //', "cost": {"input": 1, "output": 2}},
+        }}}
+        response = io.BytesIO(json.dumps(catalog).encode())
+        with mock.patch.object(updatePrice.urllib.request, "urlopen", return_value=response):
+            with self.assertRaises(ValueError):
+                updatePrice.main()
+        self.assert_presets_unchanged()
+
+    def test_colon_model_ids_dedup_independently(self):
+        catalog = self.full_catalog(openai={"models": {
+            "tagged-a": {"id": "audit-model:1", "cost": {"input": 1, "output": 1}},
+            "tagged-b": {"id": "audit-model:2", "cost": {"input": 2, "output": 2}},
+        }})
+        response = io.BytesIO(json.dumps(catalog).encode())
+        with mock.patch.object(updatePrice.urllib.request, "urlopen", return_value=response):
+            updatePrice.main()
+        content = self.output.read_text(encoding="utf-8")
+        self.assertIn('"audit-model:1": {Input: 1, Output: 1,', content)
+        self.assertIn('"audit-model:2": {Input: 2, Output: 2,', content)
+
     def test_valid_catalog_preserves_prices_and_deduplicates_models(self):
-        catalog = {
-            "openai": {"models": {
+        catalog = self.full_catalog(
+            openai={"models": {
                 "paid": {"id": "audit-model", "cost": {"input": 2, "output": 3}},
                 "free": {"id": "audit-free", "cost": {"input": 0, "output": 0}},
             }},
-            "google": {"models": {
+            google={"models": {
                 "duplicate": {"id": "audit-model", "cost": {"input": 99}},
             }},
-        }
+        )
         response = io.BytesIO(json.dumps(catalog).encode())
         with mock.patch.object(updatePrice.urllib.request, "urlopen", return_value=response):
             updatePrice.main()
