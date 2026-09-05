@@ -455,7 +455,11 @@
 | `pnpm exec tsc --noEmit --incremental false` / `pnpm lint` | 通过 / 0 error、1 warning（同 8.1 已知项）。 |
 | 复审新增改动 | `server.go` 路由注册错误传播（原 `RegisterAll` 返回值被吞）、`trusted_proxies` 为空时启动告警日志、CI 接入扩展测试/Python 测试/server 包 race。 |
 
-已知残留（复审确认、未在本轮修复）：F01 自动入口对已信任 origin 仍接受带路径 baseURL 与不同 pairing id 新建分支（零测试覆盖）；F30 schema 漂移（有条目但全零）仍可绿灯覆盖；反代部署漏配 `trusted_proxies` 的行为已由启动告警提示但共享预算的攻击面（约 17 rps 撑满容量）未缓解。
+复审残留已于同日收口（commit 42b9b66 / 5cdef39 / 6ae50e7）：
+- F01 自动入口从同 origin 比较收紧为 baseURL 严格相等 + 配对 id 一致，新建分支对自动入口关闭；自动配对成功/拒绝写入 `lastAutoPairEvent` 并在 popup 顶部展示；扩展版本 bump 0.4.0。扩展测试增至 31 项（含带路径变体拒绝、不同 pairing id 拒绝、事件可见三个新用例）。
+- F30 增加显式价/缺失价区分守卫（有价条目占比 < 50% 判定 schema 漂移并拒绝生成）、provider 缺失显式报错、model_id 白名单（拒绝注入字符）、按原始 id 去重（冒号命名不再吞并）、presets.go 原子写入。Python 测试 4→9 项。
+- 登录限流：容量拒绝审计日志按清扫间隔全局限频并携带累计丢弃数（`atCapacity` 返回标记），锁定建立输出一次性日志；`-race` 通过。
+- 仍披露的边界：反代共享登录预算的攻击面有界存在（约 17 rps 撑满容量），已由启动告警、容量日志限频与 README 部署说明三重披露；批次 B 的 F06/F07/F09 未修前不发 stable。
 
 局部复现文件在 `/tmp/octopus-audit-20260905.1FPsgu`，是明确标识的临时夹具，不是待合并的失败测试；后续可转成正式回归。临时目录可能被系统清理，报告中的行为与测试设计是持久记录；已修项的持久回归均已入库（8.2/8.3）。
 
