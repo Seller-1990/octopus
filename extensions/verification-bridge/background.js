@@ -47,6 +47,8 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 
 const AUTO_PAIR_FLAG = "#octopus_sync=";
 const autoPairedTabs = new Set();
+// 最近一次网页驱动的自动配对结果，popup 顶部展示，避免静默成功/失败。
+let lastAutoPairEvent = null;
 
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
   if (autoPairedTabs.has(tabId)) return;
@@ -224,6 +226,7 @@ function publicState(state) {
   return {
     version: state.version,
     selectedKey: state.selectedKey,
+    lastAutoPairEvent,
     pairings: state.pairings.map((record) => ({
       key: record.key,
       baseURL: record.baseURL,
@@ -248,20 +251,12 @@ async function addPairing(baseURLValue, pairingTokenValue, automatic = false) {
   const baseURL = normalizeBaseURL(baseURLValue);
   const pairingToken = String(pairingTokenValue || "").trim();
   if (!pairingToken) throw new Error("请输入配对令牌。");
-  const trustedPairings = automatic
-    ? state.pairings.filter((record) => sameOrigin(record.baseURL, baseURL))
-    : null;
-  if (automatic && trustedPairings.length === 0) {
-    console.warn("[Octopus 验证桥] 自动配对被拒绝：未知的 Octopus 地址。", baseURL);
-    return state;
+  if (automatic) {
+    return reconnectTrustedPairing(state, baseURL, pairingToken);
   }
   const identity = await callBridge(baseURL, "/identify", {
     pairing_token: pairingToken,
   });
-  if (automatic && !trustedPairings.some((record) => state.pairings.includes(record))) {
-    console.warn("[Octopus 验证桥] 自动配对被取消：地址信任已撤销。", baseURL);
-    return state;
-  }
   const existing = state.pairings.find((record) =>
     record.baseURL === baseURL &&
     record.identity?.pairing?.id === identity.pairing.id
@@ -295,6 +290,43 @@ async function addPairing(baseURLValue, pairingTokenValue, automatic = false) {
   await persistState();
   startAutomation(state.selectedKey);
   return state;
+}
+
+// 自动入口只重连「地址与配对记录都和已存配对完全一致」的连接：
+// 同源（origin）比较会让攻击者指定的子路径 baseURL 借服务器重定向/代理接管后续请求，
+// 而同一地址下换号的配对（pairing id 不同）可能是同服务器其他账号的令牌，必须由用户在 popup 手动确认。
+async function reconnectTrustedPairing(state, baseURL, pairingToken) {
+  const trusted = state.pairings.find((record) => record.baseURL === baseURL);
+  if (!trusted) {
+    rejectAutoPairing("未知的 Octopus 地址", baseURL);
+    return state;
+  }
+  const identity = await callBridge(baseURL, "/identify", {
+    pairing_token: pairingToken,
+  });
+  if (!state.pairings.includes(trusted)) {
+    rejectAutoPairing("地址信任已撤销", baseURL);
+    return state;
+  }
+  if (trusted.identity?.pairing?.id !== identity.pairing.id) {
+    rejectAutoPairing("配对记录已更换，请在弹窗中手动确认", baseURL);
+    return state;
+  }
+  trusted.pairingToken = pairingToken;
+  trusted.identity = identity;
+  trusted.phase = "idle";
+  trusted.lastMessage = "配对已重新连接。";
+  trusted.tone = "success";
+  state.selectedKey = trusted.key;
+  lastAutoPairEvent = {ok: true, reason: null, baseURL, at: new Date().toISOString()};
+  await persistState();
+  startAutomation(state.selectedKey);
+  return state;
+}
+
+function rejectAutoPairing(reason, baseURL) {
+  console.warn(`[Octopus 验证桥] 自动配对被拒绝：${reason}。`, baseURL);
+  lastAutoPairEvent = {ok: false, reason, baseURL, at: new Date().toISOString()};
 }
 
 async function selectPairing(key) {

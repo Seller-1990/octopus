@@ -365,3 +365,23 @@ summary:focus-visible {
   font-size: 12px;
   line-height: 1.4;
 }
+
+.auto-pair-event {
+  margin-top: 8px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  font-size: 11px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+  color: var(--muted);
+  background: color-mix(in srgb, var(--muted) 12%, transparent);
+}
+
+.auto-pair-event.success {
+  color: var(--accent);
+}
+
+.auto-pair-event.error {
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 12%, transparent);
+}

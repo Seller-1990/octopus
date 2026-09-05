@@ -79,7 +79,7 @@ Visit `http://localhost:8080` — Username: `admin`, password = the `OCTOPUS_BOO
 
 ### Security Upgrade Notes
 
-- **Verification Bridge:** first trust must be established manually in the extension popup by checking the Octopus address and submitting its pairing token. Webpage fragments can reconnect only an already trusted origin. Reload existing unpacked extensions and remove any unrecognized saved pairings; existing trust is not automatically reset.
+- **Verification Bridge:** first trust must be established manually in the extension popup by checking the Octopus address and submitting its pairing token. Webpage fragments can only reconnect an existing pairing whose address (including path) and pairing id exactly match the saved record; anything else is rejected and shown in the popup. Reload existing unpacked extensions and remove any unrecognized saved pairings; existing trust is not automatically reset.
 - **Upstream TLS:** Chrome/Firefox fingerprint clients now verify certificate trust and hostnames. Fix invalid upstream certificates or configure the deployment trust store for private CAs; self-signed certificates are no longer silently accepted.
 - **Reverse proxies:** forwarded source headers are ignored by default. If a reverse proxy fronts Octopus, explicitly configure its actual addresses/CIDRs in `server.trusted_proxies` (a JSON array), or use a comma-separated environment variable without spaces:
 

@@ -7,11 +7,12 @@ const BRIDGE_STATE_KEY = "octopusVerificationBridgeV2";
 const LEGACY_BRIDGE_STATE_KEY = "octopusVerificationBridge";
 const RUNTIME_REVISION_KEY = "octopusVerificationBridgeRuntimeRevision";
 // Bump when an upgrade must replace an already-registered service worker.
-const RUNTIME_REVISION = "0.3.1";
+const RUNTIME_REVISION = "0.4.0";
 
 const elements = {
   pairingList: document.querySelector("#pairing-list"),
   empty: document.querySelector("#pairing-empty"),
+  autoPairEvent: document.querySelector("#auto-pair-event"),
   selected: document.querySelector("#selected-pairing"),
   selectedTitle: document.querySelector("#selected-title"),
   selectedMeta: document.querySelector("#selected-meta"),
@@ -149,8 +150,19 @@ async function selectPairing(key) {
 }
 
 function render() {
+  renderAutoPairEvent();
   renderPairingList();
   renderSelectedPairing();
+}
+
+function renderAutoPairEvent() {
+  const event = state.lastAutoPairEvent;
+  elements.autoPairEvent.hidden = !event;
+  if (!event) return;
+  elements.autoPairEvent.textContent = event.ok
+    ? `已自动重连配对（${hostLabel(event.baseURL)}）。`
+    : `自动配对被拒绝（${hostLabel(event.baseURL)}）：${event.reason}`;
+  elements.autoPairEvent.className = `auto-pair-event ${event.ok ? "success" : "error"}`;
 }
 
 function renderPairingList() {

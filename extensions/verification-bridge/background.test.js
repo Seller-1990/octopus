@@ -5,7 +5,7 @@ const path = require("node:path");
 const test = require("node:test");
 const vm = require("node:vm");
 
-async function startBackground(directory, pairings = []) {
+async function startBackground(directory, pairings = [], identifyData = null) {
   const listeners = {};
   const requests = [];
   const errors = [];
@@ -50,10 +50,15 @@ async function startBackground(directory, pairings = []) {
       if (url.endsWith("/identify") && body.pairing_token === "test-fragment-token") {
         await automaticIdentify;
       }
+      // 自定义 identifyData 只作用于 fragment 令牌：启动时的后台刷新链使用已存令牌，
+      // 不能让 mock 响应污染已存配对的 identity 而破坏「不同 pairing id」等用例的前提。
+      const data = body.pairing_token === "test-fragment-token" && identifyData
+        ? identifyData
+        : {pairing: {id: 1}, latest_task: null};
       return {
         ok: true,
         status: 200,
-        json: async () => ({code: 200, data: {pairing: {id: 1}, latest_task: null}}),
+        json: async () => ({code: 200, data: structuredClone(data)}),
       };
     },
     importScripts: (filename) => {
@@ -143,6 +148,38 @@ for (const directory of [__dirname, path.resolve(__dirname, "../../static/extens
     await background.openFragment(trustedOrigin);
     assert.equal(background.requests.length, 0);
     assert.equal(background.pairings().length, 0);
+  });
+
+  test(`${label}: a path-carrying variant of a trusted address is rejected before any request`, async () => {
+    const background = await startBackground(directory, [savedPairing()]);
+    await background.openFragment(`${trustedOrigin}/attacker-path`);
+    assert.equal(background.requests.length, 0);
+    assert.equal(background.pairings().length, 1);
+    const state = await background.message({type: "state.get"});
+    assert.equal(state.data.lastAutoPairEvent.ok, false);
+    assert.match(state.data.lastAutoPairEvent.reason, /未知/);
+  });
+
+  test(`${label}: an automatic pairing for a different pairing id is rejected, not created`, async () => {
+    const background = await startBackground(directory, [savedPairing()], {pairing: {id: 2}, latest_task: null});
+    await background.openFragment(trustedOrigin);
+    assert.ok(background.requests.some((request) =>
+      request.url.endsWith("/identify") && request.body.pairing_token === "test-fragment-token"
+    ));
+    assert.equal(background.pairings().length, 1);
+    assert.equal(background.pairings()[0].pairingToken, "test-saved-token");
+    assert.equal(background.pairings()[0].identity.pairing.id, 1);
+    const state = await background.message({type: "state.get"});
+    assert.equal(state.data.lastAutoPairEvent.ok, false);
+    assert.match(state.data.lastAutoPairEvent.reason, /手动确认/);
+  });
+
+  test(`${label}: a rejected automatic pairing is visible in the popup state`, async () => {
+    const background = await startBackground(directory);
+    await background.openFragment("https://fake-octopus.example");
+    const state = await background.message({type: "state.get"});
+    assert.equal(state.data.lastAutoPairEvent.ok, false);
+    assert.equal(state.data.lastAutoPairEvent.baseURL, "https://fake-octopus.example");
   });
 
   for (const pairAgain of [false, true]) {

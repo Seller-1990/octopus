@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Octopus 验证桥",
-  "version": "0.3.1",
+  "version": "0.4.0",
   "description": "持久配对 Octopus，在不抢占窗口焦点的真实浏览器站点上下文中完成 Cloudflare 验证后的同步任务。",
   "permissions": [
     "alarms",
