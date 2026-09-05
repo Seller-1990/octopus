@@ -55,13 +55,8 @@ def fetch_price_data() -> dict:
         LLM_PRICE_URL,
         headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"}
     )
-    try:
-        with urllib.request.urlopen(req, timeout=10) as response:
-            return json.loads(response.read().decode("utf-8"))
-    except Exception as e:
-        print(f"Warning: Failed to fetch price data: {e}")
-        print("Falling back to empty price data - manual update required")
-        return {}
+    with urllib.request.urlopen(req, timeout=10) as response:
+        return json.loads(response.read().decode("utf-8"))
 
 
 def format_price(value: float | None) -> str:
@@ -207,6 +202,9 @@ def main():
             continue
         seen.add(model_key)
         deduped.append(entry)
+
+    if not deduped:
+        raise ValueError("No supported model prices found; existing presets were not changed")
 
     update_time = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
     content = PRESETS_GO_TEMPLATE.format(
