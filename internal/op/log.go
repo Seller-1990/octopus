@@ -38,9 +38,6 @@ var relayLogRecentLock sync.Mutex
 var relayLogFlushLock sync.Mutex
 var relayLogFlushSignal = make(chan struct{}, 1)
 
-var relayLogSubscribers = make(map[chan model.RelayLog]struct{})
-var relayLogSubscribersLock sync.RWMutex
-
 // streamTokenTTL 限制未消费 token 的存活期：token 走 query string，可能留痕于
 // 反代访问日志与浏览器历史，过期自毁避免被事后重放。
 const streamTokenTTL = 60 * time.Second
@@ -85,33 +82,6 @@ func RelayLogStreamTokenConsume(token string) bool {
 	}
 	delete(relayLogStreamTokens, token)
 	return time.Since(entry.createdAt) <= streamTokenTTL
-}
-
-func RelayLogSubscribe() chan model.RelayLog {
-	ch := make(chan model.RelayLog, 10)
-	relayLogSubscribersLock.Lock()
-	relayLogSubscribers[ch] = struct{}{}
-	relayLogSubscribersLock.Unlock()
-	return ch
-}
-
-func RelayLogUnsubscribe(ch chan model.RelayLog) {
-	relayLogSubscribersLock.Lock()
-	delete(relayLogSubscribers, ch)
-	relayLogSubscribersLock.Unlock()
-	close(ch)
-}
-
-func notifySubscribers(relayLog model.RelayLog) {
-	relayLogSubscribersLock.RLock()
-	defer relayLogSubscribersLock.RUnlock()
-
-	for ch := range relayLogSubscribers {
-		select {
-		case ch <- relayLog:
-		default:
-		}
-	}
 }
 
 // RelayLogWriterRun flushes persisted relay logs from the in-memory queue in
@@ -379,7 +349,6 @@ func RelayLogAdd(ctx context.Context, relayLog model.RelayLog) error {
 	if err != nil {
 		return err
 	}
-	notifySubscribers(relayLog)
 	appendRelayLogRecent(relayLog)
 
 	if !enabled {

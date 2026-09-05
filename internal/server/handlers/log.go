@@ -60,10 +60,6 @@ func init() {
 	// 上方受 JWT 保护的 /stream-token 端点签发，连接时校验并立即吊销。
 	router.NewGroupRouter("/api/v1/log").
 		AddRoute(
-			router.NewRoute("/stream", http.MethodGet).
-				Handle(streamLog),
-		).
-		AddRoute(
 			router.NewRoute("/overview/stream", http.MethodGet).
 				Handle(streamLiveOverview),
 		).
@@ -363,39 +359,6 @@ func getStreamToken(c *gin.Context) {
 	resp.Success(c, gin.H{"token": token})
 }
 
-func streamLog(c *gin.Context) {
-	if !requireLogStreamToken(c) {
-		return
-	}
-
-	c.Header("Content-Type", "text/event-stream")
-	c.Header("Cache-Control", "no-cache")
-	c.Header("Connection", "keep-alive")
-	c.Header("X-Accel-Buffering", "no")
-
-	logChan := op.RelayLogSubscribe()
-	defer op.RelayLogUnsubscribe(logChan)
-
-	ctx := c.Request.Context()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case log, ok := <-logChan:
-			if !ok {
-				return
-			}
-			data, err := json.Marshal(log)
-			if err != nil {
-				continue
-			}
-			c.Writer.Write([]byte(fmt.Sprintf("data: %s\n\n", data)))
-			c.Writer.Flush()
-		}
-	}
-}
-
 func requireLogStreamToken(c *gin.Context) bool {
 	token := c.Query("token")
 	// 原子校验并吊销：并发双连同一 token 只有一个能通过
@@ -506,7 +469,7 @@ func streamLiveDetail(c *gin.Context) {
 		return
 	}
 	prepareLiveSSE(c)
-	defer relay.CloseLiveDetail(updates)
+	defer relay.CloseLiveDetail(id, updates)
 
 	heartbeat := time.NewTicker(15 * time.Second)
 	defer heartbeat.Stop()

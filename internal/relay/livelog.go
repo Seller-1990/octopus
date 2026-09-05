@@ -13,10 +13,11 @@ import (
 type LiveRequestState string
 
 const (
-	LiveRequestRunning  LiveRequestState = "running"
-	LiveRequestSuccess  LiveRequestState = "success"
-	LiveRequestFailed   LiveRequestState = "failed"
-	LiveRequestCanceled LiveRequestState = "canceled"
+	LiveRequestRunning       LiveRequestState = "running"
+	LiveRequestSuccess       LiveRequestState = "success"
+	LiveRequestFailed        LiveRequestState = "failed"
+	LiveRequestCanceled      LiveRequestState = "canceled"
+	LiveRequestIndeterminate LiveRequestState = "indeterminate"
 )
 
 // LiveLogEvent 表示实时日志生命周期事件类型。
@@ -77,18 +78,20 @@ const (
 )
 
 var (
-	liveLogMu           sync.Mutex
-	liveLogRecords      = make(map[int64]liveLogRecord)
-	liveOverviewCh      chan LiveLog
-	liveDetailCh        chan LiveAttempt
-	liveDetailRequestID int64
+	liveLogMu sync.Mutex
+	// liveLogRecords 保留运行中与近期完成的请求；订阅者集合支持多个
+	// 管理窗口同时观察（此前单 channel 架构下新连接会踢掉旧连接）。
+	liveLogRecords = make(map[int64]liveLogRecord)
+	liveOverviewSubs = make(map[chan LiveLog]struct{})
+	liveDetailSubs   = make(map[int64]map[chan LiveAttempt]struct{})
 
 	liveAttemptMu sync.Mutex
 	liveAttempts  = make(map[int64]liveAttemptControl)
 )
 
 func isLiveFinished(state LiveRequestState) bool {
-	return state == LiveRequestSuccess || state == LiveRequestFailed || state == LiveRequestCanceled
+	return state == LiveRequestSuccess || state == LiveRequestFailed ||
+		state == LiveRequestCanceled || state == LiveRequestIndeterminate
 }
 
 // startLiveLog 创建一条 running 状态的实时日志并广播概览。
@@ -164,6 +167,8 @@ func liveLogOutcome(
 		state = LiveRequestSuccess
 	case model.RequestOutcomeClientCanceled:
 		state = LiveRequestCanceled
+	case model.RequestOutcomeIndeterminate:
+		state = LiveRequestIndeterminate
 	}
 	liveLogMu.Lock()
 	record, ok := liveLogRecords[id]
@@ -295,26 +300,25 @@ func clearLiveAttempt(id int64, index int) bool {
 	return true
 }
 
-// OpenLiveOverview 返回当前快照和后续更新通道。
+// OpenLiveOverview 返回当前快照和该订阅者专属的更新通道。
+// 多订阅者并存：每个连接持有独立 channel，互不干扰。
 func OpenLiveOverview() ([]LiveLog, chan LiveLog) {
 	liveLogMu.Lock()
 	defer liveLogMu.Unlock()
 
-	if liveOverviewCh != nil {
-		close(liveOverviewCh)
-	}
-	liveOverviewCh = make(chan LiveLog, liveOverviewBufferSize)
-	return liveOverviewSnapshotLocked(), liveOverviewCh
+	ch := make(chan LiveLog, liveOverviewBufferSize)
+	liveOverviewSubs[ch] = struct{}{}
+	return liveOverviewSnapshotLocked(), ch
 }
 
-// CloseLiveOverview 在指定通道仍是当前连接时关闭概览流。
+// CloseLiveOverview 注销并关闭指定订阅者通道；对未知或已注销通道幂等。
 func CloseLiveOverview(ch chan LiveLog) {
 	liveLogMu.Lock()
 	defer liveLogMu.Unlock()
 
-	if liveOverviewCh == ch {
-		close(liveOverviewCh)
-		liveOverviewCh = nil
+	if _, ok := liveOverviewSubs[ch]; ok {
+		delete(liveOverviewSubs, ch)
+		close(ch)
 	}
 }
 
@@ -327,26 +331,37 @@ func OpenLiveDetail(id int64) (chan LiveAttempt, bool) {
 	if !ok || isLiveFinished(record.State) {
 		return nil, false
 	}
-	if liveDetailCh != nil {
-		close(liveDetailCh)
+	ch := make(chan LiveAttempt, liveDetailBufferSize)
+	group, ok := liveDetailSubs[id]
+	if !ok {
+		group = make(map[chan LiveAttempt]struct{})
+		liveDetailSubs[id] = group
 	}
-	liveDetailRequestID = id
-	liveDetailCh = make(chan LiveAttempt, liveDetailBufferSize)
+	group[ch] = struct{}{}
 	if record.currentAttempt != nil {
-		liveDetailCh <- *record.currentAttempt
+		ch <- *record.currentAttempt
 	}
-	return liveDetailCh, true
+	return ch, true
 }
 
-// CloseLiveDetail 在指定通道仍是当前连接时关闭详情流。
-func CloseLiveDetail(ch chan LiveAttempt) {
+// CloseLiveDetail 注销指定请求详情流中的订阅者通道。
+// 必须带成员资格守卫：请求终结时 closeLiveDetailLocked 已关闭整个组，
+// handler 的 defer 再调用本函数时不得重复 close。
+func CloseLiveDetail(id int64, ch chan LiveAttempt) {
 	liveLogMu.Lock()
 	defer liveLogMu.Unlock()
 
-	if liveDetailCh == ch {
-		close(liveDetailCh)
-		liveDetailCh = nil
-		liveDetailRequestID = 0
+	group, ok := liveDetailSubs[id]
+	if !ok {
+		return
+	}
+	if _, member := group[ch]; !member {
+		return
+	}
+	delete(group, ch)
+	close(ch)
+	if len(group) == 0 {
+		delete(liveDetailSubs, id)
 	}
 }
 
@@ -379,41 +394,48 @@ func trimLiveRecordsLocked() {
 }
 
 func sendLiveOverviewLocked(message LiveLog) {
-	if liveOverviewCh == nil {
-		return
-	}
-	select {
-	case liveOverviewCh <- message:
-	default:
-		close(liveOverviewCh)
-		liveOverviewCh = nil
+	for ch := range liveOverviewSubs {
+		select {
+		case ch <- message:
+		default:
+			// 慢消费者踢出：先注销再 close（对其他订阅者无影响）；
+			// 其 SSE handler 读到 closed 即结束连接，前端退避重连取新快照。
+			delete(liveOverviewSubs, ch)
+			close(ch)
+		}
 	}
 }
 
 func sendLiveDetailLocked(id int64, update LiveAttempt) {
-	if liveDetailCh == nil || liveDetailRequestID != id {
+	group, ok := liveDetailSubs[id]
+	if !ok {
 		return
 	}
-	select {
-	case liveDetailCh <- update:
-	default:
-		// 拥塞时丢弃最旧更新，保留最新状态。
-		for {
-			select {
-			case <-liveDetailCh:
-				continue
-			default:
+	for ch := range group {
+		select {
+		case ch <- update:
+		default:
+			// 拥塞时丢弃该订阅者积压的最旧更新，保留最新状态。
+			for {
+				select {
+				case <-ch:
+					continue
+				default:
+				}
+				break
 			}
-			break
+			ch <- update
 		}
-		liveDetailCh <- update
 	}
 }
 
 func closeLiveDetailLocked(id int64) {
-	if liveDetailCh != nil && liveDetailRequestID == id {
-		close(liveDetailCh)
-		liveDetailCh = nil
-		liveDetailRequestID = 0
+	group, ok := liveDetailSubs[id]
+	if !ok {
+		return
+	}
+	delete(liveDetailSubs, id)
+	for ch := range group {
+		close(ch)
 	}
 }

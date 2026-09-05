@@ -43,7 +43,8 @@ func Start() error {
 
 	r.Use(gzip.Gzip(gzip.DefaultCompression,
 		gzip.WithExcludedPaths([]string{"/v1/"}),
-		gzip.WithExcludedPathsRegexs([]string{`/api/v1/log/stream`}),
+		// SSE 端点必须排除：gzip 缓冲会破坏事件流的逐条 Flush 语义。
+		gzip.WithExcludedPathsRegexs([]string{`/api/v1/log/.*/stream`}),
 	))
 
 	r.Use(middleware.Logger(middleware.LoggerConfig{
