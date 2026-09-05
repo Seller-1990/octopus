@@ -22,7 +22,15 @@ resolve_git_version() {
         printf '%s' "${exact_tag}"
         return
     fi
-    printf 'v1.1.0-dev+%s' "$(git rev-parse --short HEAD 2>/dev/null || echo 'unknown')"
+    # Dev 构建:基于最近 tag 的 patch 位 +1 派生,避免硬编码 fallback 落后于实际版本。
+    local last_tag next_version
+    if last_tag="$(git describe --tags --abbrev=0 2>/dev/null)" \
+        && [[ "${last_tag}" =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
+        next_version="v${BASH_REMATCH[1]}.${BASH_REMATCH[2]}.$((BASH_REMATCH[3] + 1))"
+        printf '%s-dev+%s' "${next_version}" "$(git rev-parse --short HEAD 2>/dev/null || echo 'unknown')"
+    else
+        printf 'dev+%s' "$(git rev-parse --short HEAD 2>/dev/null || echo 'unknown')"
+    fi
 }
 
 # Build metadata
