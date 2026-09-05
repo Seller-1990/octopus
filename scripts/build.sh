@@ -177,6 +177,23 @@ prepare_environment() {
 
     log_success "All required commands installed"
 
+    # Clean-tree guard: 未提交/未跟踪的代码混进构建产物是事故模式
+    # （2026-09-04 NAS 生产镜像混入未完成的 WIP 掩码功能），发布构建必须在
+    # 干净树上进行。SKIP_CLEAN_TREE_CHECK=1 可显式跳过（仅限本地调试构建）。
+    if [ "${SKIP_CLEAN_TREE_CHECK:-0}" != "1" ]; then
+        local dirty
+        dirty="$(git -C "${ROOT_DIR}" status --porcelain -- internal cmd main.go scripts web/src static go.mod go.sum 2>/dev/null || true)"
+        if [ -n "${dirty}" ]; then
+            log_error "Working tree has uncommitted changes; refusing to build."
+            log_error "Commit or stash them first, or set SKIP_CLEAN_TREE_CHECK=1 for local debug builds."
+            log_error "Dirty paths: $(echo "${dirty}" | head -5 | tr '\n' ' ')"
+            return 1
+        fi
+        log_success "Working tree is clean"
+    else
+        log_warning "Skipping clean-tree check (SKIP_CLEAN_TREE_CHECK=1)"
+    fi
+
     # Create output directory and subdirectories
     log_info "Creating output directory structure: ${OUTPUT_DIR}"
 
