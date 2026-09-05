@@ -88,20 +88,16 @@ func APIKeyAuth() gin.HandlerFunc {
 		}
 		if apiKeyObj.QuotaLimit > 0 {
 			now := time.Now()
-			if apiKeyObj.QuotaResetAt > 0 && now.Unix() >= apiKeyObj.QuotaResetAt {
-				if err := op.APIKeyResetQuota(c.Request.Context(), apiKeyObj.ID, apiKeyObj.QuotaPeriod, now); err != nil {
+			if apiKeyObj.QuotaResetAt == 0 || now.Unix() >= apiKeyObj.QuotaResetAt {
+				// 条件重置:op 层锁内重检到期快照,并发/管理员改动时不重复清零;
+				// 返回值是实际状态,不得假设「已重置且 used=0」。
+				current, err := op.APIKeyResetQuota(c.Request.Context(), apiKeyObj.ID, apiKeyObj.QuotaResetAt, now)
+				if err != nil {
 					resp.Error(c, http.StatusInternalServerError, err.Error())
 					c.Abort()
 					return
 				}
-				apiKeyObj.QuotaUsed = 0
-			} else if apiKeyObj.QuotaResetAt == 0 {
-				if err := op.APIKeyResetQuota(c.Request.Context(), apiKeyObj.ID, apiKeyObj.QuotaPeriod, now); err != nil {
-					resp.Error(c, http.StatusInternalServerError, err.Error())
-					c.Abort()
-					return
-				}
-				apiKeyObj.QuotaUsed = 0
+				apiKeyObj.QuotaUsed = current.QuotaUsed
 			}
 			if apiKeyObj.QuotaUsed >= apiKeyObj.QuotaLimit {
 				c.JSON(http.StatusTooManyRequests, gin.H{

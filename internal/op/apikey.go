@@ -194,27 +194,39 @@ func computeNextQuotaReset(period string, now time.Time) int64 {
 	}
 }
 
-func APIKeyResetQuota(ctx context.Context, id int, period string, now time.Time) error {
-	period, err := normalizeAPIKeyQuotaPeriod(period)
-	if err != nil {
-		return err
-	}
-	nextReset := computeNextQuotaReset(period, now)
+// APIKeyResetQuota 条件重置 API key 配额:锁内重读 DB 当前状态,仅当
+// reset_at 仍等于调用方所见快照(seenResetAt)时才真正重置;不匹配说明
+// 周期已被并发请求推进或被管理员修改,此时放弃重置(幂等),也不再让
+// 调用方携带的旧周期参数覆盖当前设置——周期一律取锁内 DB 当前值。
+// 无论是否重置,都返回重检后的实际状态,调用方不得假设「已重置且 used=0」。
+func APIKeyResetQuota(ctx context.Context, id int, seenResetAt int64, now time.Time) (model.APIKey, error) {
+	var current model.APIKey
 	unlock := lockAPIKeyQuota(id)
 	defer unlock()
-	if err := db.GetDB().WithContext(ctx).Model(&model.APIKey{}).Where("id = ?", id).Updates(map[string]interface{}{
-		"quota_used":     0,
-		"quota_reset_at": nextReset,
-		"quota_period":   period,
-	}).Error; err != nil {
-		return fmt.Errorf("failed to reset API key quota: %w", err)
+	if err := db.GetDB().WithContext(ctx).First(&current, id).Error; err != nil {
+		return current, fmt.Errorf("failed to load API key for quota reset: %w", err)
 	}
-	if key, ok := apiKeyCache.Get(id); ok {
-		key.QuotaUsed = 0
-		key.QuotaResetAt = nextReset
-		apiKeyCache.Set(id, key)
+	if current.QuotaResetAt == seenResetAt {
+		period, err := normalizeAPIKeyQuotaPeriod(current.QuotaPeriod)
+		if err != nil {
+			return current, err
+		}
+		nextReset := computeNextQuotaReset(period, now)
+		if err := db.GetDB().WithContext(ctx).Model(&model.APIKey{}).Where("id = ?", id).Updates(map[string]interface{}{
+			"quota_used":     0,
+			"quota_reset_at": nextReset,
+			"quota_period":   period,
+		}).Error; err != nil {
+			return current, fmt.Errorf("failed to reset API key quota: %w", err)
+		}
+		current.QuotaUsed = 0
+		current.QuotaResetAt = nextReset
+		current.QuotaPeriod = period
 	}
-	return nil
+	if _, ok := apiKeyCache.Get(id); ok {
+		apiKeyCache.Set(id, current)
+	}
+	return current, nil
 }
 
 func APIKeyIncrementQuotaUsed(ctx context.Context, id int, cost float64) error {
