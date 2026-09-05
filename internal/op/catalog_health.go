@@ -103,6 +103,13 @@ func RouteCandidateHealthRefresh(
 		}
 		updated += result.RowsAffected
 	}
+	// 热路径只读 catalog 缓存，健康度翻转（Active↔Degraded）必须回写缓存，
+	// 否则 routeCandidateScore 的降级罚分在下次 CatalogSync 前不生效
+	if updated > 0 {
+		if err := catalogRefreshCache(ctx); err != nil {
+			return updated, err
+		}
+	}
 	return updated, nil
 }
 
@@ -110,7 +117,7 @@ func CatalogRouteCandidatesMarkStaleByAccount(ctx context.Context, accountID int
 	if accountID <= 0 {
 		return nil
 	}
-	return db.GetDB().WithContext(ctx).
+	result := db.GetDB().WithContext(ctx).
 		Model(&model.RouteCandidate{}).
 		Where(
 			"site_account_id = ? AND manual = ? AND status IN ?",
@@ -121,5 +128,12 @@ func CatalogRouteCandidatesMarkStaleByAccount(ctx context.Context, accountID int
 				model.RouteCandidateDegraded,
 			},
 		).
-		Update("status", model.RouteCandidateStale).Error
+		Update("status", model.RouteCandidateStale)
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected > 0 {
+		return catalogRefreshCache(ctx)
+	}
+	return nil
 }
