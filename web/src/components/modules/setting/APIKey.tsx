@@ -23,6 +23,7 @@ import {
     useCreateAPIKey,
     useUpdateAPIKey,
     useDeleteAPIKey,
+    revealAPIKey,
     type APIKey,
 } from '@/api/endpoints/apikey';
 import { useGroupList } from '@/api/endpoints/group';
@@ -722,7 +723,9 @@ function APIKeyKeyItem({
                     )}
                 </div>
                 <code className="block truncate text-xs text-muted-foreground">
-                    {apiKey.api_key.slice(0, 12)}...{apiKey.api_key.slice(-4)}
+                    {apiKey.api_key.includes('****')
+                        ? apiKey.api_key
+                        : `${apiKey.api_key.slice(0, 12)}...${apiKey.api_key.slice(-4)}`}
                 </code>
                 <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
                     <span>{t('apiKey.stats.totalCost')}: {stats ? `${stats.total_cost.formatted.value}${stats.total_cost.formatted.unit}` : '-'}</span>
@@ -775,6 +778,7 @@ function APIKeyKeyItem({
                 )}
                 <CopyIconButton
                     text={apiKey.api_key}
+                    getText={() => revealAPIKey(apiKey.id)}
                     className="flex size-8 items-center justify-center rounded-lg bg-primary/10 text-primary transition-all hover:bg-primary hover:text-primary-foreground active:scale-95"
                     copyIconClassName="size-4"
                     checkIconClassName="size-4"

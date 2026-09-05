@@ -70,6 +70,10 @@ func exportExtendedLogTables(conn *gorm.DB, dump *model.DBDump) error {
 	return nil
 }
 
+// sanitizeSiteAccountsForBackup 清理会话态（cookie、验证桥会话），凭证字段
+// （password/access_token/api_key/refresh_token）必须保留：备份的核心价值是
+// 完整恢复，清掉凭证会让恢复后所有站点掉线、同步与签到全部失效。
+// 备份文件的访问控制依赖导出端点的 JWT 认证与导出审计日志。
 func sanitizeSiteAccountsForBackup(accounts []model.SiteAccount) {
 	for index := range accounts {
 		account := &accounts[index]
@@ -77,6 +81,7 @@ func sanitizeSiteAccountsForBackup(accounts []model.SiteAccount) {
 			account.AccessToken = ""
 		}
 		account.SessionCookieEncrypted = ""
+		account.CFCookieEncrypted = ""
 		account.VerificationCookieEncrypted = ""
 		account.VerificationSessionFenceID = 0
 		account.VerificationUserAgent = ""

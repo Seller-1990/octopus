@@ -240,7 +240,7 @@ build_frontend() {
 
     # Install dependencies
     log_info "Installing frontend dependencies..."
-    if ! pnpm install; then
+    if ! pnpm install --frozen-lockfile; then
         log_error "Failed to install frontend dependencies"
         cd ..
         return 1

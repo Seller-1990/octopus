@@ -55,7 +55,8 @@ func init() {
 func getSettingList(c *gin.Context) {
 	settings, err := op.SettingList(c.Request.Context())
 	if err != nil {
-		resp.Error(c, http.StatusInternalServerError, err.Error())
+		log.Errorf("failed to get setting list: %v", err)
+		resp.InternalError(c)
 		return
 	}
 	resp.Success(c, settings)
@@ -76,12 +77,14 @@ func setSetting(c *gin.Context) {
 		return
 	}
 	if err := op.SettingSetString(setting.Key, setting.Value); err != nil {
-		resp.Error(c, http.StatusInternalServerError, err.Error())
+		log.Errorf("failed to set setting %s: %v", setting.Key, err)
+		resp.InternalError(c)
 		return
 	}
 	if setting.Key == model.SettingKeyDefaultMultiplierCap {
 		if _, _, err := op.EnforceMultiplierCap(c.Request.Context()); err != nil {
-			resp.Error(c, http.StatusInternalServerError, err.Error())
+			log.Errorf("failed to enforce multiplier cap: %v", err)
+			resp.InternalError(c)
 			return
 		}
 	}
@@ -94,7 +97,8 @@ func setSetting(c *gin.Context) {
 		model.SettingKeyOutlierRetireInterval,
 		model.SettingKeyWebDAVBackupInterval:
 		if err := task.UpdateSettingInterval(setting.Key, setting.Value); err != nil {
-			resp.Error(c, http.StatusInternalServerError, err.Error())
+			log.Errorf("failed to update setting interval for %s: %v", setting.Key, err)
+			resp.InternalError(c)
 			return
 		}
 	case model.SettingKeyProjectedChannelAutoGroupEnabled:
@@ -129,6 +133,9 @@ func exportDB(c *gin.Context) {
 		resp.Error(c, http.StatusBadRequest, err.Error())
 		return
 	}
+	// 备份包含全部站点凭证，导出行为必须留痕
+	log.Warnf("SECURITY AUDIT: database backup exported from IP %s (format=%s, include_logs=%t, include_stats=%t)",
+		c.ClientIP(), format, includeLogs, includeStats)
 
 	if format == "zip" {
 		filename := "octopus-export-" + time.Now().Format("20060102150405") + ".zip"
@@ -151,7 +158,8 @@ func exportDB(c *gin.Context) {
 
 	dump, err := op.DBExportAll(c.Request.Context(), includeLogs, includeStats)
 	if err != nil {
-		resp.Error(c, http.StatusInternalServerError, err.Error())
+		log.Errorf("failed to export database: %v", err)
+		resp.InternalError(c)
 		return
 	}
 
@@ -174,6 +182,9 @@ func importDB(c *gin.Context) {
 	var dump model.DBDump
 	var result *model.DBImportResult
 	var importErr error
+
+	// 导入会全量覆盖数据库（含全部凭证与配置），必须留痕
+	log.Warnf("SECURITY AUDIT: database import triggered from IP %s", c.ClientIP())
 
 	// F07：restore 真正执行 import 前丢弃进程内 transient 状态（relay log / usage facts pending）——
 	// 否则旧队列会在备份覆盖后以新库 ID 回灌备份时点之后的事件。

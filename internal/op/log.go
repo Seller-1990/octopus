@@ -41,8 +41,16 @@ var relayLogFlushSignal = make(chan struct{}, 1)
 var relayLogSubscribers = make(map[chan model.RelayLog]struct{})
 var relayLogSubscribersLock sync.RWMutex
 
-var relayLogStreamTokens = make(map[string]struct{})
-var relayLogStreamTokensLock sync.RWMutex
+// streamTokenTTL 限制未消费 token 的存活期：token 走 query string，可能留痕于
+// 反代访问日志与浏览器历史，过期自毁避免被事后重放。
+const streamTokenTTL = 60 * time.Second
+
+type relayLogStreamToken struct {
+	createdAt time.Time
+}
+
+var relayLogStreamTokens = make(map[string]relayLogStreamToken)
+var relayLogStreamTokensLock sync.Mutex
 
 func RelayLogStreamTokenCreate() (string, error) {
 	bytes := make([]byte, 32)
@@ -52,23 +60,31 @@ func RelayLogStreamTokenCreate() (string, error) {
 	token := hex.EncodeToString(bytes)
 
 	relayLogStreamTokensLock.Lock()
-	relayLogStreamTokens[token] = struct{}{}
+	relayLogStreamTokens[token] = relayLogStreamToken{createdAt: time.Now()}
+	// 顺带清理过期未消费的 token，防止 map 无界增长
+	now := time.Now()
+	for key, entry := range relayLogStreamTokens {
+		if now.Sub(entry.createdAt) > streamTokenTTL {
+			delete(relayLogStreamTokens, key)
+		}
+	}
 	relayLogStreamTokensLock.Unlock()
 
 	return token, nil
 }
 
-func RelayLogStreamTokenVerify(token string) bool {
-	relayLogStreamTokensLock.RLock()
-	_, ok := relayLogStreamTokens[token]
-	relayLogStreamTokensLock.RUnlock()
-	return ok
-}
-
-func RelayLogStreamTokenRevoke(token string) {
+// RelayLogStreamTokenConsume 原子地校验并吊销一次性 stream token。
+// Verify 与 Revoke 必须在同一次加锁内完成，否则并发双连可同时通过校验，
+// 一次性承诺在竞态下失效。
+func RelayLogStreamTokenConsume(token string) bool {
 	relayLogStreamTokensLock.Lock()
+	defer relayLogStreamTokensLock.Unlock()
+	entry, ok := relayLogStreamTokens[token]
+	if !ok {
+		return false
+	}
 	delete(relayLogStreamTokens, token)
-	relayLogStreamTokensLock.Unlock()
+	return time.Since(entry.createdAt) <= streamTokenTTL
 }
 
 func RelayLogSubscribe() chan model.RelayLog {

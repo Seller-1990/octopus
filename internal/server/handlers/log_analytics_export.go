@@ -3,7 +3,6 @@ package handlers
 import (
 	"encoding/csv"
 	"io"
-	"net/http"
 	"strconv"
 	"strings"
 	"time"
@@ -57,7 +56,8 @@ func getUsageAnalyticsExport(c *gin.Context) {
 		options.descending,
 	)
 	if err != nil {
-		resp.Error(c, http.StatusInternalServerError, err.Error())
+		log.Errorf("failed in getUsageAnalyticsExport: %v", err)
+		resp.InternalError(c)
 		return
 	}
 
@@ -85,7 +85,8 @@ func getUsageAnalyticsExport(c *gin.Context) {
 		if writer.bytesWritten == 0 {
 			c.Header("Content-Type", "application/json")
 			c.Header("Content-Disposition", "")
-			resp.Error(c, http.StatusInternalServerError, err.Error())
+			log.Errorf("failed in operation: %v", err)
+			resp.InternalError(c)
 			return
 		}
 		log.Warnf("usage analytics CSV export failed mid-stream: %v", err)

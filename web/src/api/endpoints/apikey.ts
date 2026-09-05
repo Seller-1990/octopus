@@ -99,6 +99,15 @@ export type CreateAPIKeyRequest = Omit<APIKey, 'id' | 'api_key'> & { enabled?: b
 export type UpdateAPIKeyRequest = Pick<APIKey, 'id'> & CreateAPIKeyRequest;
 
 /**
+ * 获取完整 API Key 明文。
+ * 列表接口只返回掩码值（防 JWT 泄露时凭证直接暴露），
+ * 复制等需要明文的场景按需调用本接口。
+ */
+export async function revealAPIKey(id: number): Promise<string> {
+    return apiClient.get<string>(`/api/v1/apikey/reveal/${id}`);
+}
+
+/**
  * 获取 API Key 列表 Hook
  * 
  * @example

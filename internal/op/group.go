@@ -238,6 +238,11 @@ func GroupUpdate(req *model.GroupUpdateRequest, ctx context.Context) (*model.Gro
 	if err := groupRefreshCacheByID(req.ID, ctx); err != nil {
 		return nil, err
 	}
+	// 事务内 ensureRouteCandidatesForGroupTx 变更了 route_candidates，
+	// 热路径 CatalogPlanGroup 只读 catalog 缓存，必须一起刷新
+	if err := catalogRefreshCache(ctx); err != nil {
+		return nil, err
+	}
 
 	group, _ := groupCache.Get(req.ID)
 	if oldName != "" && oldName != group.Name {
@@ -326,6 +331,10 @@ func GroupDel(id int, ctx context.Context) error {
 	for _, item := range group.Items {
 		resetBalancerStateForChannel(item.ChannelID)
 	}
+	// 退役路由候选后同步刷新 catalog 缓存
+	if err := catalogRefreshCache(ctx); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -344,6 +353,9 @@ func GroupItemAdd(item *model.GroupItem, ctx context.Context) error {
 	}
 
 	if err := groupRefreshCacheByID(item.GroupID, ctx); err != nil {
+		return err
+	}
+	if err := catalogRefreshCache(ctx); err != nil {
 		return err
 	}
 	resetBalancerStateForChannel(item.ChannelID)
@@ -413,6 +425,9 @@ func GroupItemBatchAdd(groupID int, items []model.GroupIDAndLLMName, ctx context
 	if err := groupRefreshCacheByID(groupID, ctx); err != nil {
 		return err
 	}
+	if err := catalogRefreshCache(ctx); err != nil {
+		return err
+	}
 	channelIDs := make([]int, 0, len(uniq))
 	for _, item := range uniq {
 		channelIDs = append(channelIDs, item.ChannelID)
@@ -449,6 +464,9 @@ func GroupItemUpdate(item *model.GroupItem, ctx context.Context) error {
 	if err := groupRefreshCacheByID(item.GroupID, ctx); err != nil {
 		return err
 	}
+	if err := catalogRefreshCache(ctx); err != nil {
+		return err
+	}
 	resetBalancerStateForChannel(item.ChannelID)
 	return nil
 }
@@ -468,6 +486,9 @@ func GroupItemDel(id int, ctx context.Context) error {
 	}
 
 	if err := groupRefreshCacheByID(item.GroupID, ctx); err != nil {
+		return err
+	}
+	if err := catalogRefreshCache(ctx); err != nil {
 		return err
 	}
 	resetBalancerStateForChannel(item.ChannelID)
@@ -517,6 +538,9 @@ func GroupItemBatchDelByChannelAndModels(keys []model.GroupIDAndLLMName, ctx con
 	if err := groupRefreshCacheByIDs(groupIDs, ctx); err != nil {
 		return fmt.Errorf("failed to refresh group cache: %w", err)
 	}
+	if err := catalogRefreshCache(ctx); err != nil {
+		return fmt.Errorf("failed to refresh catalog cache: %w", err)
+	}
 
 	channelIDs := make([]int, 0, len(keys))
 	for _, key := range keys {
@@ -560,6 +584,10 @@ func groupRefreshCache(ctx context.Context) error {
 		Find(&groups).Error; err != nil {
 		return err
 	}
+	// 全量重填前先清空：外部改库/备份恢复删除分组后，残留的旧 name→items
+	// 会继续命中路由（F19）。对照 apiKeyRefreshCache 的 Clear 语义。
+	groupCache.Clear()
+	groupMap.Clear()
 	for _, group := range groups {
 		groupCache.Set(group.ID, group)
 		groupMap.Set(group.Name, group)

@@ -27,9 +27,9 @@ func UsageMaintenanceTask() {
 		}
 	}
 	for batch := 0; batch < 100; batch++ {
-		count, err := op.UsageAggregatePending(ctx, 1000)
+		count, err := aggregateBatchWithRetry(ctx)
 		if err != nil {
-			log.Warnf("usage aggregate update failed: %v", err)
+			log.Warnf("usage aggregate update failed after retries: %v", err)
 			return
 		}
 		if count == 0 {
@@ -57,4 +57,28 @@ func UsageMaintenanceTask() {
 	} else if updated > 0 {
 		log.Debugf("route candidate health refresh updated %d candidates", updated)
 	}
+}
+
+// aggregateBatchWithRetry 对单批 usage 聚合做有界重试。
+// SQLite 单写者下偶发的写锁竞争（database is locked）会让整批事务回滚；
+// 该事务内部已保证失败零副作用（claim 与 persist 同事务），重试即可，
+// 无需人工干预。退避 2s/4s，总上限受任务 ctx（5 分钟）约束。
+func aggregateBatchWithRetry(ctx context.Context) (int, error) {
+	var lastErr error
+	for attempt := 1; attempt <= 3; attempt++ {
+		if attempt > 1 {
+			select {
+			case <-time.After(time.Duration(1<<(attempt-1)) * 2 * time.Second):
+			case <-ctx.Done():
+				return 0, ctx.Err()
+			}
+		}
+		count, err := op.UsageAggregatePending(ctx, 1000)
+		if err == nil {
+			return count, nil
+		}
+		lastErr = err
+		log.Warnf("usage aggregate update failed (attempt %d/3): %v", attempt, err)
+	}
+	return 0, lastErr
 }

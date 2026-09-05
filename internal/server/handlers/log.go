@@ -14,6 +14,7 @@ import (
 	"github.com/bestruirui/octopus/internal/server/middleware"
 	"github.com/bestruirui/octopus/internal/server/resp"
 	"github.com/bestruirui/octopus/internal/server/router"
+	"github.com/bestruirui/octopus/internal/utils/log"
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 )
@@ -54,6 +55,9 @@ func init() {
 				Handle(stopAttempt),
 		)
 
+	// SSE 端点不能挂 middleware.Auth()：浏览器 EventSource 无法携带
+	// Authorization header。认证由一次性 stream token 承担 —— token 经
+	// 上方受 JWT 保护的 /stream-token 端点签发，连接时校验并立即吊销。
 	router.NewGroupRouter("/api/v1/log").
 		AddRoute(
 			router.NewRoute("/stream", http.MethodGet).
@@ -77,7 +81,8 @@ func previewRelayLogRepair(c *gin.Context) {
 	}
 	result, err := op.RelayLogRepairPreviewRun(c.Request.Context(), filter)
 	if err != nil {
-		resp.Error(c, http.StatusInternalServerError, err.Error())
+		log.Errorf("failed to relay log repair preview run: %v", err)
+		resp.InternalError(c)
 		return
 	}
 	resp.Success(c, result)
@@ -98,7 +103,8 @@ func executeRelayLogRepair(c *gin.Context) {
 	}
 	result, err := op.RelayLogRepairExecute(c.Request.Context(), request.RelayLogRepairFilter)
 	if err != nil {
-		resp.Error(c, http.StatusInternalServerError, err.Error())
+		log.Errorf("failed to relay log repair execute: %v", err)
+		resp.InternalError(c)
 		return
 	}
 	resp.Success(c, result)
@@ -255,7 +261,8 @@ func listLog(c *gin.Context) {
 			resp.Error(c, http.StatusBadRequest, fe.Message)
 			return
 		}
-		resp.Error(c, http.StatusInternalServerError, err.Error())
+		log.Errorf("failed in operation: %v", err)
+		resp.InternalError(c)
 		return
 	}
 
@@ -311,7 +318,8 @@ func getLogSiteActionTargets(c *gin.Context) {
 	}
 	data, err := op.RelayLogSiteActionTargets(c.Request.Context(), ids)
 	if err != nil {
-		resp.Error(c, http.StatusInternalServerError, err.Error())
+		log.Errorf("failed to relay log site action targets: %v", err)
+		resp.InternalError(c)
 		return
 	}
 	resp.Success(c, data)
@@ -329,7 +337,8 @@ func getLog(c *gin.Context) {
 			resp.NotFound(c)
 			return
 		}
-		resp.Error(c, http.StatusInternalServerError, err.Error())
+		log.Errorf("failed in getLog: %v", err)
+		resp.InternalError(c)
 		return
 	}
 	resp.Success(c, logItem)
@@ -337,7 +346,8 @@ func getLog(c *gin.Context) {
 
 func clearLog(c *gin.Context) {
 	if err := op.RelayLogClear(c.Request.Context()); err != nil {
-		resp.Error(c, http.StatusInternalServerError, err.Error())
+		log.Errorf("failed to relay log clear: %v", err)
+		resp.InternalError(c)
 		return
 	}
 	resp.Success(c, nil)
@@ -346,20 +356,17 @@ func clearLog(c *gin.Context) {
 func getStreamToken(c *gin.Context) {
 	token, err := op.RelayLogStreamTokenCreate()
 	if err != nil {
-		resp.Error(c, http.StatusInternalServerError, err.Error())
+		log.Errorf("failed to relay log stream token create: %v", err)
+		resp.InternalError(c)
 		return
 	}
 	resp.Success(c, gin.H{"token": token})
 }
 
 func streamLog(c *gin.Context) {
-	token := c.Query("token")
-	if token == "" || !op.RelayLogStreamTokenVerify(token) {
-		resp.Error(c, http.StatusUnauthorized, "invalid stream token")
+	if !requireLogStreamToken(c) {
 		return
 	}
-
-	op.RelayLogStreamTokenRevoke(token)
 
 	c.Header("Content-Type", "text/event-stream")
 	c.Header("Cache-Control", "no-cache")
@@ -391,11 +398,11 @@ func streamLog(c *gin.Context) {
 
 func requireLogStreamToken(c *gin.Context) bool {
 	token := c.Query("token")
-	if token == "" || !op.RelayLogStreamTokenVerify(token) {
+	// 原子校验并吊销：并发双连同一 token 只有一个能通过
+	if token == "" || !op.RelayLogStreamTokenConsume(token) {
 		resp.Error(c, http.StatusUnauthorized, "invalid stream token")
 		return false
 	}
-	op.RelayLogStreamTokenRevoke(token)
 	return true
 }
 

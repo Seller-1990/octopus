@@ -571,6 +571,11 @@ func channelDel(id int, ctx context.Context, bypassManagedCheck bool) error {
 		}
 	}
 
+	// 事务内归档了该渠道的路由候选，热路径只读 catalog 缓存，需同步刷新
+	if err := catalogRefreshCache(ctx); err != nil {
+		log.Warnf("failed to refresh catalog cache after channel %d delete: %v", id, err)
+	}
+
 	return nil
 }
 

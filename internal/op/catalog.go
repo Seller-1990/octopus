@@ -23,6 +23,9 @@ var (
 	canonicalByNormalized = map[string]model.CanonicalModel{}
 	aliasToCanonical      = map[string]int{}
 	canonicalByID         = map[int]model.CanonicalModel{}
+	// routeCandidatesByCanonicalID caches route candidates by canonical model ID
+	// to avoid N+1 queries in the hot path (CatalogPlanGroup)
+	routeCandidatesByCanonicalID = map[int][]model.RouteCandidate{}
 )
 
 func NormalizeModelIdentity(value string) string {
@@ -84,6 +87,10 @@ func catalogRefreshCache(ctx context.Context) error {
 	if err := db.GetDB().WithContext(ctx).Find(&aliases).Error; err != nil {
 		return err
 	}
+	var candidates []model.RouteCandidate
+	if err := db.GetDB().WithContext(ctx).Find(&candidates).Error; err != nil {
+		return err
+	}
 
 	byNormalized := make(map[string]model.CanonicalModel, len(canonicals))
 	byID := make(map[int]model.CanonicalModel, len(canonicals))
@@ -95,11 +102,19 @@ func catalogRefreshCache(ctx context.Context) error {
 	for _, item := range aliases {
 		aliasMap[item.NormalizedAlias] = item.CanonicalModelID
 	}
+	candidatesByCanonical := make(map[int][]model.RouteCandidate)
+	for _, candidate := range candidates {
+		candidatesByCanonical[candidate.CanonicalModelID] = append(
+			candidatesByCanonical[candidate.CanonicalModelID],
+			candidate,
+		)
+	}
 
 	catalogCacheMu.Lock()
 	canonicalByNormalized = byNormalized
 	canonicalByID = byID
 	aliasToCanonical = aliasMap
+	routeCandidatesByCanonicalID = candidatesByCanonical
 	catalogCacheMu.Unlock()
 	return nil
 }
@@ -928,6 +943,10 @@ func CatalogRouteCandidateUpdate(ctx context.Context, request model.RouteCandida
 	if err := db.GetDB().WithContext(ctx).Model(&model.RouteCandidate{}).Where("id = ?", request.ID).Updates(updates).Error; err != nil {
 		return nil, err
 	}
+	// 热路径读 routeCandidatesByCanonicalID 缓存，写后必须刷新
+	if err := catalogRefreshCache(ctx); err != nil {
+		return nil, err
+	}
 	var saved model.RouteCandidate
 	if err := db.GetDB().WithContext(ctx).First(&saved, request.ID).Error; err != nil {
 		return nil, err
@@ -952,49 +971,63 @@ func CatalogCandidateFor(ctx context.Context, canonicalModelID, channelID int, u
 // siteReserveTierByChannel 返回 channel_id -> 备用层标志（1=中转/备用，0=公益）。
 // 中转渠道排在同协议公益渠道之后，作为 Failover 降级目标。
 // 优先使用渠道自身的 is_reserve（普通渠道也可标记中转）；对老数据回退到站点绑定。
+// siteReserveTierByChannel 返回 channel_id -> 备用层标记（1=中转/备用，0=公益）。
+// 渠道级 is_reserve 直接读 channelCache（model.Channel.IsReserve，内存），
+// 不再每请求回表 SELECT channels（F01）；站点级备用（渠道绑定的站点为
+// 备用站）走 bindings TTL 缓存缩小范围后，仅对"有绑定且渠道本身非备用"
+// 的渠道查 sites.is_reserve——纯渠道（无 sitesync）部署热路径零查询。
 func siteReserveTierByChannel(ctx context.Context, items []model.GroupItem) map[int]int {
 	result := make(map[int]int, len(items))
 	channelIDs := distinctChannelIDs(items)
 	if len(channelIDs) == 0 {
 		return result
 	}
-	var channelRows []struct {
-		ID        int  `gorm:"column:id"`
-		IsReserve bool `gorm:"column:is_reserve"`
+	needSiteCheck := make([]int, 0, len(channelIDs))
+	for _, channelID := range channelIDs {
+		if ch, ok := channelCache.Get(channelID); ok && ch.IsReserve {
+			result[channelID] = 1
+		} else {
+			needSiteCheck = append(needSiteCheck, channelID)
+		}
+	}
+	if len(needSiteCheck) == 0 {
+		return result
+	}
+
+	bindings, err := SiteChannelBindingMapByChannelIDs(needSiteCheck, ctx)
+	if err != nil {
+		// 与旧实现的 DB 错误路径一致：查不到即按非备用处理
+		return result
+	}
+	siteIDs := make([]int, 0, len(bindings))
+	seenSite := make(map[int]struct{}, len(bindings))
+	for _, binding := range bindings {
+		if _, ok := seenSite[binding.SiteID]; ok {
+			continue
+		}
+		seenSite[binding.SiteID] = struct{}{}
+		siteIDs = append(siteIDs, binding.SiteID)
+	}
+	if len(siteIDs) == 0 {
+		return result
+	}
+	var reserveSiteRows []struct {
+		ID int `gorm:"column:id"`
 	}
 	if err := db.GetDB().WithContext(ctx).
-		Table("channels").
-		Select("id, is_reserve").
-		Where("id IN ?", channelIDs).
-		Scan(&channelRows).Error; err == nil {
-		for _, row := range channelRows {
-			if row.IsReserve {
-				result[row.ID] = 1
-			}
-		}
+		Table("sites").
+		Select("id").
+		Where("id IN ? AND is_reserve = ?", siteIDs, true).
+		Scan(&reserveSiteRows).Error; err != nil {
+		return result
 	}
-	missing := make([]int, 0, len(channelIDs))
-	for _, channelID := range channelIDs {
-		if result[channelID] != 1 {
-			missing = append(missing, channelID)
-		}
+	reserveSiteSet := make(map[int]struct{}, len(reserveSiteRows))
+	for _, row := range reserveSiteRows {
+		reserveSiteSet[row.ID] = struct{}{}
 	}
-	if len(missing) > 0 {
-		var rows []struct {
-			ChannelID int  `gorm:"column:channel_id"`
-			IsReserve bool `gorm:"column:is_reserve"`
-		}
-		if err := db.GetDB().WithContext(ctx).
-			Table("site_channel_bindings AS b").
-			Select("b.channel_id AS channel_id, s.is_reserve AS is_reserve").
-			Joins("JOIN sites AS s ON s.id = b.site_id").
-			Where("b.channel_id IN ?", missing).
-			Scan(&rows).Error; err == nil {
-			for _, row := range rows {
-				if row.IsReserve {
-					result[row.ChannelID] = 1
-				}
-			}
+	for channelID, binding := range bindings {
+		if _, ok := reserveSiteSet[binding.SiteID]; ok {
+			result[channelID] = 1
 		}
 	}
 	return result
@@ -1129,6 +1162,20 @@ func pickBestPriceQuote(quotes []model.SiteModelPriceQuote, candidate model.Rout
 	return &eligible[0]
 }
 
+// groupItemsAlreadyMultiplied 判断 items 是否已带倍率策略求值标记：
+// applyGroupItemMultiplierPolicies 对所有条目无条件写 MultiplierKnown。
+func groupItemsAlreadyMultiplied(items []model.GroupItem) bool {
+	if len(items) == 0 {
+		return true
+	}
+	for i := range items {
+		if items[i].MultiplierKnown == nil {
+			return false
+		}
+	}
+	return true
+}
+
 func CatalogPlanGroup(
 	ctx context.Context,
 	requestedModel string,
@@ -1136,7 +1183,13 @@ func CatalogPlanGroup(
 	group model.Group,
 ) (model.Group, model.RoutePreview, *model.CanonicalModel, error) {
 	requirements.Features = normalizeProtocolFeatures(requirements.Features)
-	group.Items = applyGroupItemMultiplierPolicies(ctx, group.Items)
+	// 调用方（GroupGetEnabledMap 系 / relay / compact / ws_client）取分组时
+	// 已求值一次倍率策略；items 带 MultiplierKnown 标记即跳过二次求值，
+	// 消除每请求重复的 site_user_group/bindings 查询（F01）。
+	// 未求值的直连调用方自动落入求值分支，行为不变。
+	if !groupItemsAlreadyMultiplied(group.Items) {
+		group.Items = applyGroupItemMultiplierPolicies(ctx, group.Items)
+	}
 	preview := model.RoutePreview{
 		RequestedModel:  requestedModel,
 		CanonicalModel:  group.Name,
@@ -1171,9 +1224,15 @@ func CatalogPlanGroup(
 
 	var candidates []model.RouteCandidate
 	if canonical != nil {
-		if err := db.GetDB().WithContext(ctx).Where("canonical_model_id = ?", canonical.ID).Find(&candidates).Error; err != nil {
-			return group, preview, canonical, err
+		// Use cached route candidates to avoid N+1 queries in hot path
+		catalogCacheMu.RLock()
+		cached := routeCandidatesByCanonicalID[canonical.ID]
+		// Return a copy to prevent callers from modifying the cache
+		if len(cached) > 0 {
+			candidates = make([]model.RouteCandidate, len(cached))
+			copy(candidates, cached)
 		}
+		catalogCacheMu.RUnlock()
 	}
 	candidateByKey := make(map[string]model.RouteCandidate, len(candidates))
 	candidateIDs := make([]int, 0, len(candidates))
@@ -1181,9 +1240,17 @@ func CatalogPlanGroup(
 		candidateByKey[routeCandidateKey(candidate.ChannelID, candidate.UpstreamModelName)] = candidate
 		candidateIDs = append(candidateIDs, candidate.ID)
 	}
-	candidatePerformance, err := routeCandidatePerformanceMap(ctx, candidateIDs, time.Now())
-	if err != nil {
-		return group, preview, canonical, err
+	// Manual 策略的排序只比较 candidatePriority（不消费 score），24h 表现
+	// 聚合与其支撑索引扫描属纯死工作，整块跳过（F01）。其余策略照常。
+	var candidatePerformance map[int]routeCandidatePerformance
+	if strategy != model.RoutingStrategyManual {
+		perf, perfErr := routeCandidatePerformanceMap(ctx, candidateIDs, time.Now())
+		if perfErr != nil {
+			return group, preview, canonical, perfErr
+		}
+		candidatePerformance = perf
+	} else {
+		candidatePerformance = map[int]routeCandidatePerformance{}
 	}
 
 	type scoredItem struct {
@@ -1439,6 +1506,20 @@ func protocolPreferenceRank(assessment protocolRouteAssessment) int {
 	return 0
 }
 
+// strategyUsesPriceQuote 报告该策略是否消费价格报价：
+// lowest-cost 与 balanced/其余默认直接使用 priceValue；reliability /
+// lowest-latency / manual 的排序不读价格，跳过查询（F01）。
+func strategyUsesPriceQuote(strategy model.RoutingStrategy) bool {
+	switch strategy {
+	case model.RoutingStrategyManual,
+		model.RoutingStrategyReliability,
+		model.RoutingStrategyLowestLatency:
+		return false
+	default:
+		return true
+	}
+}
+
 func routeCandidateScore(
 	ctx context.Context,
 	strategy model.RoutingStrategy,
@@ -1456,7 +1537,7 @@ func routeCandidateScore(
 		}
 	}
 	priceValue := math.Inf(1)
-	if candidate.ID > 0 {
+	if candidate.ID > 0 && strategyUsesPriceQuote(strategy) {
 		if effective, err := EffectivePriceForCandidate(
 			ctx,
 			candidate.ID,

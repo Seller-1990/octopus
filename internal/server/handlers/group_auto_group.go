@@ -8,6 +8,7 @@ import (
 	"github.com/bestruirui/octopus/internal/server/middleware"
 	"github.com/bestruirui/octopus/internal/server/resp"
 	"github.com/bestruirui/octopus/internal/server/router"
+	"github.com/bestruirui/octopus/internal/utils/log"
 	"github.com/gin-gonic/gin"
 )
 
@@ -23,7 +24,8 @@ func init() {
 func getGroupAutoGroupConfig(c *gin.Context) {
 	config, err := op.GroupAutoGroupConfigGet(c.Request.Context())
 	if err != nil {
-		resp.Error(c, http.StatusInternalServerError, err.Error())
+		log.Errorf("failed to group auto group config get: %v", err)
+		resp.InternalError(c)
 		return
 	}
 	resp.Success(c, config)

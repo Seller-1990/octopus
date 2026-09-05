@@ -7,6 +7,7 @@ import (
 	"github.com/bestruirui/octopus/internal/server/middleware"
 	"github.com/bestruirui/octopus/internal/server/resp"
 	"github.com/bestruirui/octopus/internal/server/router"
+	"github.com/bestruirui/octopus/internal/utils/log"
 	"github.com/gin-gonic/gin"
 )
 
@@ -42,7 +43,8 @@ func getStatsToday(c *gin.Context) {
 func getStatsDaily(c *gin.Context) {
 	statsDaily, err := op.StatsGetDaily(c.Request.Context())
 	if err != nil {
-		resp.Error(c, http.StatusInternalServerError, err.Error())
+		log.Errorf("failed to stats get daily: %v", err)
+		resp.InternalError(c)
 		return
 	}
 	resp.Success(c, statsDaily)

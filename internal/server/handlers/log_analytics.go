@@ -11,6 +11,7 @@ import (
 	"github.com/bestruirui/octopus/internal/server/middleware"
 	"github.com/bestruirui/octopus/internal/server/resp"
 	"github.com/bestruirui/octopus/internal/server/router"
+	"github.com/bestruirui/octopus/internal/utils/log"
 	"github.com/gin-gonic/gin"
 )
 
@@ -31,7 +32,8 @@ func getUsageAnalyticsSummary(c *gin.Context) {
 	}
 	result, err := op.UsageAnalyticsSummaryGet(c.Request.Context(), filter)
 	if err != nil {
-		resp.Error(c, http.StatusInternalServerError, err.Error())
+		log.Errorf("failed to usage analytics summary get: %v", err)
+		resp.InternalError(c)
 		return
 	}
 	resp.Success(c, result)
@@ -44,7 +46,8 @@ func getUsageAnalyticsTimeseries(c *gin.Context) {
 	}
 	result, err := op.UsageAnalyticsTimeseriesGet(c.Request.Context(), filter)
 	if err != nil {
-		resp.Error(c, http.StatusInternalServerError, err.Error())
+		log.Errorf("failed to usage analytics timeseries get: %v", err)
+		resp.InternalError(c)
 		return
 	}
 	resp.Success(c, result)
@@ -72,7 +75,8 @@ func getUsageAnalyticsBreakdown(c *gin.Context) {
 		options.descending,
 	)
 	if err != nil {
-		resp.Error(c, http.StatusInternalServerError, err.Error())
+		log.Errorf("failed in operation: %v", err)
+		resp.InternalError(c)
 		return
 	}
 	resp.Success(c, result)
@@ -130,7 +134,8 @@ func getUsageAnalyticsDimensions(c *gin.Context) {
 		pageSize,
 	)
 	if err != nil {
-		resp.Error(c, http.StatusInternalServerError, err.Error())
+		log.Errorf("failed in operation: %v", err)
+		resp.InternalError(c)
 		return
 	}
 	resp.Success(c, result)

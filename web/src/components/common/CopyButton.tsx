@@ -10,6 +10,11 @@ import { toast } from '@/components/common/Toast';
 
 export type CopyIconButtonProps = {
     text: string;
+    /**
+     * 可选的异步取文本函数，优先于 text。
+     * 用于文本需要按需请求的场景（如复制后端掩码存储的完整 API Key）。
+     */
+    getText?: () => Promise<string | undefined>;
     className?: string;
     copyIconClassName?: string;
     checkIconClassName?: string;
@@ -17,6 +22,7 @@ export type CopyIconButtonProps = {
 
 export function CopyIconButton({
     text,
+    getText,
     className,
     copyIconClassName,
     checkIconClassName,
@@ -33,13 +39,23 @@ export function CopyIconButton({
     }, []);
 
     const handleClick = useCallback(async () => {
-        if (!text) {
+        let resolved: string | undefined = text;
+        try {
+            if (getText) {
+                resolved = await getText();
+            }
+        } catch (err) {
+            const description = err instanceof Error ? err.message : String(err);
+            toast.error(t('failed'), { description });
+            return;
+        }
+        if (!resolved) {
             toast.error(t('failed'), { description: t('noContent') });
             return;
         }
 
         try {
-            await copyToClipboard(text);
+            await copyToClipboard(resolved);
 
             setCopied(true);
             toast.success(t('success'));
@@ -52,6 +68,7 @@ export function CopyIconButton({
         }
     }, [
         text,
+        getText,
         copyToClipboard,
         t,
     ]);

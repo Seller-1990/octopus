@@ -390,6 +390,9 @@ func TestCatalogPlanGroupExcludesItemsWithoutCanonicalRouteCandidate(t *testing.
 	if err := dbpkg.GetDB().WithContext(ctx).Delete(&governedCandidate).Error; err != nil {
 		t.Fatalf("delete governed candidate failed: %v", err)
 	}
+	if err := catalogRefreshCache(ctx); err != nil {
+		t.Fatalf("refresh catalog cache after delete failed: %v", err)
+	}
 	legacy, legacyPreview, _, err := CatalogPlanGroup(
 		ctx,
 		canonical.Name,

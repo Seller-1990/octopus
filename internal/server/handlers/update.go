@@ -8,6 +8,7 @@ import (
 	"github.com/bestruirui/octopus/internal/server/resp"
 	"github.com/bestruirui/octopus/internal/server/router"
 	"github.com/bestruirui/octopus/internal/update"
+	"github.com/bestruirui/octopus/internal/utils/log"
 	"github.com/gin-gonic/gin"
 )
 
@@ -31,7 +32,8 @@ func init() {
 func latest(c *gin.Context) {
 	latestInfo, err := update.GetLatestInfo()
 	if err != nil {
-		resp.Error(c, http.StatusInternalServerError, err.Error())
+		log.Errorf("failed to get latest version info: %v", err)
+		resp.InternalError(c)
 		return
 	}
 	resp.Success(c, *latestInfo)
@@ -44,7 +46,8 @@ func getNowVersion(c *gin.Context) {
 func updateFunc(c *gin.Context) {
 	err := update.UpdateCore()
 	if err != nil {
-		resp.Error(c, http.StatusInternalServerError, err.Error())
+		log.Errorf("failed to update core: %v", err)
+		resp.InternalError(c)
 		return
 	}
 	resp.Success(c, "update success")

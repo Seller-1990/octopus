@@ -19,6 +19,7 @@ const (
 	SettingKeyRelayLogKeepPeriod               SettingKey = "relay_log_keep_period"                // 日志保存时间范围(天)
 	SettingKeyRelayLogKeepEnabled              SettingKey = "relay_log_keep_enabled"               // 是否保留历史日志
 	SettingKeyUsageHourlyRetentionDays         SettingKey = "usage_hourly_retention_days"          // 使用分析小时聚合保留天数
+	SettingKeyVerificationSessionRetentionDays SettingKey = "verification_session_retention_days"  // 验证会话/任务行保留天数（终态行定期删除，防无限累积，N3）
 	SettingKeyCORSAllowOrigins                 SettingKey = "cors_allow_origins"                   // 跨域白名单(逗号分隔, 如 "example.com,example2.com"). 为空不允许跨域, "*"允许所有
 	SettingKeyCircuitBreakerThreshold          SettingKey = "circuit_breaker_threshold"            // 熔断触发阈值（连续失败次数）
 	SettingKeyCircuitBreakerCooldown           SettingKey = "circuit_breaker_cooldown"             // 熔断基础冷却时间（秒）
@@ -84,6 +85,7 @@ func DefaultSettings() []Setting {
 		{Key: SettingKeyRelayLogKeepPeriod, Value: "7"},                                          // 默认日志保存7天
 		{Key: SettingKeyRelayLogKeepEnabled, Value: "true"},                                      // 默认保留历史日志
 		{Key: SettingKeyUsageHourlyRetentionDays, Value: "90"},                                   // 默认保留90天小时聚合
+		{Key: SettingKeyVerificationSessionRetentionDays, Value: "7"},                            // 默认验证会话/任务保留7天
 		{Key: SettingKeyCircuitBreakerThreshold, Value: "5"},                                     // 默认连续失败5次触发熔断
 		{Key: SettingKeyCircuitBreakerCooldown, Value: "60"},                                     // 默认基础冷却60秒
 		{Key: SettingKeyCircuitBreakerMaxCooldown, Value: "600"},                                 // 默认最大冷却600秒（10分钟）

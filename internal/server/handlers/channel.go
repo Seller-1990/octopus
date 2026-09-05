@@ -14,6 +14,7 @@ import (
 	"github.com/bestruirui/octopus/internal/server/resp"
 	"github.com/bestruirui/octopus/internal/server/router"
 	"github.com/bestruirui/octopus/internal/task"
+	"github.com/bestruirui/octopus/internal/utils/log"
 	"github.com/bestruirui/octopus/internal/utils/safe"
 	"github.com/gin-gonic/gin"
 )
@@ -61,7 +62,8 @@ func init() {
 func listChannel(c *gin.Context) {
 	channels, err := op.ChannelList(c.Request.Context())
 	if err != nil {
-		resp.Error(c, http.StatusInternalServerError, err.Error())
+		log.Errorf("failed to channel list: %v", err)
+		resp.InternalError(c)
 		return
 	}
 	channelIDs := make([]int, 0, len(channels))
@@ -70,7 +72,8 @@ func listChannel(c *gin.Context) {
 	}
 	bindingMap, err := op.SiteChannelBindingMapByChannelIDs(channelIDs, c.Request.Context())
 	if err != nil {
-		resp.Error(c, http.StatusInternalServerError, err.Error())
+		log.Errorf("failed to site channel binding map by channel ids: %v", err)
+		resp.InternalError(c)
 		return
 	}
 	for i, channel := range channels {

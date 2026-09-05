@@ -70,7 +70,8 @@ func init() {
 func listClashControllers(c *gin.Context) {
 	items, err := op.ClashControllerList(c.Request.Context())
 	if err != nil {
-		resp.Error(c, http.StatusInternalServerError, err.Error())
+		log.Errorf("failed to clash controller list: %v", err)
+		resp.InternalError(c)
 		return
 	}
 	resp.Success(c, items)
@@ -146,7 +147,8 @@ func listSiteOperationAttempts(c *gin.Context) {
 	limit, _ := strconv.Atoi(c.Query("limit"))
 	items, err := sitesync.SiteOperationAttemptList(c.Request.Context(), accountID, limit)
 	if err != nil {
-		resp.Error(c, http.StatusInternalServerError, err.Error())
+		log.Errorf("failed to site operation attempt list: %v", err)
+		resp.InternalError(c)
 		return
 	}
 	resp.Success(c, items)
@@ -165,7 +167,8 @@ func listSiteProxyPreferences(c *gin.Context) {
 	}
 	items, err := op.SiteProxyPreferenceList(c.Request.Context(), account.SiteID, account.ID)
 	if err != nil {
-		resp.Error(c, http.StatusInternalServerError, err.Error())
+		log.Errorf("failed to site proxy preference list: %v", err)
+		resp.InternalError(c)
 		return
 	}
 	resp.Success(c, items)
@@ -214,7 +217,7 @@ func createVerificationSession(c *gin.Context) {
 func oneClickBrowserSync(c *gin.Context) {
 	var request struct {
 		SiteAccountID int                     `json:"site_account_id" binding:"required"`
-		Operation     model.SiteOperationType  `json:"operation,omitempty"`
+		Operation     model.SiteOperationType `json:"operation,omitempty"`
 	}
 	if err := c.ShouldBindJSON(&request); err != nil {
 		resp.InvalidJSON(c)
@@ -252,9 +255,9 @@ func oneClickBrowserSync(c *gin.Context) {
 	sessionCreated, err := op.VerificationSessionCreate(c.Request.Context(),
 		op.VerificationSessionCreateRequest{
 			SiteAccountID:        request.SiteAccountID,
-			UseAccountPreference:  true,
-			Operation:             operation,
-			TTLMinutes:            15,
+			UseAccountPreference: true,
+			Operation:            operation,
+			TTLMinutes:           15,
 		})
 	if err != nil {
 		_ = op.VerificationBridgePairingRevoke(c.Request.Context(), pairingCreated.Pairing.ID)
@@ -322,7 +325,8 @@ func createVerificationPairing(c *gin.Context) {
 func listVerificationPairings(c *gin.Context) {
 	items, err := op.VerificationBridgePairingList(c.Request.Context())
 	if err != nil {
-		resp.Error(c, http.StatusInternalServerError, err.Error())
+		log.Errorf("failed to verification bridge pairing list: %v", err)
+		resp.InternalError(c)
 		return
 	}
 	resp.Success(c, items)
@@ -363,7 +367,8 @@ func listVerificationTasks(c *gin.Context) {
 	}
 	items, err := op.VerificationTaskList(c.Request.Context(), accountID)
 	if err != nil {
-		resp.Error(c, http.StatusInternalServerError, err.Error())
+		log.Errorf("failed to verification task list: %v", err)
+		resp.InternalError(c)
 		return
 	}
 	resp.Success(c, items)
@@ -522,7 +527,8 @@ func listVerificationSessions(c *gin.Context) {
 	}
 	items, err := op.VerificationSessionList(c.Request.Context(), accountID)
 	if err != nil {
-		resp.Error(c, http.StatusInternalServerError, err.Error())
+		log.Errorf("failed to verification session list: %v", err)
+		resp.InternalError(c)
 		return
 	}
 	resp.Success(c, items)
@@ -607,7 +613,8 @@ func optionalPositiveIntQuery(c *gin.Context, name string) (int, bool) {
 
 func downloadVerificationBridge(c *gin.Context) {
 	if err := static.WriteVerificationBridgeZip(c.Writer); err != nil {
-		resp.Error(c, http.StatusInternalServerError, err.Error())
+		log.Errorf("failed to write verification bridge zip: %v", err)
+		resp.InternalError(c)
 		return
 	}
 }
