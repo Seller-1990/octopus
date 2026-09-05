@@ -1,6 +1,7 @@
 import contextlib
 import io
 import json
+import os
 import tempfile
 import unittest
 import urllib.error
@@ -22,6 +23,11 @@ class UpdatePriceTests(unittest.TestCase):
         location = mock.patch.object(updatePrice, "__file__", str(root / "scripts" / "updatePrice.py"))
         location.start()
         self.addCleanup(location.stop)
+        env = mock.patch.dict(os.environ)
+        env.start()
+        self.addCleanup(env.stop)
+        # 隔离外部环境:默认语义必须是无逃生舱的 fail-loud。
+        os.environ.pop(updatePrice.ALLOW_MISSING_PROVIDERS_ENV, None)
         output = contextlib.redirect_stdout(io.StringIO())
         output.__enter__()
         self.addCleanup(output.__exit__, None, None, None)
@@ -111,6 +117,32 @@ class UpdatePriceTests(unittest.TestCase):
         content = self.output.read_text(encoding="utf-8")
         self.assertIn('"audit-model:1": {Input: 1, Output: 1,', content)
         self.assertIn('"audit-model:2": {Input: 2, Output: 2,', content)
+
+    def test_allowed_missing_provider_generates_with_warning_note(self):
+        catalog = self.full_catalog(
+            openai={"models": {"a": {"id": "audit-model", "cost": {"input": 1, "output": 2}}}},
+        )
+        del catalog["anthropic"]
+        response = io.BytesIO(json.dumps(catalog).encode())
+        with mock.patch.object(updatePrice.urllib.request, "urlopen", return_value=response):
+            with mock.patch.dict(os.environ, {updatePrice.ALLOW_MISSING_PROVIDERS_ENV: "anthropic"}):
+                updatePrice.main()
+        content = self.output.read_text(encoding="utf-8")
+        self.assertIn('"audit-model": {Input: 1, Output: 2,', content)
+        self.assertIn("providers skipped because they were missing from the upstream catalog", content)
+        self.assertIn("- anthropic", content)
+
+    def test_allowed_missing_provider_still_fails_for_others(self):
+        catalog = self.full_catalog(
+            openai={"models": {"a": {"id": "audit-model", "cost": {"input": 1, "output": 2}}}},
+        )
+        del catalog["zhipuai"]
+        response = io.BytesIO(json.dumps(catalog).encode())
+        with mock.patch.object(updatePrice.urllib.request, "urlopen", return_value=response):
+            with mock.patch.dict(os.environ, {updatePrice.ALLOW_MISSING_PROVIDERS_ENV: "anthropic"}):
+                with self.assertRaises(ValueError):
+                    updatePrice.main()
+        self.assert_presets_unchanged()
 
     def test_valid_catalog_preserves_prices_and_deduplicates_models(self):
         catalog = self.full_catalog(
