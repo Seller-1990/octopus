@@ -13,6 +13,8 @@ func resetLoginThrottle() {
 	defer loginThrottle.Unlock()
 	clear(loginThrottle.entries)
 	loginThrottle.nextSweep = time.Time{}
+	loginThrottle.capacityDrops = 0
+	loginThrottle.lastCapacityLog = time.Time{}
 }
 
 func TestLoginThrottleLocksAfterRepeatedAttempts(t *testing.T) {
@@ -21,12 +23,12 @@ func TestLoginThrottleLocksAfterRepeatedAttempts(t *testing.T) {
 	now := time.Now()
 
 	for attempt := 0; attempt < loginMaxAttempts; attempt++ {
-		if allowed, _ := loginThrottleAttempt(ip, now); !allowed {
+		if allowed, _, _ := loginThrottleAttempt(ip, now); !allowed {
 			t.Fatalf("attempt %d should be allowed before lockout", attempt+1)
 		}
 	}
 
-	allowed, retryAfter := loginThrottleAttempt(ip, now)
+	allowed, retryAfter, _ := loginThrottleAttempt(ip, now)
 	if allowed {
 		t.Fatal("IP should be locked after exhausting the attempt budget")
 	}
@@ -46,7 +48,7 @@ func TestLoginThrottleSuccessClearsAttempts(t *testing.T) {
 	loginThrottleSuccess(ip)
 
 	for attempt := 0; attempt < loginMaxAttempts; attempt++ {
-		if allowed, _ := loginThrottleAttempt(ip, now); !allowed {
+		if allowed, _, _ := loginThrottleAttempt(ip, now); !allowed {
 			t.Fatal("successful login must reset the full attempt budget, including an in-flight lock")
 		}
 	}
@@ -61,10 +63,10 @@ func TestLoginThrottleIPsAreIsolated(t *testing.T) {
 	for attempt := 0; attempt < loginMaxAttempts; attempt++ {
 		loginThrottleAttempt(lockedIP, now)
 	}
-	if allowed, _ := loginThrottleAttempt(lockedIP, now); allowed {
+	if allowed, _, _ := loginThrottleAttempt(lockedIP, now); allowed {
 		t.Fatal("locked IP must be rejected")
 	}
-	if allowed, _ := loginThrottleAttempt(otherIP, now); !allowed {
+	if allowed, _, _ := loginThrottleAttempt(otherIP, now); !allowed {
 		t.Fatal("other IPs must not be affected by the locked IP")
 	}
 }
@@ -79,7 +81,7 @@ func TestLoginThrottleConcurrentAccess(t *testing.T) {
 			defer workers.Done()
 			<-start
 			for attempt := 0; attempt < 20; attempt++ {
-				allowed, _ := loginThrottleAttempt("192.0.2.1", time.Now())
+				allowed, _, _ := loginThrottleAttempt("192.0.2.1", time.Now())
 				if allowed && worker%3 == 0 {
 					loginThrottleSuccess("192.0.2.1")
 				}
@@ -100,7 +102,7 @@ func TestLoginThrottleConcurrentAdmissionIsBounded(t *testing.T) {
 		go func() {
 			defer workers.Done()
 			<-start
-			if allowed, _ := loginThrottleAttempt("192.0.2.2", time.Now()); allowed {
+			if allowed, _, _ := loginThrottleAttempt("192.0.2.2", time.Now()); allowed {
 				admitted.Add(1)
 			}
 		}()
@@ -130,7 +132,7 @@ func TestLoginThrottleExpiryBoundaries(t *testing.T) {
 			}
 			resetLoginThrottle()
 			loginThrottle.entries["expired"] = scenario.entry
-			if allowed, _ := loginThrottleAttempt("expired", scenario.until); !allowed {
+			if allowed, _, _ := loginThrottleAttempt("expired", scenario.until); !allowed {
 				t.Fatal("expired budget must admit a fresh attempt")
 			}
 			if entry := loginThrottle.entries["expired"]; entry.attempts != 1 || !entry.lockedUntil.IsZero() {
@@ -172,7 +174,7 @@ func TestLoginThrottleSweepsOtherIPsWithoutExpiringActiveLocks(t *testing.T) {
 func fillLoginThrottle(t *testing.T, now time.Time, count int) {
 	t.Helper()
 	for index := 0; index < count; index++ {
-		if allowed, _ := loginThrottleAttempt(fmt.Sprintf("peer-%d", index), now); !allowed {
+		if allowed, _, _ := loginThrottleAttempt(fmt.Sprintf("peer-%d", index), now); !allowed {
 			t.Fatalf("entry %d rejected before capacity", index)
 		}
 	}
@@ -188,7 +190,7 @@ func TestLoginThrottleCapacityFailsClosed(t *testing.T) {
 	locked := loginThrottle.entries["peer-0"]
 	loginThrottle.entries["peer-2"] = loginThrottleEntry{firstAttempt: now.Add(-loginAttemptWindow), attempts: 1}
 	for index := 0; index < 20; index++ {
-		allowed, retry := loginThrottleAttempt(fmt.Sprintf("overflow-%d", index), now)
+		allowed, retry, _ := loginThrottleAttempt(fmt.Sprintf("overflow-%d", index), now)
 		if allowed || retry != loginThrottleSweepInterval || len(loginThrottle.entries) != loginThrottleMaxEntries {
 			t.Fatal("full capacity must reject unknown IPs without growing or evicting entries")
 		}
@@ -196,21 +198,45 @@ func TestLoginThrottleCapacityFailsClosed(t *testing.T) {
 	if loginThrottle.entries["peer-0"] != locked || loginThrottle.entries["peer-1"].attempts != 1 {
 		t.Fatal("capacity pressure must preserve existing locks and attempt counts")
 	}
-	if allowed, retry := loginThrottleAttempt("peer-0", now.Add(time.Second)); allowed || retry != loginLockoutDuration-time.Second {
+	if allowed, retry, _ := loginThrottleAttempt("peer-0", now.Add(time.Second)); allowed || retry != loginLockoutDuration-time.Second {
 		t.Fatal("a rejected request must not extend the lockout")
 	}
-	if allowed, _ := loginThrottleAttempt("peer-1", now); !allowed {
+	if allowed, _, _ := loginThrottleAttempt("peer-1", now); !allowed {
 		t.Fatal("existing IPs must retain their remaining budget at capacity")
 	}
 	loginThrottleSuccess("peer-1")
-	if allowed, _ := loginThrottleAttempt("last-slot", now); !allowed {
+	if allowed, _, _ := loginThrottleAttempt("last-slot", now); !allowed {
 		t.Fatal("a successful login must free capacity")
 	}
-	if allowed, _ := loginThrottleAttempt("next-slot", now); allowed {
+	if allowed, _, _ := loginThrottleAttempt("next-slot", now); allowed {
 		t.Fatal("admission must reserve the last slot before credential verification")
 	}
-	if allowed, _ := loginThrottleAttempt("after-sweep", now.Add(loginThrottleSweepInterval)); !allowed {
+	if allowed, _, _ := loginThrottleAttempt("after-sweep", now.Add(loginThrottleSweepInterval)); !allowed {
 		t.Fatal("capacity must recover when the sweep reclaims expired entries")
+	}
+}
+
+func TestLoginThrottleCapacityLogThrottled(t *testing.T) {
+	resetLoginThrottle()
+	now := time.Now()
+	fillLoginThrottle(t, now, loginThrottleMaxEntries)
+	// 假定节流日志刚在 now 打过:窗口内的拒绝只累计计数,不产生新日志。
+	loginThrottle.lastCapacityLog = now
+	for index := 0; index < 50; index++ {
+		allowed, retry, atCapacity := loginThrottleAttempt(fmt.Sprintf("flood-%d", index), now)
+		if allowed || !atCapacity || retry != loginThrottleSweepInterval {
+			t.Fatal("capacity rejections must report atCapacity with sweep-bounded retry")
+		}
+	}
+	if loginThrottle.capacityDrops != 50 {
+		t.Fatalf("capacity drops must be counted before the log interval, got %d", loginThrottle.capacityDrops)
+	}
+	// 越过节流间隔后,计数应随节流日志重置,避免无界增长。
+	if _, _, atCapacity := loginThrottleAttempt("flood-later", now.Add(2*loginThrottleSweepInterval)); !atCapacity {
+		t.Fatal("capacity rejection must persist across the log interval")
+	}
+	if loginThrottle.capacityDrops != 0 {
+		t.Fatalf("capacity counter must reset at the throttled log, got %d", loginThrottle.capacityDrops)
 	}
 }
 
@@ -226,7 +252,7 @@ func TestLoginThrottleConcurrentCapacity(t *testing.T) {
 		go func(index int) {
 			defer workers.Done()
 			<-start
-			if allowed, _ := loginThrottleAttempt(fmt.Sprintf("new-peer-%d", index), now); allowed {
+			if allowed, _, _ := loginThrottleAttempt(fmt.Sprintf("new-peer-%d", index), now); allowed {
 				admitted.Add(1)
 			}
 		}(index)

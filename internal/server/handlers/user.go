@@ -46,8 +46,11 @@ func login(c *gin.Context) {
 		return
 	}
 	ip := c.ClientIP()
-	if allowed, retryAfter := loginThrottleAttempt(ip, time.Now()); !allowed {
-		log.Warnf("SECURITY AUDIT: login throttled for IP %s, retry after %s", ip, retryAfter.Round(time.Second))
+	if allowed, retryAfter, atCapacity := loginThrottleAttempt(ip, time.Now()); !allowed {
+		// 容量拒绝已在限流器内全局限频记录;锁定拒绝逐条记录,由每 IP 的尝试预算天然约束。
+		if !atCapacity {
+			log.Warnf("SECURITY AUDIT: login throttled for IP %s, retry after %s", ip, retryAfter.Round(time.Second))
+		}
 		c.Header("Retry-After", strconv.FormatInt(int64((retryAfter+time.Second-1)/time.Second), 10))
 		resp.ErrorWithCode(c, http.StatusTooManyRequests, "", "too many login attempts, retry later")
 		return
