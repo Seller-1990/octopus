@@ -27,6 +27,83 @@ const (
 	maxSiteImportMultipartOverhead = 1 << 20
 )
 
+// siteAccountSecretFields 需要掩码的账号凭证字段集合
+// maskSiteAccount 返回账号副本，凭证字段替换为掩码值，其余字段（含模型同步、
+// 投影状态等运行时字段）原样保留，避免手写字段映射漏字段破坏前端契约。
+// 凭证掩码集合必须与 restoreMaskedAccountFields 的还原集合保持一致。
+// 注意不掩码 CFCookie：model.SiteAccount.MarshalJSON 恒定输出空串，
+// 客户端永远收不到掩码 cf_cookie，掩码它属于死代码；而运行时结构里
+// 也拿不到真值（真值在加密列），还原逻辑无法覆盖该字段。
+func maskSiteAccount(account *model.SiteAccount) *model.SiteAccount {
+	if account == nil {
+		return nil
+	}
+	masked := *account
+	masked.Username = maskSecret(masked.Username)
+	masked.Password = maskSecret(masked.Password)
+	masked.AccessToken = maskSecret(masked.AccessToken)
+	masked.APIKey = maskSecret(masked.APIKey)
+	masked.RefreshToken = maskSecret(masked.RefreshToken)
+	// Tokens 元素含指针字段，先拷贝 slice 再掩码，避免写穿调用方持有的底层数组
+	if len(masked.Tokens) > 0 {
+		masked.Tokens = append([]model.SiteToken(nil), masked.Tokens...)
+		for i := range masked.Tokens {
+			masked.Tokens[i].Token = maskSecret(masked.Tokens[i].Token)
+		}
+	}
+	return &masked
+}
+
+// maskSiteList 掩码站点列表中嵌套账号的凭证字段，站点自身字段原样返回。
+func maskSiteList(sites []model.Site) []model.Site {
+	if sites == nil {
+		return nil
+	}
+	result := make([]model.Site, len(sites))
+	for i, site := range sites {
+		if len(site.Accounts) > 0 {
+			site.Accounts = append([]model.SiteAccount(nil), site.Accounts...)
+			for j := range site.Accounts {
+				site.Accounts[j] = *maskSiteAccount(&site.Accounts[j])
+			}
+		}
+		result[i] = site
+	}
+	return result
+}
+
+// restoreMaskedAccountFields 用数据库原值替换请求中的掩码凭证字段。
+// 前端编辑表单会用列表接口返回的掩码值回填，全量提交时若不还原，
+// 掩码字符串会覆盖真实凭证导致站点登录、同步、签到全部失效。
+// 判定采用「值等于掩码形式的还原值」精确匹配而非子串嗅探：
+// 否则用户真实密码恰好含 **** 时会被静默还原为旧值且无任何报错。
+// 字段集合必须与 maskSiteAccount 的掩码集合一致。
+func restoreMaskedAccountFields(req *model.SiteAccountUpdateRequest, ctx context.Context) error {
+	if req.Username == nil && req.Password == nil && req.AccessToken == nil &&
+		req.APIKey == nil && req.RefreshToken == nil {
+		return nil
+	}
+	existing, err := op.SiteAccountGet(req.ID, ctx)
+	if err != nil {
+		return err
+	}
+	for _, field := range []*struct {
+		value *string
+		orig  string
+	}{
+		{req.Username, existing.Username},
+		{req.Password, existing.Password},
+		{req.AccessToken, existing.AccessToken},
+		{req.APIKey, existing.APIKey},
+		{req.RefreshToken, existing.RefreshToken},
+	} {
+		if field.value != nil && *field.value == maskSecret(field.orig) && maskSecret(field.orig) != "" {
+			*field.value = field.orig
+		}
+	}
+	return nil
+}
+
 func refreshAccountRandomCheckinScheduleBestEffort(ctx context.Context, accountID int) {
 	if err := sitesvc.RefreshAccountRandomCheckinSchedule(ctx, accountID); err != nil {
 		log.Warnf("failed to refresh random checkin schedule (account=%d): %v", accountID, err)
@@ -74,10 +151,11 @@ func init() {
 func listSite(c *gin.Context) {
 	sites, err := op.SiteList(c.Request.Context())
 	if err != nil {
-		resp.Error(c, http.StatusInternalServerError, err.Error())
+		log.Errorf("failed to site list: %v", err)
+		resp.InternalError(c)
 		return
 	}
-	resp.Success(c, sites)
+	resp.Success(c, maskSiteList(sites))
 }
 
 func importAllAPIHub(c *gin.Context) {
@@ -192,7 +270,8 @@ func createSite(c *gin.Context) {
 		return
 	}
 	if err := op.SiteCreate(&site, c.Request.Context()); err != nil {
-		resp.Error(c, http.StatusInternalServerError, err.Error())
+		log.Errorf("failed to site create: %v", err)
+		resp.InternalError(c)
 		return
 	}
 	resp.Success(c, site)
@@ -206,7 +285,8 @@ func updateSite(c *gin.Context) {
 	}
 	site, err := op.SiteUpdate(&req, c.Request.Context())
 	if err != nil {
-		resp.Error(c, http.StatusInternalServerError, err.Error())
+		log.Errorf("failed to site update: %v", err)
+		resp.InternalError(c)
 		return
 	}
 	siteID := site.ID
@@ -230,7 +310,8 @@ func enableSite(c *gin.Context) {
 		return
 	}
 	if err := op.SiteEnabled(request.ID, request.Enabled, c.Request.Context()); err != nil {
-		resp.Error(c, http.StatusInternalServerError, err.Error())
+		log.Errorf("failed to site enabled: %v", err)
+		resp.InternalError(c)
 		return
 	}
 	siteID := request.ID
@@ -251,7 +332,8 @@ func deleteSite(c *gin.Context) {
 		return
 	}
 	if err := sitesvc.DeleteSite(c.Request.Context(), idNum); err != nil {
-		resp.Error(c, http.StatusInternalServerError, err.Error())
+		log.Errorf("failed to delete site: %v", err)
+		resp.InternalError(c)
 		return
 	}
 	resp.Success(c, nil)
@@ -264,7 +346,8 @@ func archiveSite(c *gin.Context) {
 		return
 	}
 	if err := sitesvc.ArchiveSite(c.Request.Context(), idNum); err != nil {
-		resp.Error(c, http.StatusInternalServerError, err.Error())
+		log.Errorf("failed to archive site: %v", err)
+		resp.InternalError(c)
 		return
 	}
 	resp.Success(c, nil)
@@ -277,7 +360,8 @@ func restoreSite(c *gin.Context) {
 		return
 	}
 	if err := sitesvc.RestoreSite(c.Request.Context(), idNum); err != nil {
-		resp.Error(c, http.StatusInternalServerError, err.Error())
+		log.Errorf("failed to restore site: %v", err)
+		resp.InternalError(c)
 		return
 	}
 	resp.Success(c, nil)
@@ -286,10 +370,11 @@ func restoreSite(c *gin.Context) {
 func listArchivedSites(c *gin.Context) {
 	sites, err := sitesvc.ListArchivedSites(c.Request.Context())
 	if err != nil {
-		resp.Error(c, http.StatusInternalServerError, err.Error())
+		log.Errorf("failed to list archived sites: %v", err)
+		resp.InternalError(c)
 		return
 	}
-	resp.Success(c, sites)
+	resp.Success(c, maskSiteList(sites))
 }
 
 func createSiteAccount(c *gin.Context) {
@@ -298,18 +383,28 @@ func createSiteAccount(c *gin.Context) {
 		resp.InvalidJSON(c)
 		return
 	}
+	// create 无原值可还原：掩码值（如从列表复制粘贴）一旦入库会让同步/签到
+	// 拿着假凭证持续失败，这里显式拒绝而不是落库
+	for _, credential := range []string{account.Username, account.Password, account.AccessToken, account.APIKey, account.RefreshToken} {
+		if isMaskedValue(credential) {
+			resp.Error(c, http.StatusBadRequest, "credential looks like a masked value; paste the real credential")
+			return
+		}
+	}
 	if err := account.Validate(); err != nil {
 		resp.Error(c, http.StatusBadRequest, err.Error())
 		return
 	}
 	if err := op.SiteAccountCreate(&account, c.Request.Context()); err != nil {
-		resp.Error(c, http.StatusInternalServerError, err.Error())
+		log.Errorf("failed to site account create: %v", err)
+		resp.InternalError(c)
 		return
 	}
 	refreshAccountRandomCheckinScheduleBestEffort(c.Request.Context(), account.ID)
 	createdAccount, err := op.SiteAccountGet(account.ID, c.Request.Context())
 	if err != nil {
-		resp.Error(c, http.StatusInternalServerError, err.Error())
+		log.Errorf("failed to site account get: %v", err)
+		resp.InternalError(c)
 		return
 	}
 	if account.Enabled && account.AutoSync {
@@ -322,7 +417,7 @@ func createSiteAccount(c *gin.Context) {
 			}
 		})
 	}
-	resp.Success(c, createdAccount)
+	resp.Success(c, maskSiteAccount(createdAccount))
 }
 
 func updateSiteAccount(c *gin.Context) {
@@ -331,15 +426,22 @@ func updateSiteAccount(c *gin.Context) {
 		resp.InvalidJSON(c)
 		return
 	}
+	if err := restoreMaskedAccountFields(&req, c.Request.Context()); err != nil {
+		log.Errorf("failed to get site account %d before update: %v", req.ID, err)
+		resp.InternalError(c)
+		return
+	}
 	account, err := op.SiteAccountUpdate(&req, c.Request.Context())
 	if err != nil {
-		resp.Error(c, http.StatusInternalServerError, err.Error())
+		log.Errorf("failed to update site account: %v", err)
+		resp.InternalError(c)
 		return
 	}
 	refreshAccountRandomCheckinScheduleBestEffort(c.Request.Context(), account.ID)
 	account, err = op.SiteAccountGet(account.ID, c.Request.Context())
 	if err != nil {
-		resp.Error(c, http.StatusInternalServerError, err.Error())
+		log.Errorf("failed to get site account %d after update: %v", account.ID, err)
+		resp.InternalError(c)
 		return
 	}
 	accountID := account.ID
@@ -356,7 +458,7 @@ func updateSiteAccount(c *gin.Context) {
 			}
 		}
 	})
-	resp.Success(c, account)
+	resp.Success(c, maskSiteAccount(account))
 }
 
 func enableSiteAccount(c *gin.Context) {
@@ -369,7 +471,8 @@ func enableSiteAccount(c *gin.Context) {
 		return
 	}
 	if err := op.SiteAccountEnabled(request.ID, request.Enabled, c.Request.Context()); err != nil {
-		resp.Error(c, http.StatusInternalServerError, err.Error())
+		log.Errorf("failed to site account enabled: %v", err)
+		resp.InternalError(c)
 		return
 	}
 	refreshAccountRandomCheckinScheduleBestEffort(c.Request.Context(), request.ID)
@@ -391,7 +494,8 @@ func deleteSiteAccount(c *gin.Context) {
 		return
 	}
 	if err := sitesvc.DeleteSiteAccount(c.Request.Context(), idNum); err != nil {
-		resp.Error(c, http.StatusInternalServerError, err.Error())
+		log.Errorf("failed to delete site account: %v", err)
+		resp.InternalError(c)
 		return
 	}
 	resp.Success(c, nil)
@@ -438,7 +542,8 @@ func listSiteCheckinLogs(c *gin.Context) {
 	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "20"))
 	logs, err := op.SiteCheckinLogList(c.Request.Context(), accountID, limit)
 	if err != nil {
-		resp.Error(c, http.StatusInternalServerError, err.Error())
+		log.Errorf("failed to site checkin log list: %v", err)
+		resp.InternalError(c)
 		return
 	}
 	resp.Success(c, logs)
@@ -522,7 +627,8 @@ func batchSite(c *gin.Context) {
 
 	result, affected, err := op.SiteBatchApply(&req, sitesvc.DeleteSite, c.Request.Context())
 	if err != nil {
-		resp.Error(c, http.StatusInternalServerError, err.Error())
+		log.Errorf("failed to site batch apply: %v", err)
+		resp.InternalError(c)
 		return
 	}
 	projectSitesAsync(affected)
@@ -567,7 +673,8 @@ func batchEditSite(c *gin.Context) {
 
 	result, affected, err := op.SiteBatchEdit(&req, c.Request.Context())
 	if err != nil {
-		resp.Error(c, http.StatusInternalServerError, err.Error())
+		log.Errorf("failed to site batch edit: %v", err)
+		resp.InternalError(c)
 		return
 	}
 	projectSitesAsync(affected)
@@ -582,7 +689,8 @@ func getSiteAvailableModels(c *gin.Context) {
 	}
 	models, err := op.SiteAvailableModels(idNum, c.Request.Context())
 	if err != nil {
-		resp.Error(c, http.StatusInternalServerError, err.Error())
+		log.Errorf("failed to site available models: %v", err)
+		resp.InternalError(c)
 		return
 	}
 	resp.Success(c, gin.H{"site_id": idNum, "models": models})

@@ -149,14 +149,19 @@ export function APIKeyDashboard() {
                                 <h2 className="text-2xl font-bold truncate pr-16">{info.name}</h2>
                                 <div className="mt-4 flex items-center gap-2 rounded-xl border border-border/50 bg-muted/50 p-3">
                                     <code className="flex-1 font-mono text-sm truncate">
-                                        {info.api_key.slice(0, 11)}********{info.api_key.slice(-4)}
+                                        {info.api_key.includes('****')
+                                            ? info.api_key
+                                            : `${info.api_key.slice(0, 11)}********${info.api_key.slice(-4)}`}
                                     </code>
-                                    <CopyIconButton
-                                        text={info.api_key}
-                                        className="flex size-8 items-center justify-center rounded-lg bg-primary/10 text-primary transition-all hover:bg-primary hover:text-primary-foreground active:scale-95"
-                                        copyIconClassName="size-4"
-                                        checkIconClassName="size-4"
-                                    />
+                                    {/* stats 接口返回掩码值，明文只有 key 持有者自己掌握，此时不提供复制 */}
+                                    {!info.api_key.includes('****') && (
+                                        <CopyIconButton
+                                            text={info.api_key}
+                                            className="flex size-8 items-center justify-center rounded-lg bg-primary/10 text-primary transition-all hover:bg-primary hover:text-primary-foreground active:scale-95"
+                                            copyIconClassName="size-4"
+                                            checkIconClassName="size-4"
+                                        />
+                                    )}
                                 </div>
                                 {/* Expiry & Quota inline */}
                                 <div className="mt-auto pt-6 text-sm">

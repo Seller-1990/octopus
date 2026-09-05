@@ -1,6 +1,6 @@
 'use client';
 
-import { useId, useMemo, useState } from 'react';
+import { useId, useEffect, useMemo, useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { motion } from 'motion/react';
 import { ExternalLink, X } from 'lucide-react';
@@ -18,6 +18,7 @@ import { useGroupList } from '@/api/endpoints/group';
 import { CopyIconButton } from '@/components/common/CopyButton';
 import { cn } from '@/lib/utils';
 import type { APIKey } from '@/api/endpoints/apikey';
+import { revealAPIKey } from '@/api/endpoints/apikey';
 import { OverlayPortal } from './OverlayPortal';
 
 type Platform = 'ccswitch' | 'cherrystudio';
@@ -173,6 +174,29 @@ export function APIKeyExportOverlay({
     const t = useTranslations('setting');
     const { data: groups = [] } = useGroupList();
     const titleId = useId();
+    // 导出 URL 需要完整 key 明文；列表返回的是掩码值，打开面板时按需获取
+    const [revealedKey, setRevealedKey] = useState('');
+    // 面板在退出动画期间会被下一个 key 复用同一实例，
+    // 渲染期重置防止上一个 key 的明文残留进新面板的导出 URL
+    const [loadedKeyId, setLoadedKeyId] = useState(apiKey.id);
+    if (loadedKeyId !== apiKey.id) {
+        setLoadedKeyId(apiKey.id);
+        setRevealedKey('');
+    }
+
+    useEffect(() => {
+        let cancelled = false;
+        revealAPIKey(apiKey.id)
+            .then((key) => {
+                if (!cancelled) setRevealedKey(key);
+            })
+            .catch(() => {
+                // 获取失败保持为空，导出按钮置灰
+            });
+        return () => {
+            cancelled = true;
+        };
+    }, [apiKey.id]);
 
     const [platform, setPlatform] = useState<Platform>('ccswitch');
     const [appType, setAppType] = useState<CCSwitchApp>('claude');
@@ -202,9 +226,9 @@ export function APIKeyExportOverlay({
     const ready = platform === 'ccswitch' ? ccswitchReady : cherryReady;
 
     const exportUrl = useMemo(() => {
-        if (!ready) return '';
+        if (!ready || !revealedKey) return '';
         if (platform === 'ccswitch') {
-            return buildCCSwitchUrl(baseUrl, apiKey.api_key, {
+            return buildCCSwitchUrl(baseUrl, revealedKey, {
                 appType,
                 name: name.trim(),
                 model,
@@ -213,11 +237,11 @@ export function APIKeyExportOverlay({
                 opusModel,
             });
         }
-        return buildCherryStudioUrl(baseUrl, apiKey.api_key, {
+        return buildCherryStudioUrl(baseUrl, revealedKey, {
             name: cherryName.trim(),
             apiType: cherryApiType,
         });
-    }, [ready, platform, baseUrl, apiKey.api_key, appType, name, model, haikuModel, sonnetModel, opusModel, cherryName, cherryApiType]);
+    }, [ready, revealedKey, platform, baseUrl, appType, name, model, haikuModel, sonnetModel, opusModel, cherryName, cherryApiType]);
 
     const platformLabel = platform === 'ccswitch' ? 'CC Switch' : 'Cherry Studio';
 
@@ -370,7 +394,7 @@ export function APIKeyExportOverlay({
                     </button>
                     <button
                         type="button"
-                        disabled={!ready}
+                        disabled={!ready || !exportUrl}
                         onClick={() => window.open(exportUrl, '_blank')}
                         className="flex-1 h-9 flex items-center justify-center gap-1.5 rounded-xl bg-primary text-primary-foreground text-sm font-medium transition-all hover:bg-primary/90 active:scale-[0.98] disabled:opacity-50"
                     >
