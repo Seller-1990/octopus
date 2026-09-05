@@ -9,7 +9,7 @@
 
 ## 1. Executive Summary
 
-原始审计发现 **31 项风险：High 13、Medium 17、Low 1**。其中 **30 项已确认**（包含源码闭合调用链与动态反例两种证据），**1 项需要进一步核验运行条件**。首次审计修复 F30；用户随后明确批准并完成 **F01–F04**，当前累计修复 **5 项**，仍有 **26 项未修复（High 9、Medium 16、Low 1）**，其中包含 F27 的待核验风险。未扩展实施 F05+；F30 的价格脚本修复原样保留。
+原始审计发现 **31 项风险：High 13、Medium 17、Low 1**。其中 **30 项已确认**（包含源码闭合调用链与动态反例两种证据），**1 项需要进一步核验运行条件**。首次审计修复 F30；用户随后明确批准并完成 **F01–F04**；2026-09-06 复审残留收口 + 批次 B 完成 **F06/F07/F09**，当前累计修复 **8 项**，仍有 **23 项未修复（High 6、Medium 16、Low 1）**，其中包含 F27 的待核验风险。未扩展实施 F05+。
 
 **安全修复结论：** 首次扩展信任改为 popup 手动建立，撤销同时使在途自动配对失效；TLS 指纹验证证书及主机名；反代来源信任默认关闭、显式配置并校验；登录预算在凭据校验前原子占用，状态有界且可全局过期回收。全套 Go 及相关包 race 回归通过；扩展 Node VM 不是浏览器端到端证明，未部署或修改真实配置、凭据、数据。
 
@@ -151,22 +151,24 @@
 - **Effort:** 2–4 小时。
 
 ### F06 — 渠道配置刷新抹掉尚未落库的使用成本
-- **Severity / Status / Confidence / Category:** High / Confirmed / 高 / Stability、Data；未修复。
+- **Severity / Status / Confidence / Category:** High / Confirmed / 高 / Stability、Data；**已修复(2026-09-06,批次 B)**。
 - **Evidence:** `internal/op/channel.go:136` 的 `ChannelKeyRecordUse` 累加缓存并标脏；`internal/op/channel.go:425` 更新配置后刷新；`internal/op/channel.go:879` 删除 key cache 并从 DB 发布旧状态；`internal/op/channel.go:202` flush 读取当时缓存值。
 - **Problem / Scenario:** 主审真实临时 SQLite：记成本 5 → 只修改渠道名 → flush，数据库 `TotalCost` 变成 0。没有并发也会发生。`ChannelGetByName` 的 DB 快照发布也需同类核查。
 - **Impact:** 已完成调用的 key 成本、状态码、最后使用时间被回滚；刷新查询失败前先删缓存还会扩大丢数风险。
 - **Minimal fix / Long term:** 完整读取成功后再发布；同一渠道锁保护刷新/运行态更新，保留脏运行字段。不能只在刷新前 flush，因为两步间仍会有新增量。明确配置字段与运行字段所有者。
 - **Regression:** 重命名保留 5；SELECT 失败保留旧缓存；并发增量与刷新交错不丢数。
 - **Effort:** 4–8 小时。
+- **Remediation(2026-09-06):** `channelRefreshCacheByID` 改为持渠道锁、先读 DB 成功后再合并缓存——运行态字段(TotalCost/StatusCode/LastUse)以缓存为权威并按差异重新标脏,配置字段以 DB 为准;从 DB 消失的 key 连同缓存与脏标记移除;查询失败时缓存原样保留。红测 `internal/op/channel_refresh_test.go` 两例(改名保留 5、失败保留缓存)先红后绿,op 包 `-race` 通过。
 
 ### F07 — 到期配额重置不是幂等操作
-- **Severity / Status / Confidence / Category:** High / Confirmed / 高 / Stability、Data；未修复。
+- **Severity / Status / Confidence / Category:** High / Confirmed / 高 / Stability、Data；**已修复(2026-09-06,批次 B)**。
 - **Evidence:** `internal/op/apikey.go:197` 的 `APIKeyResetQuota` 仅按 ID 无条件置零；`internal/server/middleware/auth.go:91` 根据锁外旧快照决定是否调用；`internal/op/apikey.go:220` 增量与重置虽共用锁，但没有重检周期。
 - **Problem / Scenario:** 两请求都读到到期状态；A 重置，新周期计费 5，B 再重置。主审按该交错顺序调用真实 API，DB 用量从 5 变为 0。
 - **Impact:** 周期边界漏计金额配额；旧参数还可能覆盖管理员新周期设置。
 - **Minimal fix / Long term:** 锁内读取当前状态或按预期 reset-at 做条件更新，返回实际配额快照；middleware 不得在未重置时仍假设 used=0。
 - **Regression:** 同一周期 reset→+5→重复 reset 仍为 5；双请求 barrier 与期间改周期案例。
 - **Effort:** 2–4 小时。
+- **Remediation(2026-09-06):** `APIKeyResetQuota` 改为条件重置——锁内重读 DB,仅当 reset_at 仍等于调用方所见快照时重置(幂等),周期参数一律取锁内 DB 当前值,返回重检后的实际状态;`middleware/auth.go` 合并到期分支,不再假设「已重置且 used=0」。红测 `internal/op/apikey_quota_reset_test.go` 两例(双请求不清零新周期、旧快照不覆盖新周期)先红后绿。
 
 ### F08 — 统计 getter 写零值可覆盖并发累计
 - **Severity / Status / Confidence / Category:** Medium / Confirmed / 高 / Stability、Maintainability；未修复，源码证据。
@@ -178,13 +180,14 @@
 - **Effort:** 1–3 小时。
 
 ### F09 — 畸形成功响应被当作权威撤模
-- **Severity / Status / Confidence / Category:** High / Confirmed / 高 / Stability、Data；未修复。
+- **Severity / Status / Confidence / Category:** High / Confirmed / 高 / Stability、Data；**已修复(2026-09-06,批次 B)**。
 - **Evidence:** `internal/helper/fetch.go:208` 的解码器接受空 body，JSON 缺模型列表不报错；`internal/task/sync.go:57` 计算全量删除，`:60` 写空渠道模型，`:75` 删除 GroupItem。
 - **Problem / Scenario:** 主审验证空字符串、`null`、`{}`、200 错误对象均被解码为零模型且 nil error；同步到删除路由的影响通过当前调用链核对，未实际运行删除任务。
 - **Impact:** 普通 AutoSync 渠道遇上游维护/异常代理响应后可能失去全部已知模型与路由。
 - **Minimal fix / Long term:** 在协议边界要求合法列表结构，区分缺字段与明确空数组；空目录业务策略单独决定，不能一律拒绝真正撤模。
 - **Regression:** 四类畸形响应保留历史；明确空数组按确认策略处理；有效列表正常增删。
 - **Effort:** 2–4 小时。
+- **Remediation(2026-09-06):** `decodeModelJSONResponse` 协议边界严格化——空 body、非对象 JSON、缺失 data/models 列表字段均报错,明确 `data: []`/`models: []` 为合法空列表;`internal/task/sync.go` 对空列表只告警不撤模(部分撤模需非空列表证据)。红测 `internal/helper/fetch_malformed_test.go` 三组(五类畸形拒绝、空数组合法、有效列表解析)先红后绿。
 
 ### F10 — 回溯正则没有实际执行预算
 - **Severity / Status / Confidence / Category:** Medium / Confirmed / 高 / Performance、Stability；未修复，源码证据。
@@ -576,7 +579,7 @@ F19/F20需要一个认证生命周期所有者；F21需要每请求而非最后o
 | 批次 | 问题 | 范围与回归门槛 | 审批 |
 |---|---|---|---|
 | A 安全信任 | F01–F05、F26 | 扩展源/嵌入副本、client、server/conf及测试；首次确认、证书、可信代理、race、正文限额 | **L2，逐项确认后实施** |
-| B 费用/目录正确性 | F06–F09、F25；F30历史影响核验 | op/middleware/helper/task/恢复；临时DB交错、坏输入、不丢pending | **L2，逐项确认后实施** |
+| B 费用/目录正确性 | F06–F09、F25；F30历史影响核验 | op/middleware/helper/task/恢复；临时DB交错、坏输入、不丢pending | **L2,逐项确认后实施**;F06/F07/F09 已于 2026-09-06 完成,F25 待做 |
 | C 协议保真 | F13–F18 | transformer事件IR/消费者/relay；组合wire、终态、usage和重试矩阵 | **L2，先确认兼容策略** |
 
 ### Fix Before Stable Release
