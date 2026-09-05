@@ -24,6 +24,11 @@ func clearLiveLogState() {
 	}
 	liveDetailSubs = make(map[int64]map[chan LiveAttempt]struct{})
 	liveLogMu.Unlock()
+
+	// 尝试中止句柄由 liveAttemptMu 单独管理，遗漏会跨测试泄漏 cancel 句柄。
+	liveAttemptMu.Lock()
+	liveAttempts = make(map[int64]liveAttemptControl)
+	liveAttemptMu.Unlock()
 }
 
 // resetLiveLogState 清空实时日志状态并注册测试结束后的清理。
