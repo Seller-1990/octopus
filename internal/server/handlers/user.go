@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/bestruirui/octopus/internal/model"
@@ -44,15 +45,14 @@ func login(c *gin.Context) {
 		resp.InvalidJSON(c)
 		return
 	}
-	// 暴力穷举防护：窗口内连续失败达到阈值后按 IP 锁定
 	ip := c.ClientIP()
-	if allowed, retryAfter := loginThrottleCheck(ip); !allowed {
-		log.Warnf("SECURITY AUDIT: login attempt from locked IP %s, retry after %s", ip, retryAfter.Round(time.Second))
-		resp.ErrorWithCode(c, http.StatusTooManyRequests, "", "too many failed login attempts, retry later")
+	if allowed, retryAfter := loginThrottleAttempt(ip, time.Now()); !allowed {
+		log.Warnf("SECURITY AUDIT: login throttled for IP %s, retry after %s", ip, retryAfter.Round(time.Second))
+		c.Header("Retry-After", strconv.FormatInt(int64((retryAfter+time.Second-1)/time.Second), 10))
+		resp.ErrorWithCode(c, http.StatusTooManyRequests, "", "too many login attempts, retry later")
 		return
 	}
 	if err := op.UserVerify(user.Username, user.Password); err != nil {
-		loginThrottleFailure(ip)
 		log.Warnf("SECURITY AUDIT: failed login attempt for user %q from IP %s", user.Username, ip)
 		resp.InvalidCredentials(c)
 		return

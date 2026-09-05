@@ -51,7 +51,6 @@ func NewFingerprintedClient(fingerprint string, proxyURL string) (tls_client.Htt
 		tls_client.WithTimeoutSeconds(30),
 		tls_client.WithClientProfile(resolveTLSProfile(fingerprint)),
 		tls_client.WithNotFollowRedirects(),
-		tls_client.WithInsecureSkipVerify(),
 	}
 
 	if proxyURL != "" {

@@ -79,12 +79,8 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
   parsed.hash = "";
   chrome.tabs.update(tabId, {url: parsed.href}).catch(() => {});
   runDetached("自动配对", async () => {
-    if (!await isOriginAllowed(origin)) {
-      console.warn("[Octopus 验证桥] 自动配对被拒绝：未知的 Octopus 地址。", origin);
-      return;
-    }
     try {
-      await addPairing(origin, token);
+      await addPairing(origin, token, true);
     } catch (error) {
       console.error("[Octopus 验证桥] 自动配对失败。", error);
     }
@@ -94,24 +90,6 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
 chrome.tabs.onRemoved.addListener((tabId) => {
   autoPairedTabs.delete(tabId);
 });
-
-async function isOriginAllowed(origin) {
-  try {
-    const parsed = new URL(origin);
-    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return false;
-  } catch {
-    return false;
-  }
-  const state = await loadState();
-  if (!state.pairings || state.pairings.length === 0) return true;
-  return state.pairings.some((record) => {
-    try {
-      return new URL(record.baseURL).origin === new URL(origin).origin;
-    } catch {
-      return false;
-    }
-  });
-}
 
 runDetached("加载扩展", initializeBackground);
 
@@ -265,14 +243,25 @@ function publicState(state) {
   };
 }
 
-async function addPairing(baseURLValue, pairingTokenValue) {
+async function addPairing(baseURLValue, pairingTokenValue, automatic = false) {
   const state = await loadState();
   const baseURL = normalizeBaseURL(baseURLValue);
   const pairingToken = String(pairingTokenValue || "").trim();
   if (!pairingToken) throw new Error("请输入配对令牌。");
+  const trustedPairings = automatic
+    ? state.pairings.filter((record) => sameOrigin(record.baseURL, baseURL))
+    : null;
+  if (automatic && trustedPairings.length === 0) {
+    console.warn("[Octopus 验证桥] 自动配对被拒绝：未知的 Octopus 地址。", baseURL);
+    return state;
+  }
   const identity = await callBridge(baseURL, "/identify", {
     pairing_token: pairingToken,
   });
+  if (automatic && !trustedPairings.some((record) => state.pairings.includes(record))) {
+    console.warn("[Octopus 验证桥] 自动配对被取消：地址信任已撤销。", baseURL);
+    return state;
+  }
   const existing = state.pairings.find((record) =>
     record.baseURL === baseURL &&
     record.identity?.pairing?.id === identity.pairing.id

@@ -33,6 +33,27 @@ jobs:
       - name: Test
         run: go test ./...
 
+      - name: Test server packages with race detector
+        run: go test -race ./internal/server/... -count=1 -timeout 300s
+
+      - name: Test price update script
+        run: python3 -B -m unittest discover -s scripts -p 'test_update_price.py' -v
+
+  verification-bridge:
+    name: verification-bridge
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Test extension scripts
+        run: node --test extensions/verification-bridge/background.test.js extensions/verification-bridge/bridge-common.test.js
+
   frontend:
     name: frontend
     runs-on: ubuntu-latest

@@ -77,6 +77,19 @@ Visit `http://localhost:8080` — Username: `admin`, password = the `OCTOPUS_BOO
 
 > ⚠️ Change the default password immediately after first login.
 
+### Security Upgrade Notes
+
+- **Verification Bridge:** first trust must be established manually in the extension popup by checking the Octopus address and submitting its pairing token. Webpage fragments can reconnect only an already trusted origin. Reload existing unpacked extensions and remove any unrecognized saved pairings; existing trust is not automatically reset.
+- **Upstream TLS:** Chrome/Firefox fingerprint clients now verify certificate trust and hostnames. Fix invalid upstream certificates or configure the deployment trust store for private CAs; self-signed certificates are no longer silently accepted.
+- **Reverse proxies:** forwarded source headers are ignored by default. If a reverse proxy fronts Octopus, explicitly configure its actual addresses/CIDRs in `server.trusted_proxies` (a JSON array), or use a comma-separated environment variable without spaces:
+
+  ```bash
+  export OCTOPUS_SERVER_TRUSTED_PROXIES='127.0.0.1,::1'
+  ```
+
+  This example is only for a local proxy. Use the real proxy peer addresses for your topology; never copy `0.0.0.0/0` or `::/0` to trust every caller. The proxy must replace or safely append forwarded headers. Invalid addresses/CIDRs stop HTTP startup. An empty environment value falls back to the configuration file; use `"trusted_proxies": []` and unset the environment override to disable proxy trust.
+- **Login budget:** each IP has five attempts, including in-flight verification, within ten minutes. The fifth admission starts a fifteen-minute lockout; any successful admitted login resets the budget. State is process-local and capped at 10,000 IPs. At capacity, unknown IPs receive `429` with `Retry-After`, even with correct credentials; existing active budgets are not evicted. Login traffic reclaims expired records at most once per minute; no background task runs while idle. Without explicit proxy trust, users behind the same proxy share its budget. Multiple instances need edge-level rate limiting as well.
+
 ## 🔌 Client Integration
 
 ### OpenAI SDK
