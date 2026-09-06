@@ -242,10 +242,9 @@ func oneClickBrowserSync(c *gin.Context) {
 		}
 		nasOrigin = scheme + "://" + c.Request.Host
 	}
-	pairingCreated, err := op.VerificationBridgePairingCreate(
+	pairingCreated, err := op.VerificationBridgePairingEnsureRotated(
 		c.Request.Context(),
 		"一键同步",
-		0,
 		request.SiteAccountID,
 	)
 	if err != nil {

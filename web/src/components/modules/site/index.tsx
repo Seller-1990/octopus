@@ -10,6 +10,7 @@ import {
   type DragEvent,
 } from "react";
 import { useTranslations } from "next-intl";
+import { CopyIconButton } from "@/components/common/CopyButton";
 import { AnimatePresence, motion } from "motion/react";
 import {
   Site as SiteRecord,
@@ -526,6 +527,10 @@ export function Site() {
   const [checkinAccountIds, setCheckinAccountIds] = useState<Set<number>>(
     () => new Set(),
   );
+  const [browserSyncPairing, setBrowserSyncPairing] = useState<{
+    token: string;
+    origin: string;
+  } | null>(null);
   const [browserSyncAccountIds, setBrowserSyncAccountIds] = useState<
     Set<number>
   >(() => new Set());
@@ -1022,6 +1027,7 @@ export function Site() {
       }
       url.hash = `octopus_sync=1&octopus_token=${encodeURIComponent(result.pairing_token)}&octopus_origin=${encodeURIComponent(result.nas_origin)}`;
       window.open(url.href, "_blank", "noopener,noreferrer");
+      setBrowserSyncPairing({token: result.pairing_token, origin: result.nas_origin});
       toast.success(tRecovery("verification.browserSync.opened"));
     } catch (syncError) {
       toast.error(translateSiteMessage(locale, getErrorMessage(syncError), t));
@@ -2624,6 +2630,52 @@ export function Site() {
                   : "确认删除"}
             </Button>
           </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={browserSyncPairing !== null}
+        onOpenChange={(open) => !open && setBrowserSyncPairing(null)}
+      >
+        <DialogContent className="rounded-2xl sm:max-w-xl">
+          <DialogHeader>
+            <DialogTitle>{tRecovery("verification.browserSync.pairingTitle")}</DialogTitle>
+            <DialogDescription>
+              {tRecovery("verification.browserSync.pairingDescription")}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2 text-sm">
+            <div className="text-muted-foreground">
+              {tRecovery("verification.browserSync.pairingAddress")}
+            </div>
+            <code className="block break-all rounded-lg border border-border/70 bg-muted/30 px-3 py-2 text-xs">
+              {browserSyncPairing?.origin}
+            </code>
+            <div className="text-muted-foreground">
+              {tRecovery("verification.browserSync.pairingTokenLabel")}
+            </div>
+            <div className="flex items-center gap-2 rounded-xl border border-border/70 bg-muted/30 px-3 py-2">
+              <code className="min-w-0 flex-1 break-all text-xs">
+                {browserSyncPairing?.token}
+              </code>
+              <CopyIconButton
+                text={browserSyncPairing?.token ?? ""}
+                className="flex size-9 shrink-0 items-center justify-center rounded-lg text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                copyIconClassName="size-4"
+                checkIconClassName="size-4 text-emerald-600"
+              />
+            </div>
+            <p className="text-xs text-muted-foreground">
+              {tRecovery("verification.browserSync.pairingHint")}
+            </p>
+          </div>
+          <Button
+            type="button"
+            className="rounded-xl"
+            onClick={() => setBrowserSyncPairing(null)}
+          >
+            {tRecovery("verification.browserSync.pairingDone")}
+          </Button>
         </DialogContent>
       </Dialog>
     </div>

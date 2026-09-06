@@ -154,6 +154,27 @@ func VerificationBridgePairingRotate(
 	return &VerificationBridgePairingCreated{Pairing: pairing, Token: token}, nil
 }
 
+// VerificationBridgePairingEnsureRotated 返回指定站点账号「固定名称」配对的新令牌:
+// 已有活跃配对则轮换(pairing id 不变,已信任同地址的扩展可按同 id 自动重连),
+// 不存在或已过期才创建。用于一键同步——每次点击不再堆积孤儿配对,也不再因
+// 新配对 id 与扩展已存记录不一致而被自动重连检查拒绝。
+func VerificationBridgePairingEnsureRotated(
+	ctx context.Context,
+	name string,
+	siteAccountID int,
+) (*VerificationBridgePairingCreated, error) {
+	var existing model.VerificationBridgePairing
+	err := db.GetDB().WithContext(ctx).
+		Where("site_account_id = ? AND name = ? AND revoked_at IS NULL AND expires_at > ?",
+			siteAccountID, name, time.Now()).
+		Order("id DESC").
+		First(&existing).Error
+	if err == nil {
+		return VerificationBridgePairingRotate(ctx, existing.ID)
+	}
+	return VerificationBridgePairingCreate(ctx, name, 0, siteAccountID)
+}
+
 func VerificationTaskBrowserReady(
 	ctx context.Context,
 	pairingToken string,

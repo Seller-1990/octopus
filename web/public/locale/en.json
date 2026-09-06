@@ -2135,7 +2135,13 @@
         "failed": "Failed to start browser sync",
         "blocked": "Browser popup was blocked. Please allow popups and try again.",
         "hint": "Install the Verification Bridge extension before using Browser Sync",
-        "install": "Install Extension"
+        "install": "Install Extension",
+        "pairingTitle": "Pairing token",
+        "pairingDescription": "Enter this address and token in the Verification Bridge popup to pair this browser. The token stays valid until the next browser sync rotates it.",
+        "pairingAddress": "Octopus address",
+        "pairingTokenLabel": "Pairing token",
+        "pairingHint": "Open the extension popup → expand Add pairing → paste this address and token → click Verify and trust this address. The token is not shown again after this dialog closes; run Browser Sync again to get a new one.",
+        "pairingDone": "Done"
       }
     }
   },

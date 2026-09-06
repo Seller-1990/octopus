@@ -2135,7 +2135,13 @@
         "failed": "瀏覽器同步啟動失敗",
         "blocked": "瀏覽器彈窗被攔截，請允許彈出視窗後重試",
         "hint": "使用「瀏覽器同步」前需安裝驗證橋擴充功能",
-        "install": "安裝擴充功能"
+        "install": "安裝擴充功能",
+        "pairingTitle": "配對權杖",
+        "pairingDescription": "將下方位址與權杖填入驗證橋擴充功能彈窗完成配對。權杖在下次瀏覽器同步輪換前持續有效。",
+        "pairingAddress": "Octopus 位址",
+        "pairingTokenLabel": "配對權杖",
+        "pairingHint": "開啟擴充功能彈窗 → 展開「新增配對」→ 貼上此位址與權杖 → 點擊「驗證並信任此位址」。關閉彈窗後權杖不再顯示;再次點擊瀏覽器同步可取得新權杖。",
+        "pairingDone": "完成"
       }
     }
   },
