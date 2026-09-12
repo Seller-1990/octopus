@@ -37,6 +37,13 @@ var statsAPIKeyCacheNeedUpdateLock sync.Mutex
 // 会互相覆盖（total/daily/hourly 用整体锁保护，这三处曾遗漏）。
 var statsEntityLocks sync.Map // map[int]*sync.Mutex
 
+// statsSaveMu 串行化所有统计保存入口的「取快照→落库」完整序列（F03）。
+// 单次快照读取有各自的锁保护，但周期保存（StatsSaveDB）、日切覆盖保存
+// （statsSaveDBWithDailyOverride）与停机保存（SaveCache）互相交错时，
+// 先取的旧快照可能后落库，覆盖式写入会让数据库统计回退。持久化可能
+// 因 SQLITE_BUSY 退避而耗时，但保存频率为分钟级，串行等待是正确的代价。
+var statsSaveMu sync.Mutex
+
 func lockStatsEntity(id int) func() {
 	v, _ := statsEntityLocks.LoadOrStore(id, &sync.Mutex{})
 	mu := v.(*sync.Mutex)
@@ -94,6 +101,9 @@ func StatsSaveDBTask() {
 }
 
 func StatsSaveDB(ctx context.Context) error {
+	statsSaveMu.Lock()
+	defer statsSaveMu.Unlock()
+
 	if err := flushPendingDailyOverrides(ctx); err != nil {
 		return err
 	}
@@ -208,6 +218,9 @@ func persistStatsSnapshots(
 }
 
 func statsSaveDBWithDailyOverride(ctx context.Context, dailyOverride model.StatsDaily) error {
+	statsSaveMu.Lock()
+	defer statsSaveMu.Unlock()
+
 	statsTotalCacheLock.RLock()
 	totalSnap := statsTotalCache
 	statsTotalCacheLock.RUnlock()
