@@ -3,7 +3,6 @@ package op
 import (
 	"archive/zip"
 	"context"
-	"encoding/json"
 	"fmt"
 
 	"github.com/bestruirui/octopus/internal/model"
@@ -117,38 +116,39 @@ func clashControllerBackupFromModel(item model.ClashController) model.ClashContr
 	}
 }
 
-func writeZipSettings(ctx context.Context, zw *zip.Writer, conn *gorm.DB) error {
+func writeZipSettings(ctx context.Context, guard *backupZipExportGuard, zw *zip.Writer, conn *gorm.DB) error {
 	var settings []model.Setting
 	if err := conn.WithContext(ctx).Find(&settings).Error; err != nil {
 		return fmt.Errorf("zip read settings.json: %w", err)
 	}
-	return writeZipJSON(zw, "settings.json", sanitizeSettingsForBackup(settings))
+	return writeZipExportArray(guard, zw, "settings.json", sanitizeSettingsForBackup(settings))
 }
 
 func writeZipExtendedCoreTables(
 	ctx context.Context,
+	guard *backupZipExportGuard,
 	zw *zip.Writer,
 	conn *gorm.DB,
 ) error {
-	if err := writeZipTable(ctx, zw, conn, "canonical_models.json", &[]model.CanonicalModel{}); err != nil {
+	if err := writeZipTable(ctx, guard, zw, conn, "canonical_models.json", &[]model.CanonicalModel{}); err != nil {
 		return err
 	}
-	if err := writeZipTable(ctx, zw, conn, "model_aliases.json", &[]model.ModelAlias{}); err != nil {
+	if err := writeZipTable(ctx, guard, zw, conn, "model_aliases.json", &[]model.ModelAlias{}); err != nil {
 		return err
 	}
-	if err := writeZipTable(ctx, zw, conn, "route_candidates.json", &[]model.RouteCandidate{}); err != nil {
+	if err := writeZipTable(ctx, guard, zw, conn, "route_candidates.json", &[]model.RouteCandidate{}); err != nil {
 		return err
 	}
-	if err := writeZipTable(ctx, zw, conn, "header_policies.json", &[]model.HeaderPolicy{}); err != nil {
+	if err := writeZipTable(ctx, guard, zw, conn, "header_policies.json", &[]model.HeaderPolicy{}); err != nil {
 		return err
 	}
-	if err := writeZipTable(ctx, zw, conn, "user_agent_profiles.json", &[]model.UserAgentProfile{}); err != nil {
+	if err := writeZipTable(ctx, guard, zw, conn, "user_agent_profiles.json", &[]model.UserAgentProfile{}); err != nil {
 		return err
 	}
-	if err := writeZipTable(ctx, zw, conn, "site_model_price_quotes.json", &[]model.SiteModelPriceQuote{}); err != nil {
+	if err := writeZipTable(ctx, guard, zw, conn, "site_model_price_quotes.json", &[]model.SiteModelPriceQuote{}); err != nil {
 		return err
 	}
-	if err := writeZipTable(ctx, zw, conn, "currency_rates.json", &[]model.CurrencyRate{}); err != nil {
+	if err := writeZipTable(ctx, guard, zw, conn, "currency_rates.json", &[]model.CurrencyRate{}); err != nil {
 		return err
 	}
 
@@ -160,40 +160,55 @@ func writeZipExtendedCoreTables(
 	for _, controller := range controllers {
 		items = append(items, clashControllerBackupFromModel(controller))
 	}
-	if err := writeZipJSON(zw, "clash_controllers.json", items); err != nil {
+	if err := writeZipExportArray(guard, zw, "clash_controllers.json", items); err != nil {
 		return err
 	}
-	return writeZipTable(ctx, zw, conn, "site_proxy_preferences.json", &[]model.SiteProxyPreference{})
+	return writeZipTable(ctx, guard, zw, conn, "site_proxy_preferences.json", &[]model.SiteProxyPreference{})
 }
 
-func writeZipSiteAccounts(ctx context.Context, zw *zip.Writer, conn *gorm.DB) error {
+func writeZipSiteAccounts(ctx context.Context, guard *backupZipExportGuard, zw *zip.Writer, conn *gorm.DB) error {
 	var accounts []model.SiteAccount
 	if err := conn.WithContext(ctx).Find(&accounts).Error; err != nil {
 		return fmt.Errorf("zip read site_accounts.json: %w", err)
 	}
 	sanitizeSiteAccountsForBackup(accounts)
-	return writeZipJSON(zw, "site_accounts.json", accounts)
+	return writeZipExportArray(guard, zw, "site_accounts.json", accounts)
 }
 
-func writeZipExtendedStatsTables(ctx context.Context, zw *zip.Writer, conn *gorm.DB) error {
-	if err := writeZipUsageRequestFactsNDJSON(ctx, zw, conn); err != nil {
+func writeZipExtendedStatsTables(
+	ctx context.Context,
+	guard *backupZipExportGuard,
+	zw *zip.Writer,
+	conn *gorm.DB,
+) error {
+	if err := writeZipUsageRequestFactsNDJSON(ctx, guard, zw, conn); err != nil {
 		return err
 	}
-	if err := writeZipUsageAttemptFactsNDJSON(ctx, zw, conn); err != nil {
+	if err := writeZipUsageAttemptFactsNDJSON(ctx, guard, zw, conn); err != nil {
 		return err
 	}
-	return writeZipUsageAggregatesNDJSON(ctx, zw, conn)
+	return writeZipUsageAggregatesNDJSON(ctx, guard, zw, conn)
 }
 
-func writeZipExtendedLogTables(ctx context.Context, zw *zip.Writer, conn *gorm.DB) error {
-	if err := writeZipTable(ctx, zw, conn, "relay_log_repair_audits.json", &[]model.RelayLogRepairAudit{}); err != nil {
+func writeZipExtendedLogTables(
+	ctx context.Context,
+	guard *backupZipExportGuard,
+	zw *zip.Writer,
+	conn *gorm.DB,
+) error {
+	if err := writeZipTable(ctx, guard, zw, conn, "relay_log_repair_audits.json", &[]model.RelayLogRepairAudit{}); err != nil {
 		return err
 	}
-	return writeZipSiteOperationAttemptsNDJSON(ctx, zw, conn)
+	return writeZipSiteOperationAttemptsNDJSON(ctx, guard, zw, conn)
 }
 
-func writeZipUsageRequestFactsNDJSON(ctx context.Context, zw *zip.Writer, conn *gorm.DB) error {
-	encoder, err := newZipNDJSONEncoder(zw, "usage_request_facts.ndjson")
+func writeZipUsageRequestFactsNDJSON(
+	ctx context.Context,
+	guard *backupZipExportGuard,
+	zw *zip.Writer,
+	conn *gorm.DB,
+) error {
+	entry, err := guard.createEntry(zw, "usage_request_facts.ndjson")
 	if err != nil {
 		return err
 	}
@@ -214,8 +229,8 @@ func writeZipUsageRequestFactsNDJSON(ctx context.Context, zw *zip.Writer, conn *
 			return nil
 		}
 		for index := range batch {
-			if err := encoder.Encode(&batch[index]); err != nil {
-				return fmt.Errorf("zip encode usage_request_fact: %w", err)
+			if err := guard.writeRecord(entry, "usage_request_facts.ndjson", &batch[index]); err != nil {
+				return err
 			}
 		}
 		lastID = batch[len(batch)-1].RelayLogID
@@ -225,8 +240,13 @@ func writeZipUsageRequestFactsNDJSON(ctx context.Context, zw *zip.Writer, conn *
 	}
 }
 
-func writeZipUsageAttemptFactsNDJSON(ctx context.Context, zw *zip.Writer, conn *gorm.DB) error {
-	encoder, err := newZipNDJSONEncoder(zw, "usage_attempt_facts.ndjson")
+func writeZipUsageAttemptFactsNDJSON(
+	ctx context.Context,
+	guard *backupZipExportGuard,
+	zw *zip.Writer,
+	conn *gorm.DB,
+) error {
+	entry, err := guard.createEntry(zw, "usage_attempt_facts.ndjson")
 	if err != nil {
 		return err
 	}
@@ -257,8 +277,8 @@ func writeZipUsageAttemptFactsNDJSON(ctx context.Context, zw *zip.Writer, conn *
 			return nil
 		}
 		for index := range batch {
-			if err := encoder.Encode(&batch[index]); err != nil {
-				return fmt.Errorf("zip encode usage_attempt_fact: %w", err)
+			if err := guard.writeRecord(entry, "usage_attempt_facts.ndjson", &batch[index]); err != nil {
+				return err
 			}
 		}
 		last := batch[len(batch)-1]
@@ -271,8 +291,13 @@ func writeZipUsageAttemptFactsNDJSON(ctx context.Context, zw *zip.Writer, conn *
 	}
 }
 
-func writeZipUsageAggregatesNDJSON(ctx context.Context, zw *zip.Writer, conn *gorm.DB) error {
-	encoder, err := newZipNDJSONEncoder(zw, "usage_aggregates.ndjson")
+func writeZipUsageAggregatesNDJSON(
+	ctx context.Context,
+	guard *backupZipExportGuard,
+	zw *zip.Writer,
+	conn *gorm.DB,
+) error {
+	entry, err := guard.createEntry(zw, "usage_aggregates.ndjson")
 	if err != nil {
 		return err
 	}
@@ -296,8 +321,8 @@ func writeZipUsageAggregatesNDJSON(ctx context.Context, zw *zip.Writer, conn *go
 			return nil
 		}
 		for index := range batch {
-			if err := encoder.Encode(&batch[index]); err != nil {
-				return fmt.Errorf("zip encode usage_aggregate: %w", err)
+			if err := guard.writeRecord(entry, "usage_aggregates.ndjson", &batch[index]); err != nil {
+				return err
 			}
 		}
 		lastKey = batch[len(batch)-1].AggregateKey
@@ -307,8 +332,13 @@ func writeZipUsageAggregatesNDJSON(ctx context.Context, zw *zip.Writer, conn *go
 	}
 }
 
-func writeZipSiteOperationAttemptsNDJSON(ctx context.Context, zw *zip.Writer, conn *gorm.DB) error {
-	encoder, err := newZipNDJSONEncoder(zw, "site_operation_attempts.ndjson")
+func writeZipSiteOperationAttemptsNDJSON(
+	ctx context.Context,
+	guard *backupZipExportGuard,
+	zw *zip.Writer,
+	conn *gorm.DB,
+) error {
+	entry, err := guard.createEntry(zw, "site_operation_attempts.ndjson")
 	if err != nil {
 		return err
 	}
@@ -329,8 +359,8 @@ func writeZipSiteOperationAttemptsNDJSON(ctx context.Context, zw *zip.Writer, co
 			return nil
 		}
 		for index := range batch {
-			if err := encoder.Encode(&batch[index]); err != nil {
-				return fmt.Errorf("zip encode site_operation_attempt: %w", err)
+			if err := guard.writeRecord(entry, "site_operation_attempts.ndjson", &batch[index]); err != nil {
+				return err
 			}
 		}
 		lastID = batch[len(batch)-1].ID
@@ -338,12 +368,4 @@ func writeZipSiteOperationAttemptsNDJSON(ctx context.Context, zw *zip.Writer, co
 			return nil
 		}
 	}
-}
-
-func newZipNDJSONEncoder(zw *zip.Writer, name string) (*json.Encoder, error) {
-	file, err := zw.Create(name)
-	if err != nil {
-		return nil, fmt.Errorf("zip create %s: %w", name, err)
-	}
-	return json.NewEncoder(file), nil
 }

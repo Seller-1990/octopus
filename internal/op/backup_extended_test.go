@@ -972,7 +972,8 @@ func TestWriteZipUsageAttemptFactsAdvancesZeroIDCursor(t *testing.T) {
 
 	var payload bytes.Buffer
 	writer := zip.NewWriter(&payload)
-	if err := writeZipUsageAttemptFactsNDJSON(exportCtx, writer, conn); err != nil {
+	guard := newBackupZipExportGuard(&payload)
+	if err := writeZipUsageAttemptFactsNDJSON(exportCtx, guard, writer, conn); err != nil {
 		t.Fatalf("write zero-ID attempt facts: %v", err)
 	}
 	if err := writer.Close(); err != nil {

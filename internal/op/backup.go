@@ -4,7 +4,6 @@ import (
 	"archive/zip"
 	"context"
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -1441,7 +1440,8 @@ func prepareBackupSecurity(
 // slice. The writer is consumed once; failures partway through cannot return a
 // JSON error to the client, so callers should validate inputs before invoking.
 func DBExportZip(ctx context.Context, w io.Writer, includeLogs, includeStats bool) (err error) {
-	zw := zip.NewWriter(w)
+	guard := newBackupZipExportGuard(w)
+	zw := zip.NewWriter(&backupZipSinkCounter{guard: guard})
 	defer func() {
 		if closeErr := zw.Close(); closeErr != nil && err == nil {
 			err = closeErr
@@ -1449,11 +1449,23 @@ func DBExportZip(ctx context.Context, w io.Writer, includeLogs, includeStats boo
 	}()
 
 	return withDBExportSnapshot(ctx, func(conn *gorm.DB) error {
-		return dbExportZipWithConn(ctx, zw, conn, includeLogs, includeStats)
+		return dbExportZipWithConn(ctx, guard, zw, conn, includeLogs, includeStats)
 	})
 }
 
-func dbExportZipWithConn(ctx context.Context, zw *zip.Writer, conn *gorm.DB, includeLogs, includeStats bool) error {
+func dbExportZipWithConn(
+	ctx context.Context,
+	guard *backupZipExportGuard,
+	zw *zip.Writer,
+	conn *gorm.DB,
+	includeLogs,
+	includeStats bool,
+) error {
+	if includeLogs {
+		if err := preflightBackupZipRecordLimit(ctx, conn); err != nil {
+			return err
+		}
+	}
 	manifest := map[string]any{
 		"version":       dbDumpVersion,
 		"exported_at":   time.Now().UTC().Format(time.RFC3339),
@@ -1461,88 +1473,88 @@ func dbExportZipWithConn(ctx context.Context, zw *zip.Writer, conn *gorm.DB, inc
 		"include_stats": includeStats,
 		"format":        "zip-v1",
 	}
-	if err := writeZipJSON(zw, "manifest.json", manifest); err != nil {
+	if err := guard.writeManifest(zw, manifest); err != nil {
 		return err
 	}
 
-	if err := writeZipTable(ctx, zw, conn, "channels.json", &[]model.Channel{}); err != nil {
+	if err := writeZipTable(ctx, guard, zw, conn, "channels.json", &[]model.Channel{}); err != nil {
 		return err
 	}
-	if err := writeZipTable(ctx, zw, conn, "channel_keys.json", &[]model.ChannelKey{}); err != nil {
+	if err := writeZipTable(ctx, guard, zw, conn, "channel_keys.json", &[]model.ChannelKey{}); err != nil {
 		return err
 	}
-	if err := writeZipTable(ctx, zw, conn, "proxy_configurations.json", &[]model.ProxyConfiguration{}); err != nil {
+	if err := writeZipTable(ctx, guard, zw, conn, "proxy_configurations.json", &[]model.ProxyConfiguration{}); err != nil {
 		return err
 	}
-	if err := writeZipTable(ctx, zw, conn, "sites.json", &[]model.Site{}); err != nil {
+	if err := writeZipTable(ctx, guard, zw, conn, "sites.json", &[]model.Site{}); err != nil {
 		return err
 	}
-	if err := writeZipSiteAccounts(ctx, zw, conn); err != nil {
+	if err := writeZipSiteAccounts(ctx, guard, zw, conn); err != nil {
 		return err
 	}
-	if err := writeZipTable(ctx, zw, conn, "site_tokens.json", &[]model.SiteToken{}); err != nil {
+	if err := writeZipTable(ctx, guard, zw, conn, "site_tokens.json", &[]model.SiteToken{}); err != nil {
 		return err
 	}
-	if err := writeZipTable(ctx, zw, conn, "site_user_groups.json", &[]model.SiteUserGroup{}); err != nil {
+	if err := writeZipTable(ctx, guard, zw, conn, "site_user_groups.json", &[]model.SiteUserGroup{}); err != nil {
 		return err
 	}
-	if err := writeZipTable(ctx, zw, conn, "site_models.json", &[]model.SiteModel{}); err != nil {
+	if err := writeZipTable(ctx, guard, zw, conn, "site_models.json", &[]model.SiteModel{}); err != nil {
 		return err
 	}
-	if err := writeZipTable(ctx, zw, conn, "site_channel_bindings.json", &[]model.SiteChannelBinding{}); err != nil {
+	if err := writeZipTable(ctx, guard, zw, conn, "site_channel_bindings.json", &[]model.SiteChannelBinding{}); err != nil {
 		return err
 	}
-	if err := writeZipTable(ctx, zw, conn, "groups.json", &[]model.Group{}); err != nil {
+	if err := writeZipTable(ctx, guard, zw, conn, "groups.json", &[]model.Group{}); err != nil {
 		return err
 	}
-	if err := writeZipTable(ctx, zw, conn, "group_items.json", &[]model.GroupItem{}); err != nil {
+	if err := writeZipTable(ctx, guard, zw, conn, "group_items.json", &[]model.GroupItem{}); err != nil {
 		return err
 	}
-	if err := writeZipTable(ctx, zw, conn, "llm_infos.json", &[]model.LLMInfo{}); err != nil {
+	if err := writeZipTable(ctx, guard, zw, conn, "llm_infos.json", &[]model.LLMInfo{}); err != nil {
 		return err
 	}
-	if err := writeZipTable(ctx, zw, conn, "api_keys.json", &[]model.APIKey{}); err != nil {
+	if err := writeZipTable(ctx, guard, zw, conn, "api_keys.json", &[]model.APIKey{}); err != nil {
 		return err
 	}
-	if err := writeZipSettings(ctx, zw, conn); err != nil {
+	if err := writeZipSettings(ctx, guard, zw, conn); err != nil {
 		return err
 	}
-	if err := writeZipExtendedCoreTables(ctx, zw, conn); err != nil {
+	if err := writeZipExtendedCoreTables(ctx, guard, zw, conn); err != nil {
 		return err
 	}
 
 	if includeStats {
-		if err := writeZipTable(ctx, zw, conn, "stats_total.json", &[]model.StatsTotal{}); err != nil {
+		if err := writeZipTable(ctx, guard, zw, conn, "stats_total.json", &[]model.StatsTotal{}); err != nil {
 			return err
 		}
-		if err := writeZipTable(ctx, zw, conn, "stats_daily.json", &[]model.StatsDaily{}); err != nil {
+		if err := writeZipTable(ctx, guard, zw, conn, "stats_daily.json", &[]model.StatsDaily{}); err != nil {
 			return err
 		}
-		if err := writeZipTable(ctx, zw, conn, "stats_hourly.json", &[]model.StatsHourly{}); err != nil {
+		if err := writeZipTable(ctx, guard, zw, conn, "stats_hourly.json", &[]model.StatsHourly{}); err != nil {
 			return err
 		}
-		if err := writeZipTable(ctx, zw, conn, "stats_model.json", &[]model.StatsModel{}); err != nil {
+		if err := writeZipTable(ctx, guard, zw, conn, "stats_model.json", &[]model.StatsModel{}); err != nil {
 			return err
 		}
-		if err := writeZipTable(ctx, zw, conn, "stats_channel.json", &[]model.StatsChannel{}); err != nil {
+		if err := writeZipTable(ctx, guard, zw, conn, "stats_channel.json", &[]model.StatsChannel{}); err != nil {
 			return err
 		}
-		if err := writeZipTable(ctx, zw, conn, "stats_api_key.json", &[]model.StatsAPIKey{}); err != nil {
+		if err := writeZipTable(ctx, guard, zw, conn, "stats_api_key.json", &[]model.StatsAPIKey{}); err != nil {
 			return err
 		}
-		if err := writeZipTable(ctx, zw, conn, "stats_site_model_hourly.json", &[]model.StatsSiteModelHourly{}); err != nil {
+		if err := writeZipTable(ctx, guard, zw, conn, "stats_site_model_hourly.json", &[]model.StatsSiteModelHourly{}); err != nil {
 			return err
 		}
-		if err := writeZipExtendedStatsTables(ctx, zw, conn); err != nil {
+		if err := writeZipExtendedStatsTables(ctx, guard, zw, conn); err != nil {
 			return err
 		}
 	}
 
 	if includeLogs {
-		if err := writeZipRelayLogsNDJSON(ctx, zw, conn); err != nil {
+		if err := writeZipRelayLogsNDJSON(ctx, guard, zw, conn); err != nil {
 			return err
 		}
-		if err := writeZipExtendedLogTables(ctx, zw, conn); err != nil {
+		if err := writeZipExtendedLogTables(ctx, guard, zw, conn); err != nil {
 			return err
 		}
 	}
@@ -1550,20 +1562,14 @@ func dbExportZipWithConn(ctx context.Context, zw *zip.Writer, conn *gorm.DB, inc
 	return nil
 }
 
-func writeZipJSON(zw *zip.Writer, name string, value any) error {
-	f, err := zw.Create(name)
-	if err != nil {
-		return fmt.Errorf("zip create %s: %w", name, err)
-	}
-	enc := json.NewEncoder(f)
-	enc.SetIndent("", "")
-	if err := enc.Encode(value); err != nil {
-		return fmt.Errorf("zip encode %s: %w", name, err)
-	}
-	return nil
-}
-
-func writeZipTable[T any](ctx context.Context, zw *zip.Writer, conn *gorm.DB, name string, dest *[]T) error {
+func writeZipTable[T any](
+	ctx context.Context,
+	guard *backupZipExportGuard,
+	zw *zip.Writer,
+	conn *gorm.DB,
+	name string,
+	dest *[]T,
+) error {
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
@@ -1572,15 +1578,19 @@ func writeZipTable[T any](ctx context.Context, zw *zip.Writer, conn *gorm.DB, na
 	if err := conn.Find(dest).Error; err != nil {
 		return fmt.Errorf("zip read %s: %w", name, err)
 	}
-	return writeZipJSON(zw, name, dest)
+	return writeZipExportArray(guard, zw, name, *dest)
 }
 
-func writeZipRelayLogsNDJSON(ctx context.Context, zw *zip.Writer, conn *gorm.DB) error {
-	f, err := zw.Create("relay_logs.ndjson")
+func writeZipRelayLogsNDJSON(
+	ctx context.Context,
+	guard *backupZipExportGuard,
+	zw *zip.Writer,
+	conn *gorm.DB,
+) error {
+	entry, err := guard.createEntry(zw, "relay_logs.ndjson")
 	if err != nil {
-		return fmt.Errorf("zip create relay_logs.ndjson: %w", err)
+		return err
 	}
-	enc := json.NewEncoder(f)
 	var lastID int64
 	for {
 		select {
@@ -1596,8 +1606,8 @@ func writeZipRelayLogsNDJSON(ctx context.Context, zw *zip.Writer, conn *gorm.DB)
 			break
 		}
 		for i := range batch {
-			if err := enc.Encode(&batch[i]); err != nil {
-				return fmt.Errorf("zip encode relay_log: %w", err)
+			if err := guard.writeRecord(entry, "relay_logs.ndjson", &batch[i]); err != nil {
+				return err
 			}
 		}
 		lastID = batch[len(batch)-1].ID
