@@ -1,6 +1,8 @@
 package op
 
 import (
+	"context"
+	"errors"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -106,5 +108,84 @@ func TestStatsSaveDBSerializesSnapshotAndPersist(t *testing.T) {
 	want := StatsTotalGet().StatsMetrics
 	if row.StatsMetrics != want {
 		t.Fatalf("stats_total in DB = %+v, want the newer snapshot %+v (older snapshot must not overwrite it)", row.StatsMetrics, want)
+	}
+}
+
+// 停机协议回归（对抗审查 R4）：统计保存锁的等待必须响应 ctx 取消。
+// 停机时 SaveCache 只有 10s 预算——若锁等待不可取消，预算被周期保存
+// 吞掉后三路 flush 全败，还会阻塞排在其后的 relay-log flush hook。
+func TestStatsSaveDBLockWaitRespectsContext(t *testing.T) {
+	ctx := setupBackupTestDB(t)
+	statsSaveCh <- struct{}{} // 人为占住保存锁
+	t.Cleanup(func() { <-statsSaveCh })
+
+	done := make(chan error, 1)
+	go func() {
+		saveCtx, cancel := context.WithTimeout(ctx, 200*time.Millisecond)
+		defer cancel()
+		done <- StatsSaveDB(saveCtx)
+	}()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("StatsSaveDB error = %v, want deadline exceeded while the lock is held", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("StatsSaveDB blocked past its ctx deadline waiting for the save lock")
+	}
+}
+
+// 日切覆盖保存在热路径上等锁超时：覆盖快照必须挂起重试队列且不向调用方
+// 报错（请求完成路径不能为统计落库阻塞或失败）。
+func TestStatsDailyUpdateEnqueuesOverrideOnLockTimeout(t *testing.T) {
+	ctx := setupBackupTestDB(t)
+	statsSaveCh <- struct{}{}
+	t.Cleanup(func() { <-statsSaveCh })
+
+	pendingDailyOverridesLock.Lock()
+	pendingDailyOverrides = nil
+	pendingDailyOverridesLock.Unlock()
+	t.Cleanup(func() {
+		pendingDailyOverridesLock.Lock()
+		pendingDailyOverrides = nil
+		pendingDailyOverridesLock.Unlock()
+	})
+
+	statsDailyCacheLock.Lock()
+	statsDailyCache = model.StatsDaily{Date: "20000101"}
+	statsDailyCacheLock.Unlock()
+
+	if err := StatsDailyUpdate(ctx, model.StatsMetrics{RequestSuccess: 1}); err != nil {
+		t.Fatalf("StatsDailyUpdate must degrade gracefully on lock timeout, got %v", err)
+	}
+	pendingDailyOverridesLock.Lock()
+	count := len(pendingDailyOverrides)
+	pendingDailyOverridesLock.Unlock()
+	if count == 0 {
+		t.Fatal("rollover snapshot should be enqueued for retry after the lock timeout")
+	}
+}
+
+// hourly 过滤必须使用快照时刻的日期（调用方显式传入），不能在落库时重取
+// 时钟——跨零点后旧日期的桶曾被整批过滤，尾窗增量永久丢失（对抗审查 R4）。
+func TestPersistStatsSnapshotsUsesSnapshotDate(t *testing.T) {
+	ctx := setupBackupTestDB(t)
+	if err := dbpkg.GetDB().WithContext(ctx).Create(&model.StatsTotal{ID: 1}).Error; err != nil {
+		t.Fatalf("seed stats_total: %v", err)
+	}
+	hourly := [24]model.StatsHourly{}
+	hourly[23] = model.StatsHourly{Hour: 23, Date: "19990101", StatsMetrics: model.StatsMetrics{RequestSuccess: 7}}
+
+	// 显式传入快照日期 19990101：真实时钟是 2026 年，旧实现（落库时取时钟）
+	// 会把该桶过滤掉；新实现按传入日期持久化。
+	if err := persistStatsSnapshots(ctx, "19990101", model.StatsTotal{ID: 1}, model.StatsDaily{Date: "19990101"}, hourly, nil, nil); err != nil {
+		t.Fatalf("persist with snapshot date: %v", err)
+	}
+	var row model.StatsHourly
+	if err := dbpkg.GetDB().WithContext(ctx).First(&row, 23).Error; err != nil {
+		t.Fatalf("load hourly row: %v", err)
+	}
+	if row.StatsMetrics != (model.StatsMetrics{RequestSuccess: 7}) {
+		t.Fatalf("hourly tail window was dropped: %+v", row.StatsMetrics)
 	}
 }

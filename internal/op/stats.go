@@ -37,12 +37,26 @@ var statsAPIKeyCacheNeedUpdateLock sync.Mutex
 // 会互相覆盖（total/daily/hourly 用整体锁保护，这三处曾遗漏）。
 var statsEntityLocks sync.Map // map[int]*sync.Mutex
 
-// statsSaveMu 串行化所有统计保存入口的「取快照→落库」完整序列（F03）。
-// 单次快照读取有各自的锁保护，但周期保存（StatsSaveDB）、日切覆盖保存
-// （statsSaveDBWithDailyOverride）与停机保存（SaveCache）互相交错时，
-// 先取的旧快照可能后落库，覆盖式写入会让数据库统计回退。持久化可能
-// 因 SQLITE_BUSY 退避而耗时，但保存频率为分钟级，串行等待是正确的代价。
-var statsSaveMu sync.Mutex
+// statsSaveCh 串行化所有统计保存入口的「取快照→落库」完整序列（F03）。
+// 用带缓冲 channel 而非 sync.Mutex：锁获取必须响应 ctx 取消——停机路径
+// 的 10s 预算不能被不可取消的锁等待吞掉（否则三路 flush 全败，且阻塞
+// 排在其后的 relay-log flush hook，docker stop 宽限耗尽后被 SIGKILL）。
+var statsSaveCh = make(chan struct{}, 1)
+
+// acquireStatsSave 获取统计保存锁；ctx 取消/超时立即返回错误。
+func acquireStatsSave(ctx context.Context) (func(), error) {
+	select {
+	case statsSaveCh <- struct{}{}:
+		return func() { <-statsSaveCh }, nil
+	default:
+	}
+	select {
+	case statsSaveCh <- struct{}{}:
+		return func() { <-statsSaveCh }, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
 
 func lockStatsEntity(id int) func() {
 	v, _ := statsEntityLocks.LoadOrStore(id, &sync.Mutex{})
@@ -101,8 +115,11 @@ func StatsSaveDBTask() {
 }
 
 func StatsSaveDB(ctx context.Context) error {
-	statsSaveMu.Lock()
-	defer statsSaveMu.Unlock()
+	release, err := acquireStatsSave(ctx)
+	if err != nil {
+		return fmt.Errorf("acquire stats save lock: %w", err)
+	}
+	defer release()
 
 	if err := flushPendingDailyOverrides(ctx); err != nil {
 		return err
@@ -121,6 +138,9 @@ func StatsSaveDB(ctx context.Context) error {
 
 	statsHourlyCacheLock.RLock()
 	hourlyAll := statsHourlyCache
+	// 快照时刻取日期：hourly 过滤必须用快照时刻的「今天」。若在落库时刻
+	// 重取，跨零点后会把快照里 Date=昨天的桶整批过滤掉，尾窗增量永久丢失。
+	snapshotDate := time.Now().Format("20060102")
 	statsHourlyCacheLock.RUnlock()
 
 	statsChannelCacheNeedUpdateLock.Lock()
@@ -139,7 +159,7 @@ func StatsSaveDB(ctx context.Context) error {
 	statsAPIKeyCacheNeedUpdate = make(map[int]struct{})
 	statsAPIKeyCacheNeedUpdateLock.Unlock()
 
-	if err := persistStatsSnapshots(ctx, totalSnap, dailySnap, hourlyAll, channelIDs, apiKeyIDs); err != nil {
+	if err := persistStatsSnapshots(ctx, snapshotDate, totalSnap, dailySnap, hourlyAll, channelIDs, apiKeyIDs); err != nil {
 		restoreStatsDirtyIDs(channelIDs, apiKeyIDs)
 		return err
 	}
@@ -148,6 +168,7 @@ func StatsSaveDB(ctx context.Context) error {
 
 func persistStatsSnapshots(
 	ctx context.Context,
+	snapshotDate string,
 	totalSnap model.StatsTotal,
 	dailySnap model.StatsDaily,
 	hourlyAll [24]model.StatsHourly,
@@ -162,10 +183,9 @@ func persistStatsSnapshots(
 		return result.Error
 	}
 
-	todayDate := time.Now().Format("20060102")
 	hourlyStats := make([]model.StatsHourly, 0, 24)
 	for hour := 0; hour < 24; hour++ {
-		if hourlyAll[hour].Date == todayDate {
+		if hourlyAll[hour].Date == snapshotDate {
 			hourlyStats = append(hourlyStats, hourlyAll[hour])
 		}
 	}
@@ -217,9 +237,19 @@ func persistStatsSnapshots(
 	return nil
 }
 
+// statsDailyOverrideWait 日切覆盖保存等待保存锁的上限：日切发生在请求
+// 完成热路径上（StatsDailyUpdate），不为统计落库长时间让路——等不到锁
+// 时把覆盖快照挂起重试队列，由下一轮周期保存的 flushPendingDailyOverrides 兜底。
+const statsDailyOverrideWait = 2 * time.Second
+
 func statsSaveDBWithDailyOverride(ctx context.Context, dailyOverride model.StatsDaily) error {
-	statsSaveMu.Lock()
-	defer statsSaveMu.Unlock()
+	release, err := acquireStatsSave(ctx)
+	if err != nil {
+		// 等锁失败（热路径超时/停机 ctx 取消）：覆盖快照挂起重试队列
+		enqueuePendingDailyOverride(dailyOverride)
+		return err
+	}
+	defer release()
 
 	statsTotalCacheLock.RLock()
 	totalSnap := statsTotalCache
@@ -230,6 +260,8 @@ func statsSaveDBWithDailyOverride(ctx context.Context, dailyOverride model.Stats
 
 	statsHourlyCacheLock.RLock()
 	hourlyAll := statsHourlyCache
+	// 与 StatsSaveDB 同口径：快照时刻取日期，防日切尾窗被过滤（见上）
+	snapshotDate := time.Now().Format("20060102")
 	statsHourlyCacheLock.RUnlock()
 
 	statsChannelCacheNeedUpdateLock.Lock()
@@ -248,7 +280,7 @@ func statsSaveDBWithDailyOverride(ctx context.Context, dailyOverride model.Stats
 	statsAPIKeyCacheNeedUpdate = make(map[int]struct{})
 	statsAPIKeyCacheNeedUpdateLock.Unlock()
 
-	if err := persistStatsSnapshots(ctx, totalSnap, dailyOverride, hourlyAll, channelIDs, apiKeyIDs); err != nil {
+	if err := persistStatsSnapshots(ctx, snapshotDate, totalSnap, dailyOverride, hourlyAll, channelIDs, apiKeyIDs); err != nil {
 		restoreStatsDirtyIDs(channelIDs, apiKeyIDs)
 		enqueuePendingDailyOverride(dailyOverride)
 		return err
@@ -288,7 +320,16 @@ func StatsDailyUpdate(ctx context.Context, metrics model.StatsMetrics) error {
 	statsDailyCache.StatsMetrics.Add(metrics)
 	statsDailyCacheLock.Unlock()
 
-	return statsSaveDBWithDailyOverride(ctx, prevDaily)
+	// 与请求生命周期解耦（调用方传入的可能是裸 Background，但显式声明），
+	// 并给锁等待设上限：热路径不为统计落库长时间让路，等不到锁时覆盖
+	// 快照已入重试队列（见 statsSaveDBWithDailyOverride），不算失败。
+	saveCtx, cancel := context.WithTimeout(context.Background(), statsDailyOverrideWait)
+	defer cancel()
+	err := statsSaveDBWithDailyOverride(saveCtx, prevDaily)
+	if errors.Is(err, context.DeadlineExceeded) {
+		return nil
+	}
+	return err
 }
 
 func StatsTotalUpdate(metrics model.StatsMetrics) {

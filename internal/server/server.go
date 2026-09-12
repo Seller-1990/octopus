@@ -1,6 +1,8 @@
 package server
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -95,5 +97,13 @@ func newEngine() (*gin.Engine, error) {
 }
 
 func Close() error {
-	return httpSrv.Close()
+	// F08：先 drain 再关——httpSrv.Close() 会立即掐断在途连接，LLM 流式
+	// 请求被硬断后费用记为 indeterminate。给 10s 优雅收尾，超时仍有连接
+	// 未退出时强制关闭，避免卡死停机链。
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := httpSrv.Shutdown(ctx); err != nil {
+		return errors.Join(err, httpSrv.Close())
+	}
+	return nil
 }
