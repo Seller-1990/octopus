@@ -1,14 +1,53 @@
 package server
 
 import (
+	"errors"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"syscall"
 	"testing"
 
 	"github.com/bestruirui/octopus/internal/conf"
 	"github.com/gin-gonic/gin"
 )
+
+func TestStartRejectsOccupiedAddress(t *testing.T) {
+	previous := conf.AppConfig
+	t.Cleanup(func() { conf.AppConfig = previous })
+	t.Setenv("OCTOPUS_IMAGES_BODY_TMP_DIR", t.TempDir())
+	conf.AppConfig.Server.TrustedProxies = nil
+	for _, scenario := range []struct {
+		name    string
+		network string
+		host    string
+	}{
+		{name: "IPv4", network: "tcp4", host: "127.0.0.1"},
+		{name: "IPv6", network: "tcp6", host: "::1"},
+	} {
+		t.Run(scenario.name, func(t *testing.T) {
+			listener, err := net.Listen(scenario.network, net.JoinHostPort(scenario.host, "0"))
+			if err != nil {
+				if scenario.network == "tcp6" && (errors.Is(err, syscall.EAFNOSUPPORT) || errors.Is(err, syscall.EADDRNOTAVAIL)) {
+					t.Skipf("IPv6 loopback unavailable: %v", err)
+				}
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { listener.Close() })
+			conf.AppConfig.Server.Host = scenario.host
+			conf.AppConfig.Server.Port = listener.Addr().(*net.TCPAddr).Port
+			err = Start()
+			if err == nil {
+				Close()
+				t.Fatal("Start succeeded despite an occupied listen address")
+			}
+			if !errors.Is(err, syscall.EADDRINUSE) {
+				t.Fatalf("Start error = %v, want address already in use", err)
+			}
+		})
+	}
+}
 
 func TestEngineClientIPTrust(t *testing.T) {
 	previous := conf.AppConfig

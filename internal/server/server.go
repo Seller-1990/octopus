@@ -2,7 +2,9 @@ package server
 
 import (
 	"fmt"
+	"net"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/bestruirui/octopus/internal/conf"
@@ -33,15 +35,22 @@ func Start() error {
 		log.Warnf("cleanup images tmp files failed: dir=%s prefix=%s olderThan=%s err=%v", tmpDir, bodycache.TmpFilePrefix, olderThan, err)
 	}
 
+	address := net.JoinHostPort(conf.AppConfig.Server.Host, strconv.Itoa(conf.AppConfig.Server.Port))
+	listener, err := net.Listen("tcp", address)
+	if err != nil {
+		return fmt.Errorf("listen on %s: %w", address, err)
+	}
+
 	// 路由注册失败必须阻断启动：带残缺路由表的 engine 一旦对外服务即违反启动成功契约。
 	if err := router.RegisterAll(r); err != nil {
+		listener.Close()
 		return fmt.Errorf("register routes: %w", err)
 	}
 
-	httpSrv.Addr = fmt.Sprintf("%s:%d", conf.AppConfig.Server.Host, conf.AppConfig.Server.Port)
+	httpSrv.Addr = address
 	httpSrv.Handler = r
 	safe.Go("http-listen", func() {
-		if err := httpSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		if err := httpSrv.Serve(listener); err != nil && err != http.ErrServerClosed {
 			log.Errorf("http server listen and serve error: %v", err)
 		}
 	})
