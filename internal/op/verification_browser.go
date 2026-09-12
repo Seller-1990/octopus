@@ -2,6 +2,7 @@ package op
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -171,6 +172,12 @@ func VerificationBridgePairingEnsureRotated(
 		First(&existing).Error
 	if err == nil {
 		return VerificationBridgePairingRotate(ctx, existing.ID)
+	}
+	// 只有确认「无已有配对」才允许创建：读取失败被当作不存在会破坏固定
+	// pairing id 契约（已信任扩展面对新 id 拒绝自动重连），重复触发还会
+	// 堆积多条有效配对（F04）。
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, fmt.Errorf("lookup existing verification bridge pairing %q: %w", name, err)
 	}
 	return VerificationBridgePairingCreate(ctx, name, 0, siteAccountID)
 }
