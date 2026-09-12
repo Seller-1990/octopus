@@ -1,4 +1,5 @@
 import { translateApiErrorCode } from './error-i18n';
+import { shouldLogoutOnUnauthorized } from './session-guard';
 import type { ApiError, ApiErrorParams } from './types';
 import { HttpStatus } from './types';
 
@@ -15,15 +16,20 @@ export function setAuthStoreGetter(getter: () => { token: string | null; logout:
 
 /**
  * 全局错误处理
+ *
+ * requestToken 是发送该请求时使用的会话令牌：401 只能登出「发出该请求的
+ * 那个会话」，旧请求迟到的新会话 401 不得清空当前登录（F05）。
  */
-const handleError = (error: ApiError) => {
+const handleError = (error: ApiError, requestToken?: string | null) => {
     console.error('API Error:', error);
 
     // 401 未授权，调用 store 的 logout
     if (error.code === HttpStatus.UNAUTHORIZED) {
         if (getAuthStore) {
             const store = getAuthStore();
-            store.logout();
+            if (shouldLogoutOnUnauthorized(requestToken, store.token)) {
+                store.logout();
+            }
         }
     }
 };
@@ -44,7 +50,7 @@ function isApiErrorParams(value: unknown): value is ApiErrorParams {
 /**
  * 处理响应
  */
-async function handleResponse<T>(response: Response): Promise<T> {
+async function handleResponse<T>(response: Response, requestToken?: string | null): Promise<T> {
     const contentType = response.headers.get('content-type');
     const isJson = contentType?.includes('application/json');
 
@@ -73,7 +79,7 @@ async function handleResponse<T>(response: Response): Promise<T> {
             params: errorParams,
         }) as ApiError;
 
-        handleError(error);
+        handleError(error, requestToken);
         throw error;
     }
 
@@ -109,10 +115,13 @@ async function request<T>(
     }
 
     // 添加 Authorization - 从 zustand store 获取 token
+    // 捕获发送时使用的令牌：401 的登出需要核对会话归属（F05）
+    let requestToken: string | null = null;
     if (typeof window !== 'undefined' && getAuthStore) {
         const store = getAuthStore();
         if (store.token) {
-            headers.set('Authorization', `Bearer ${store.token}`);
+            requestToken = store.token;
+            headers.set('Authorization', `Bearer ${requestToken}`);
         }
     }
 
@@ -123,7 +132,7 @@ async function request<T>(
         body,
     });
 
-    return handleResponse<T>(response);
+    return handleResponse<T>(response, requestToken);
 }
 
 function parseDownloadFilename(contentDisposition: string | null): string | null {
@@ -168,7 +177,7 @@ export async function downloadApiFile(path: string, fallbackFilename: string) {
         headers,
     });
     if (!response.ok) {
-        await handleResponse<never>(response);
+        await handleResponse<never>(response, token);
         throw new Error(response.statusText);
     }
 

@@ -106,10 +106,16 @@ export const useAuthStore = create<AuthState>()(
                     // API Key 模式只需校验 key 是否有效即可
                     const endpoint = isAPIKeyAuth ? '/api/v1/apikey/login' : '/api/v1/user/status';
                     await apiClient.get<unknown>(endpoint);
-                    set({ isAuthenticated: true, isLoading: false });
+                    // 会话归属约束（F05）：校验期间用户可能已重新登录，
+                    // 旧会话的写回不得覆盖新会话。
+                    if (get().token === token) {
+                        set({ isAuthenticated: true, isLoading: false });
+                    }
                 } catch (error) {
                     logger.error('认证验证失败:', error);
-                    get().logout();
+                    if (get().token === token) {
+                        get().logout();
+                    }
                 }
             },
 
