@@ -1,6 +1,7 @@
 'use client';
 
 import { useTranslations } from 'next-intl';
+import { writeClipboard } from '@/components/common/CopyButton';
 import { useTheme } from 'next-themes';
 import { toast } from '@/components/common/Toast';
 import { useAPIKeyDashboardStats } from '@/api/endpoints/apikey';
@@ -10,7 +11,6 @@ import { AnimatedNumber } from '@/components/common/AnimatedNumber';
 import Logo from '@/components/modules/logo';
 import { PageWrapper } from '@/components/common/PageWrapper';
 import { CopyIconButton } from '@/components/common/CopyButton';
-import { useCopyToClipboard } from '@uidotdev/usehooks';
 import { useCallback } from 'react';
 import type { JSX } from 'react';
 import {
@@ -41,12 +41,12 @@ export function APIKeyDashboard() {
     const { logout } = useAuthStore();
     const { theme, setTheme } = useTheme();
     const { locale, setLocale } = useSettingStore();
-    const [, copyToClipboard] = useCopyToClipboard();
+
 
     const copyWithToast = useCallback(
         async (text: string, label: string) => {
             try {
-                await copyToClipboard(text);
+                await writeClipboard(text);
                 toast.success(t('copied', { label }));
                 return true;
             } catch {
@@ -54,7 +54,7 @@ export function APIKeyDashboard() {
                 return false;
             }
         },
-        [copyToClipboard, t]
+        [t]
     );
 
     // 首次加载中显示加载态（此前 data===undefined 且无 error 时会先闪错误屏）；

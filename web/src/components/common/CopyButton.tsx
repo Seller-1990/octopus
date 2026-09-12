@@ -3,7 +3,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import { Check, Copy } from 'lucide-react';
-import { useCopyToClipboard } from '@uidotdev/usehooks';
 import { useTranslations } from 'next-intl';
 import { cn } from '@/lib/utils';
 import { toast } from '@/components/common/Toast';
@@ -20,6 +19,37 @@ export type CopyIconButtonProps = {
     checkIconClassName?: string;
 };
 
+/**
+ * 复制到剪贴板，带非安全上下文回退。
+ * Octopus 常以 HTTP 内网地址（如 http://192.168.50.139:8088）访问，
+ * 此时 navigator.clipboard 不存在（仅 HTTPS/localhost 可用），异步
+ * API 直接不可用；退回临时 textarea + execCommand 的同步路径。
+ */
+export async function writeClipboard(value: string): Promise<void> {
+    if (navigator.clipboard?.writeText) {
+        try {
+            await navigator.clipboard.writeText(value);
+            return;
+        } catch {
+            // 权限被拒或文档失焦：退回 execCommand。
+        }
+    }
+    const textarea = document.createElement('textarea');
+    textarea.value = value;
+    textarea.setAttribute('readonly', '');
+    textarea.style.position = 'fixed';
+    textarea.style.opacity = '0';
+    document.body.appendChild(textarea);
+    textarea.select();
+    try {
+        if (!document.execCommand('copy')) {
+            throw new Error('execCommand copy rejected');
+        }
+    } finally {
+        textarea.remove();
+    }
+}
+
 export function CopyIconButton({
     text,
     getText,
@@ -28,7 +58,6 @@ export function CopyIconButton({
     checkIconClassName,
 }: CopyIconButtonProps) {
     const t = useTranslations('common.copy');
-    const [, copyToClipboard] = useCopyToClipboard();
     const [copied, setCopied] = useState(false);
     const timerRef = useRef<number | null>(null);
 
@@ -55,7 +84,7 @@ export function CopyIconButton({
         }
 
         try {
-            await copyToClipboard(resolved);
+            await writeClipboard(resolved);
 
             setCopied(true);
             toast.success(t('success'));
@@ -69,7 +98,6 @@ export function CopyIconButton({
     }, [
         text,
         getText,
-        copyToClipboard,
         t,
     ]);
 
