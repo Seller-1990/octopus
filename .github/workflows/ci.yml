@@ -81,3 +81,19 @@ jobs:
 
       - name: Lint
         run: pnpm lint
+
+      # F10：类型检查与 Node 单测必须成为提交门禁，否则类型错误或
+      # 状态 helper 回归可以在 CI 绿灯下合入。
+      - name: Type check
+        run: pnpm exec tsc --noEmit
+
+      - name: Node unit tests
+        run: |
+          node --experimental-strip-types --test \
+            src/api/session-guard.test.mjs \
+            src/api/live-logs-merge.test.mjs \
+            src/api/endpoints/site-query-keys.test.mjs \
+            src/components/modules/group/member-sort.test.mjs \
+            src/components/modules/site/batch-failure.test.mjs \
+            src/components/modules/site/checkin-status.test.mjs \
+            src/components/modules/site/site-message.test.mjs

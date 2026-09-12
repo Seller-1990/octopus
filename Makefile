@@ -9,8 +9,13 @@
 
 .PHONY: build frontend build-go test deploy
 
-# 默认目标：完整构建（前端 + 后端），产物 build/bin/octopus
-build: frontend build-go
+# 默认目标：完整构建（前端 + 后端），产物 build/bin/octopus。
+# frontend 与 build-go 必须有先后约束（F11）：兄弟前置的声明顺序在
+# make -j / MAKEFLAGS 并行下不构成依赖边，Go 会内嵌过期前端。因此
+# build 依赖 frontend 完成后，再串行调用 build-go；单独 build-go
+# 仍保留"只编译 Go、内嵌现有 static/out"的语义。
+build: frontend
+	@$(MAKE) --no-print-directory build-go
 
 # 仅重建前端并同步到 static/out（Go embed 的目标目录）
 # NEXT_PUBLIC_APP_VERSION 注入前端版本显示（默认取 VERSION 或 git describe）
