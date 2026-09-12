@@ -6,7 +6,6 @@
     "dev": "next dev",
     "devs": "next dev --experimental-https --experimental-https-key /workplace/code/octopus/build/localhost-key.pem --experimental-https-cert /workplace/code/octopus/build/localhost.pem",
     "build": "next build",
-    "start": "next start",
     "lint": "eslint"
   },
   "dependencies": {

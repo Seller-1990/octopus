@@ -6,10 +6,15 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ### 后端 (Go)
 ```bash
-go run main.go start                # 启动服务 (默认 0.0.0.0:8080)
+go run main.go start                # 启动服务 (默认 127.0.0.1:8080,仅本机可访问;
+                                    # 局域网/容器部署需显式配置 server.host)
 go run main.go start --config path  # 指定配置文件
 go test ./...                       # 运行所有测试
 ```
+
+> ⚠️ 首次启动必须先设置 `OCTOPUS_BOOTSTRAP_PASSWORD`（环境变量或
+> `data/config.json` 的 `bootstrap.password`），否则拒绝启动且无固定默认密码。
+> 详见 README_zh.md「默认账户」。
 
 ### 前端 (Next.js)
 ```bash
@@ -23,9 +28,9 @@ pnpm lint                           # ESLint 检查
 
 ### 完整构建
 ```bash
-cd web && pnpm install && pnpm build && cd ..
-mv web/out static/
-go run main.go start
+make build                          # 前端构建 → 同步 static/out → go build,
+                                    # 产物 build/bin/octopus;frontend→Go 有顺序
+                                    # 约束,make -j 下也成立
 ```
 
 ### 跨平台发布
