@@ -163,11 +163,16 @@ export function SettingData() {
                     <AlertTriangle className="mt-0.5 size-3.5 shrink-0 text-destructive" />
                     {t('backup.export.withLogsWarning')}
                 </p>
+                <p className="flex items-start gap-1.5 text-xs text-muted-foreground">
+                    <AlertTriangle className="mt-0.5 size-3.5 shrink-0 text-destructive" />
+                    {t('backup.export.credentialWarning')}
+                </p>
             </div>
 
             {/* 备份导入 */}
             <SettingSection title={t('backup.import.title')} />
             <div className="space-y-3">
+                <p className="text-xs text-muted-foreground">{t('backup.import.hint')}</p>
                 <Input
                     ref={fileInputRef}
                     type="file"
@@ -178,7 +183,7 @@ export function SettingData() {
 
                 <Button
                     type="button"
-                    variant="destructive"
+                    variant="outline"
                     className="w-full rounded-xl"
                     onClick={onImport}
                     disabled={importDB.isPending}

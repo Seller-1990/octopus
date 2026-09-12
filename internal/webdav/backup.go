@@ -11,6 +11,7 @@ import (
 	"path"
 	"sort"
 	"strings"
+	"net/url"
 	"time"
 
 	"github.com/bestruirui/octopus/internal/model"
@@ -40,6 +41,12 @@ func runBackupWithLimit(ctx context.Context, maxSize int64) error {
 	cfg, err := LoadConfig()
 	if err != nil {
 		return err
+	}
+
+	// 备份包含全部站点凭据（含明文 API Key/密码），传输通道必须留痕；
+	// http 目标意味着凭据明文过网，至少要在日志里留下可检索的告警。
+	if u, parseErr := url.Parse(cfg.URL); parseErr == nil && u.Scheme == "http" {
+		log.Warnf("SECURITY AUDIT: webdav backup target uses plaintext http (%s host); backup contains all site credentials in cleartext", u.Host)
 	}
 
 	temp, err := os.CreateTemp("", "octopus-webdav-backup-*.zip")
@@ -78,7 +85,9 @@ func runBackupWithLimit(ctx context.Context, maxSize int64) error {
 		return fmt.Errorf("failed to upload backup: %w", err)
 	}
 
-	log.Infof("webdav backup uploaded: %s (%d bytes)", filename, stat.Size())
+	// 与手动导出同口径：自动备份同样把全部凭据送出实例边界，必须留痕。
+	// 自动触发没有人工确认环节，这条日志是唯一的追溯点。
+	log.Warnf("SECURITY AUDIT: webdav backup uploaded (file=%s size=%d include_stats=%t)", filename, stat.Size(), cfg.IncludeStats)
 
 	enforceRetention(c, cfg.BackupPath, cfg.RetentionCount)
 	return nil

@@ -227,3 +227,22 @@ func TestDBExportZipEmptyTableArrayShape(t *testing.T) {
 		t.Fatalf("empty array shape = %q, want %q", content, "[]\n")
 	}
 }
+
+// 导出端 token 上限校验（对抗审查 R3）：token 密集型记录（超大数组/深层
+// 结构）导出成功而导入被拒，同样违反「导出必可恢复」不变式。字节阈值以下
+// 的记录不可能超限（每 token 至少约 2 字节），因此只有超阈值才计数。
+func TestBackupZipExportTokenLimitCheck(t *testing.T) {
+	// `[` + `0,`×N + `]`：N 个数字 token + 2 个分隔 token。
+	overLimit := append([]byte{'['},
+		bytes.Repeat([]byte("0,"), maxBackupZipRecordTokens)...)
+	overLimit = append(overLimit, ']')
+	if err := checkBackupRecordTokenLimit(overLimit, "rows.json"); err == nil {
+		t.Fatal("record over the import token limit must fail the export check")
+	} else if !strings.Contains(err.Error(), "import limit") {
+		t.Fatalf("error should name the import limit, got: %v", err)
+	}
+
+	if err := checkBackupRecordTokenLimit([]byte(`{"a":1}`), "rows.json"); err != nil {
+		t.Fatalf("normal record must pass: %v", err)
+	}
+}

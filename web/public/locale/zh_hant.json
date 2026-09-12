@@ -323,18 +323,20 @@
         "success": "開始匯出",
         "failed": "匯出失敗",
         "withLogsButton": "匯出含日誌歸檔 (ZIP)",
-        "withLogsWarning": "ZIP 歸檔包含日誌，可透過增量匯入復原。"
+        "withLogsWarning": "ZIP 歸檔包含日誌，可透過增量匯入復原。",
+        "credentialWarning": "備份檔案包含全部站點憑證（含 API Key、密碼的明文），請妥善保管，不要分享給他人。"
       },
       "import": {
-        "title": "匯入（增量）",
+        "title": "從備份恢復",
         "selected": "已選擇檔案",
-        "button": "匯入備份",
+        "button": "恢復備份",
         "importing": "匯入中...",
         "noFile": "請先選擇 JSON 或 ZIP 備份檔案",
         "invalidFileType": "僅支援 JSON（.json）和 ZIP（.zip）備份檔案",
         "success": "匯入成功",
         "failed": "匯入失敗",
-        "result": "匯入結果"
+        "result": "匯入結果",
+        "hint": "匯入會把備份中的資料補上或更新（合併恢復）；備份之後新增的其他資料不會被刪除。已有同名/同鍵資料以備份為準。"
       }
     },
     "apiKey": {

@@ -323,18 +323,20 @@
         "success": "开始导出",
         "failed": "导出失败",
         "withLogsButton": "导出含日志归档 (ZIP)",
-        "withLogsWarning": "ZIP 归档包含日志，可通过增量导入恢复。"
+        "withLogsWarning": "ZIP 归档包含日志，可通过增量导入恢复。",
+        "credentialWarning": "备份文件包含全部站点凭据（含 API Key、密码的明文），请妥善保管，不要分享给他人。"
       },
       "import": {
-        "title": "导入（增量）",
+        "title": "从备份恢复",
         "selected": "已选择文件",
-        "button": "导入备份",
+        "button": "恢复备份",
         "importing": "导入中...",
         "noFile": "请先选择 JSON 或 ZIP 备份文件",
         "invalidFileType": "仅支持 JSON（.json）和 ZIP（.zip）备份文件",
         "success": "导入成功",
         "failed": "导入失败",
-        "result": "导入结果"
+        "result": "导入结果",
+        "hint": "导入会把备份中的数据补上或更新（合并恢复）；备份之后新增的其他数据不会被删除。已有同名/同键数据以备份为准。"
       }
     },
     "apiKey": {

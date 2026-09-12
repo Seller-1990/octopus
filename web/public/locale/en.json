@@ -323,18 +323,20 @@
         "success": "Export started",
         "failed": "Export failed",
         "withLogsButton": "Export Archive with Logs (ZIP)",
-        "withLogsWarning": "ZIP archives include logs and can be restored through incremental import."
+        "withLogsWarning": "ZIP archives include logs and can be restored through incremental import.",
+        "credentialWarning": "The backup file contains all site credentials (including plaintext API keys and passwords). Keep it safe and never share it."
       },
       "import": {
-        "title": "Import (Incremental)",
+        "title": "Restore from backup",
         "selected": "File selected",
-        "button": "Import Backup",
+        "button": "Restore backup",
         "importing": "Importing...",
         "noFile": "Please select a JSON or ZIP backup first",
         "invalidFileType": "Only JSON (.json) and ZIP (.zip) backup files are supported",
         "success": "Import successful",
         "failed": "Import failed",
-        "result": "Import result"
+        "result": "Import result",
+        "hint": "Importing merges backup data in: rows from the backup are added or updated; data created after the backup is kept. Existing keys are overwritten by the backup copy."
       }
     },
     "apiKey": {

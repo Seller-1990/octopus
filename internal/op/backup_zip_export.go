@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 
@@ -68,10 +69,35 @@ func (counter *backupZipEntryCounter) Write(p []byte) (int, error) {
 	return n, err
 }
 
+// backupZipRecordTokenCheckMinBytes：导入端 100k JSON token 上限的最小字节数
+// 下界（紧凑 JSON 里每个 token 至少约 2 字节，如 `0,`）。低于该字节数的记录
+// 不可能超过导入端 token 上限，跳过昂贵的 token 计数；超过才逐 token 校验。
+const backupZipRecordTokenCheckMinBytes = 200_000
+
 func newBackupZipExportGuard(sink io.Writer) *backupZipExportGuard {
 	guard := &backupZipExportGuard{sink: sink}
 	guard.encoder = json.NewEncoder(&guard.encodeBuf)
 	return guard
+}
+
+// checkBackupRecordTokenLimit 与导入端 maxBackupZipRecordTokens 对齐：
+// token 密集型记录（深层结构/超大数组）导出成功而导入被拒，同样违反
+// 「导出必可恢复」不变式。
+func checkBackupRecordTokenLimit(record []byte, name string) error {
+	decoder := json.NewDecoder(bytes.NewReader(record))
+	for tokens := 1; ; tokens++ {
+		if tokens > maxBackupZipRecordTokens {
+			return fmt.Errorf(
+				"zip export aborted: record in %q has more than %d JSON tokens, exceeding the %d-token import limit; the exported backup would be unrecoverable",
+				name, tokens, maxBackupZipRecordTokens,
+			)
+		}
+		if _, err := decoder.Token(); errors.Is(err, io.EOF) {
+			return nil
+		} else if err != nil {
+			return fmt.Errorf("zip encode %s: %w", name, err)
+		}
+	}
 }
 
 func (guard *backupZipExportGuard) createEntry(zw *zip.Writer, name string) (io.Writer, error) {
@@ -92,11 +118,17 @@ func (guard *backupZipExportGuard) writeRecord(entry io.Writer, name string, rec
 		return fmt.Errorf("zip encode %s: %w", name, err)
 	}
 	line := guard.encodeBuf.Bytes()
-	if len(line)-1 > maxBackupZipRecordBytes {
+	recordBytes := len(line) - 1
+	if recordBytes > maxBackupZipRecordBytes {
 		return fmt.Errorf(
 			"zip export aborted: record in %q is %d bytes, exceeding the %d-byte import limit; the exported backup would be unrecoverable",
-			name, len(line)-1, maxBackupZipRecordBytes,
+			name, recordBytes, maxBackupZipRecordBytes,
 		)
+	}
+	if recordBytes > backupZipRecordTokenCheckMinBytes {
+		if err := checkBackupRecordTokenLimit(line, name); err != nil {
+			return err
+		}
 	}
 	guard.records++
 	if guard.records > maxBackupZipRecords {
@@ -177,11 +209,13 @@ func preflightBackupZipRecordLimit(ctx context.Context, conn *gorm.DB) error {
 			return fmt.Sprintf("LENGTH(CAST(%s AS BLOB))", column)
 		}
 	}
+	// COALESCE 逐列包裹：任一列 NULL 会使整行表达式为 NULL，被 MAX 聚合
+	// 跳过——该行的真实体积将不参与预检（历史迁移行可能为 NULL）。
 	expr := fmt.Sprintf(
 		"%s+%s+%s",
-		byteLen("request_content"),
-		byteLen("response_content"),
-		byteLen("error"),
+		fmt.Sprintf("COALESCE(%s,0)", byteLen("request_content")),
+		fmt.Sprintf("COALESCE(%s,0)", byteLen("response_content")),
+		fmt.Sprintf("COALESCE(%s,0)", byteLen("error")),
 	)
 	var maxBytes int64
 	if err := conn.WithContext(ctx).Raw(

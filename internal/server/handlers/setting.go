@@ -139,19 +139,38 @@ func exportDB(c *gin.Context) {
 
 	if format == "zip" {
 		filename := "octopus-export-" + time.Now().Format("20060102150405") + ".zip"
+		// 先落临时文件再回传：导出中途中止（容量守卫/DB 错误）时返回干净的
+		// 500，客户端不会把 200 + 截断 zip 当成功备份保存（DR 假象）。
+		temp, err := os.CreateTemp("", "octopus-export-*.zip")
+		if err != nil {
+			log.Errorf("failed to create export temp file: %v", err)
+			resp.Error(c, http.StatusInternalServerError, "failed to create export temp file")
+			return
+		}
+		tempName := temp.Name()
+		defer func() {
+			_ = temp.Close()
+			_ = os.Remove(tempName)
+		}()
+		if err := op.DBExportZip(c.Request.Context(), temp, includeLogs, includeStats); err != nil {
+			log.Errorf("zip export failed: %v", err)
+			resp.Error(c, http.StatusInternalServerError, err.Error())
+			return
+		}
+		stat, err := temp.Stat()
+		if err != nil {
+			resp.Error(c, http.StatusInternalServerError, "failed to stat exported backup")
+			return
+		}
+		if _, err := temp.Seek(0, io.SeekStart); err != nil {
+			resp.Error(c, http.StatusInternalServerError, "failed to read exported backup")
+			return
+		}
 		c.Header("Content-Type", "application/zip")
 		c.Header("Content-Disposition", "attachment; filename=\""+filename+"\"")
-		wrapper := &countingResponseWriter{ResponseWriter: c.Writer}
-		if err := op.DBExportZip(c.Request.Context(), wrapper, includeLogs, includeStats); err != nil {
-			if wrapper.bytesWritten == 0 {
-				c.Header("Content-Type", "application/json")
-				c.Header("Content-Disposition", "")
-				c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"code": http.StatusInternalServerError, "message": err.Error()})
-				return
-			}
-			// Headers already sent; we can't switch to a JSON error. Log it and
-			// let the client surface the truncated download.
-			log.Warnf("zip export failed mid-stream: %v", err)
+		c.Header("Content-Length", strconv.FormatInt(stat.Size(), 10))
+		if _, err := io.Copy(c.Writer, temp); err != nil {
+			log.Warnf("zip export stream to client failed: %v", err)
 		}
 		return
 	}
