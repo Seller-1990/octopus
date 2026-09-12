@@ -1,5 +1,6 @@
 import { keepPreviousData, useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { apiClient, API_BASE_URL } from '../client';
+import { applyLiveLogEvent } from '../live-logs-merge';
 import { logger } from '@/lib/logger';
 import { LIVE_WINDOW_CLOCK_BUFFER_SECONDS, resolveLogDateRange } from '@/lib/log-range';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -525,14 +526,14 @@ async function fetchLogStreamToken() {
 }
 
 // useLiveLogs 订阅实时日志概览流（SSE 建连即推送服务端内存快照 + 增量）。
-// live 列表在内存中按 id 降序保留固定条数：面板常被整天挂着，无上限会让
-// 数万条日志对象常驻并让每条新日志触发全量排序。
+// live 列表在内存中按 id 降序保留固定条数（上限见 live-logs-merge.ts）。
 // 注意：不要再额外拉 /log/list 做本地快照——它是一次性全量 setLogs，
 // 会与 SSE 快照/增量竞态（HTTP 先返回时把已收到的 running 条目整批抹掉，
 // 而单尝试请求在 start 与 finish 之间零广播，被抹掉的卡片直到请求结束
 // 都不会回来）。
-const LIVE_LOGS_MAX_ENTRIES = 500;
-// 事件流断线重连的起始与上限（指数退避），与 useLogStreamEvents 对齐。
+// 重连快照替换语义（F07）：每次连接打开即重置概览列表，随后接收的服务端
+// 快照成为唯一权威——离线期间完成且被服务端完成窗口逐出的旧 running 条目
+// 借此清除，不会长期显示幽灵 running 卡片。
 const LIVE_LOGS_RETRY_BASE_MS = 1000;
 const LIVE_LOGS_RETRY_MAX_MS = 30_000;
 
@@ -570,16 +571,15 @@ export function useLiveLogs(enabled = true) {
                     setError(null);
                     // 连接恢复后重置退避
                     retryDelay = LIVE_LOGS_RETRY_BASE_MS;
+                    // 快照替换语义（F07）：清空本地列表，等待服务端快照事件
+                    // 重建。仍在线的 running 请求会在快照中重新出现。
+                    setLogs([]);
                     if (!isReconnect) setIsLoading(false);
                 };
                 eventSource.addEventListener('log', (event) => {
                     try {
                         const next = JSON.parse((event as MessageEvent<string>).data) as LiveLogOverview;
-                        setLogs((current) => {
-                            const rest = current.filter((item) => item.id !== next.id);
-                            const merged = [...rest, next].sort((a, b) => b.id - a.id);
-                            return merged.length > LIVE_LOGS_MAX_ENTRIES ? merged.slice(0, LIVE_LOGS_MAX_ENTRIES) : merged;
-                        });
+                        setLogs((current) => applyLiveLogEvent(current, next));
                         setIsLoading(false);
                         setError(null);
                     } catch {
