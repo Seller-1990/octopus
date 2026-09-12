@@ -27,8 +27,7 @@ const elements = {
   release: document.querySelector("#release"),
   refresh: document.querySelector("#refresh"),
   addForm: document.querySelector("#add-form"),
-  baseURL: document.querySelector("#base-url"),
-  pairingToken: document.querySelector("#pairing-token"),
+  pairingInfo: document.querySelector("#pairing-info"),
   showToken: document.querySelector("#show-token"),
   status: document.querySelector("#status"),
 };
@@ -40,7 +39,7 @@ chrome.runtime.onMessage.addListener((message) => {
   if (message?.type === "state.updated") void reloadState();
 });
 elements.showToken.addEventListener("change", () => {
-  elements.pairingToken.type = elements.showToken.checked ? "text" : "password";
+  elements.pairingInfo.type = elements.showToken.checked ? "text" : "password";
 });
 elements.addForm.addEventListener("submit", addPairing);
 elements.claim.addEventListener("click", () => runAction("task.claim"));
@@ -80,21 +79,42 @@ async function reloadState() {
   }
 }
 
+// parsePairingInfo 解析一键配对信息「地址#令牌」；也兼容只粘贴令牌——
+// 此时沿用当前选中（或唯一）配对的地址，服务端会校验令牌归属，错配会被拒绝。
+function parsePairingInfo(value) {
+  const raw = value.trim();
+  if (!raw) throw new Error("请粘贴配对信息（Octopus 地址#配对令牌）。");
+  const hashIndex = raw.indexOf("#");
+  if (hashIndex > -1) {
+    const baseURL = normalizeBaseURL(raw.slice(0, hashIndex));
+    const pairingToken = raw.slice(hashIndex + 1).trim();
+    if (!baseURL || !baseURL.includes("://")) {
+      throw new Error("配对信息缺少有效的 Octopus 地址。");
+    }
+    if (!pairingToken) throw new Error("配对信息缺少配对令牌（# 后半段）。");
+    return {baseURL, pairingToken};
+  }
+  const target = state.pairings.find((record) => record.key === state.selectedKey) ||
+    (state.pairings.length === 1 ? state.pairings[0] : null);
+  if (!target) {
+    throw new Error("仅检测到令牌：请粘贴包含地址的完整配对信息（地址#令牌）。");
+  }
+  return {baseURL: target.baseURL, pairingToken: raw};
+}
+
 async function addPairing(event) {
   event.preventDefault();
   await runBusy(event.submitter, async () => {
-    const baseURL = normalizeBaseURL(elements.baseURL.value);
-    const pairingToken = elements.pairingToken.value.trim();
-    if (!pairingToken) throw new Error("请输入配对令牌。");
+    const {baseURL, pairingToken} = parsePairingInfo(elements.pairingInfo.value);
     await ensureOriginPermission(baseURL);
     state = await sendMessage({
       type: "pairing.add",
       baseURL,
       pairingToken,
     });
-    elements.pairingToken.value = "";
+    elements.pairingInfo.value = "";
     elements.showToken.checked = false;
-    elements.pairingToken.type = "password";
+    elements.pairingInfo.type = "password";
     render();
     setStatus("配对已保存。", "success");
   });

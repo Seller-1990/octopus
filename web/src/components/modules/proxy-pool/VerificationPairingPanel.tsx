@@ -87,6 +87,13 @@ export function VerificationPairingPanel({
         () => pairingsQuery.data ?? [],
         [pairingsQuery.data],
     );
+    // 一键配对信息：地址#令牌。验证桥扩展粘贴这一条即可完成配对，
+    // 无需分别填写地址与令牌；地址取当前浏览器访问的 Octopus 地址。
+    const pairingInfo = useMemo(() => {
+        if (!createdPairing?.token) return '';
+        if (typeof window === 'undefined') return createdPairing.token;
+        return `${window.location.origin}#${createdPairing.token}`;
+    }, [createdPairing]);
     const accountOptions = useMemo(
         () =>
             (sitesQuery.data ?? []).flatMap((site) =>
@@ -399,10 +406,10 @@ export function VerificationPairingPanel({
                     </DialogHeader>
                     <div className="flex items-center gap-2 rounded-xl border border-border/70 bg-muted/30 px-3 py-2">
                         <code className="min-w-0 flex-1 break-all text-xs">
-                            {createdPairing?.token}
+                            {pairingInfo}
                         </code>
                         <CopyIconButton
-                            text={createdPairing?.token ?? ''}
+                            text={pairingInfo}
                             className="flex size-9 shrink-0 items-center justify-center rounded-lg text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                             copyIconClassName="size-4"
                             checkIconClassName="size-4 text-emerald-600"
