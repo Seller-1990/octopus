@@ -85,11 +85,7 @@ func SyncAccount(ctx context.Context, accountID int) (*model.SiteSyncResult, err
 	// 同步成功本身证明凭据与会话当前可用，此时补签是安全的；补签结果经
 	// checkinAccount 正常写回 last_checkin_* 与退避计划，失败不影响同步结果。
 	if snapshot.status == model.SiteExecutionStatusSuccess || snapshot.status == model.SiteExecutionStatusPartial {
-		if shouldReconcileCheckinAfterSync(account) {
-			if _, err := checkinAccount(ctx, account.ID, "sync"); err != nil {
-				log.Warnf("post-sync checkin reconcile failed (account=%d): %v", account.ID, sanitizeSiteError(err))
-			}
-		}
+		reconcileCheckinAfterSync(ctx, account.ID)
 	}
 
 	_, catalogErr := op.CatalogSync(ctx)
@@ -394,12 +390,51 @@ func isSameLocalDay(a, b time.Time) bool {
 	return ay == by && am == bm && ad == bd
 }
 
-// shouldReconcileCheckinAfterSync 判断同步成功后是否需要补签：仅针对存在
-// 真实失败记录（failed）且开启了自动签到的账号。idle（从未签到）走正常
-// 调度；skipped（平台不支持）与 success/canceled（无需重试）均不触发。
+// checkinReconcileMinInterval 补签与上一次签到尝试的最小间隔：同步成功可以
+// 触发补签，但不能跟着同步节奏对失败站点高频重试（上游风控风险）。
+const checkinReconcileMinInterval = 30 * time.Minute
+
+// checkinReconcileMaxFailStreak 连续失败达到该次数后停止同步触发补签，交还
+// 正常退避调度（CheckinAll）：站点侧持续拒绝（改版/风控）时不无限重试。
+const checkinReconcileMaxFailStreak = 3
+
+// reconcileCheckinAfterSync 在同步成功后对账签到状态。门禁基于**重读**的
+// 账号当前状态：同步耗时期间账号可能已被手动签到或调度器更新，用同步
+// 开始时的陈旧快照判断会误触发补签并覆盖并发的当日成功。
+func reconcileCheckinAfterSync(ctx context.Context, accountID int) {
+	fresh, err := op.SiteAccountGet(accountID, ctx)
+	if err != nil || fresh == nil {
+		return
+	}
+	if !shouldReconcileCheckinAfterSync(fresh) {
+		return
+	}
+	if _, err := checkinAccount(ctx, accountID, "sync"); err != nil {
+		log.Warnf("post-sync checkin reconcile failed (account=%d): %v", accountID, sanitizeSiteError(err))
+	}
+}
+
+// shouldReconcileCheckinAfterSync 判断是否需要补签：仅针对存在真实失败记录
+// （failed）且开启了自动签到的账号，并施加两道节流——
+// ① 距上次签到尝试不足 checkinReconcileMinInterval 不补（防与手动/定时
+//    签到互相放大）；
+// ② 连续失败达 checkinReconcileMaxFailStreak 后不再补（交还正常退避调度，
+//    避免按同步频率无限重试）。
+// idle（从未签到）走正常调度；skipped（平台不支持）与 success 不触发。
 func shouldReconcileCheckinAfterSync(account *model.SiteAccount) bool {
-	return account != nil && account.Enabled && account.AutoCheckin &&
-		account.LastCheckinStatus == model.SiteExecutionStatusFailed
+	if account == nil || !account.Enabled || !account.AutoCheckin {
+		return false
+	}
+	// 只补真实失败：idle 走正常调度，skipped（平台不支持）与 success 无需重试
+	if account.LastCheckinStatus != model.SiteExecutionStatusFailed {
+		return false
+	}
+	now := time.Now()
+	if account.LastCheckinAt != nil && !account.LastCheckinAt.IsZero() &&
+		now.Sub(*account.LastCheckinAt) < checkinReconcileMinInterval {
+		return false
+	}
+	return account.CheckinFailStreak < checkinReconcileMaxFailStreak
 }
 
 func recordCloudflareSkipsAndWait(ctx context.Context, summary *SiteBatchSummary, items []siteBatchAccount, currentIndex int, retryAfter time.Duration) int {

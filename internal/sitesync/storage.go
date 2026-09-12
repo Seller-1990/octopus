@@ -778,17 +778,53 @@ func updateAccountCheckinState(ctx context.Context, account *model.SiteAccount, 
 		nextAt := buildNextRandomCheckinAt(account, now)
 		account.NextAutoCheckinAt = nextAt
 		updatePayload["next_auto_checkin_at"] = nextAt
-	} else if !account.Enabled || !account.AutoCheckin || !account.RandomCheckin {
-		account.NextAutoCheckinAt = nil
-		updatePayload["next_auto_checkin_at"] = nil
 	} else {
+		// 失败一律递增连续失败计数：随机账号用它计算退避；固定间隔账号
+		// 的重试节奏由调度决定，但同步补签门禁同样依赖该计数封顶重试。
 		account.CheckinFailStreak++
 		updatePayload["checkin_fail_streak"] = account.CheckinFailStreak
-		nextAt := buildNextRandomCheckinAt(account, now)
-		account.NextAutoCheckinAt = nextAt
-		updatePayload["next_auto_checkin_at"] = nextAt
+		if !account.Enabled || !account.AutoCheckin || !account.RandomCheckin {
+			account.NextAutoCheckinAt = nil
+			updatePayload["next_auto_checkin_at"] = nil
+		} else {
+			nextAt := buildNextRandomCheckinAt(account, now)
+			account.NextAutoCheckinAt = nextAt
+			updatePayload["next_auto_checkin_at"] = nextAt
+		}
 	}
 	return db.GetDB().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		// 当日成功保护：签到当日已成功时，迟到的失败结果（补签、慢超时）
+		// 不得把用户可见的当日状态覆写回 failed——CheckinAll 的防重签护栏
+		// 把「当日成功」视为终态，本写入守卫与其同口径。凭据仍按需持久化。
+		if status != model.SiteExecutionStatusSuccess {
+			var current model.SiteAccount
+			err := tx.Select("last_checkin_at", "last_checkin_status").
+				Where("id = ?", account.ID).First(&current).Error
+			if err == nil &&
+				current.LastCheckinStatus == model.SiteExecutionStatusSuccess &&
+				current.LastCheckinAt != nil && !current.LastCheckinAt.IsZero() &&
+				isSameLocalDay(*current.LastCheckinAt, now) {
+				writeRevision := account.CredentialRevision
+				if shouldPersistSiteCredential(account, accessToken) {
+					updated, credErr := persistSiteCredentialCAS(
+						tx,
+						account.ID,
+						writeRevision,
+						accessToken,
+						siteCredentialIsCookie(account, accessToken),
+					)
+					if credErr != nil {
+						return credErr
+					}
+					if !updated {
+						return errSiteAccountCredentialRevisionChanged
+					}
+				}
+				return nil
+			} else if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+				return err
+			}
+		}
 		writeRevision := account.CredentialRevision
 		if shouldPersistSiteCredential(account, accessToken) {
 			updated, err := persistSiteCredentialCAS(
