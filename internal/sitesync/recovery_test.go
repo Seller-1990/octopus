@@ -477,7 +477,9 @@ func TestRetryVerificationSessionRunsOriginalOperation(t *testing.T) {
 	}
 }
 
-func TestRetryVerificationSessionRefreshCheckinAfterSync(t *testing.T) {
+// 补签由 SyncAccount 内的签到对账统一处理（真实接线：runner.syncAccount =
+// SyncAccount），重试路径本身不得再触发第二次签到请求。
+func TestRetryVerificationSessionDoesNotDoubleCheckinAfterSync(t *testing.T) {
 	ctx := setupProjectTestDB(t)
 	siteRecord, account := createRecoveryFixture(t, ctx)
 	if err := dbpkg.GetDB().WithContext(ctx).Model(&model.SiteAccount{}).
@@ -534,18 +536,18 @@ func TestRetryVerificationSessionRefreshCheckinAfterSync(t *testing.T) {
 		},
 	})
 	if err != nil {
-		t.Fatalf("retry sync with checkin refresh: %v", err)
+		t.Fatalf("retry sync: %v", err)
 	}
-	if syncCalls != 1 || checkinCalls != 1 {
-		t.Fatalf("expected one sync and one checkin refresh, got sync=%d checkin=%d", syncCalls, checkinCalls)
+	if syncCalls != 1 || checkinCalls != 0 {
+		t.Fatalf("expected one sync and no direct checkin, got sync=%d checkin=%d", syncCalls, checkinCalls)
 	}
 	var reloaded model.VerificationTask
 	if err := dbpkg.GetDB().WithContext(ctx).First(&reloaded, task.ID).Error; err != nil {
 		t.Fatalf("reload retry task: %v", err)
 	}
 	if reloaded.RetryStatus != model.VerificationRetrySucceeded ||
-		!strings.Contains(reloaded.RetryMessage, "签到状态已刷新：checkin restored") {
-		t.Fatalf("retry result did not include checkin refresh: %+v", reloaded)
+		reloaded.RetryMessage != "sync restored" {
+		t.Fatalf("retry result should carry the sync message only: %+v", reloaded)
 	}
 }
 

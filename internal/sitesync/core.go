@@ -78,6 +78,20 @@ func SyncAccount(ctx context.Context, accountID int) (*model.SiteSyncResult, err
 		}
 		return nil, sanitizeSiteError(err)
 	}
+
+	// 同步成功后对账签到状态：今天的签到如有失败记录，立即补一次签到。
+	// 根因：签到失败后退避最长 72 小时（buildNextRandomCheckinAt），期间
+	// 同步可以反复成功——面板于是整天显示「同步完成但签到状态异常」。
+	// 同步成功本身证明凭据与会话当前可用，此时补签是安全的；补签结果经
+	// checkinAccount 正常写回 last_checkin_* 与退避计划，失败不影响同步结果。
+	if snapshot.status == model.SiteExecutionStatusSuccess || snapshot.status == model.SiteExecutionStatusPartial {
+		if shouldReconcileCheckinAfterSync(account) {
+			if _, err := checkinAccount(ctx, account.ID, "sync"); err != nil {
+				log.Warnf("post-sync checkin reconcile failed (account=%d): %v", account.ID, sanitizeSiteError(err))
+			}
+		}
+	}
+
 	_, catalogErr := op.CatalogSync(ctx)
 
 	if catalogErr == nil {
@@ -378,6 +392,14 @@ func isSameLocalDay(a, b time.Time) bool {
 	ay, am, ad := a.Local().Date()
 	by, bm, bd := b.Local().Date()
 	return ay == by && am == bm && ad == bd
+}
+
+// shouldReconcileCheckinAfterSync 判断同步成功后是否需要补签：仅针对存在
+// 真实失败记录（failed）且开启了自动签到的账号。idle（从未签到）走正常
+// 调度；skipped（平台不支持）与 success/canceled（无需重试）均不触发。
+func shouldReconcileCheckinAfterSync(account *model.SiteAccount) bool {
+	return account != nil && account.Enabled && account.AutoCheckin &&
+		account.LastCheckinStatus == model.SiteExecutionStatusFailed
 }
 
 func recordCloudflareSkipsAndWait(ctx context.Context, summary *SiteBatchSummary, items []siteBatchAccount, currentIndex int, retryAfter time.Duration) int {
