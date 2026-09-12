@@ -153,8 +153,9 @@ func exportDB(c *gin.Context) {
 			_ = os.Remove(tempName)
 		}()
 		if err := op.DBExportZip(c.Request.Context(), temp, includeLogs, includeStats); err != nil {
+			// 原始错误只进日志（可能含表结构/路径等内部信息），对外给固定文案
 			log.Errorf("zip export failed: %v", err)
-			resp.Error(c, http.StatusInternalServerError, err.Error())
+			resp.Error(c, http.StatusInternalServerError, "zip export failed; see server logs for details")
 			return
 		}
 		stat, err := temp.Stat()

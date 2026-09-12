@@ -778,6 +778,8 @@ func updateAccountCheckinState(ctx context.Context, account *model.SiteAccount, 
 		nextAt := buildNextRandomCheckinAt(account, now)
 		account.NextAutoCheckinAt = nextAt
 		updatePayload["next_auto_checkin_at"] = nextAt
+	} else if status == model.SiteExecutionStatusSkipped {
+		// 平台不支持签到（skipped）：中性结果——不累计连续失败、不推进退避。
 	} else {
 		// 失败一律递增连续失败计数：随机账号用它计算退避；固定间隔账号
 		// 的重试节奏由调度决定，但同步补签门禁同样依赖该计数封顶重试。
@@ -793,38 +795,6 @@ func updateAccountCheckinState(ctx context.Context, account *model.SiteAccount, 
 		}
 	}
 	return db.GetDB().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		// 当日成功保护：签到当日已成功时，迟到的失败结果（补签、慢超时）
-		// 不得把用户可见的当日状态覆写回 failed——CheckinAll 的防重签护栏
-		// 把「当日成功」视为终态，本写入守卫与其同口径。凭据仍按需持久化。
-		if status != model.SiteExecutionStatusSuccess {
-			var current model.SiteAccount
-			err := tx.Select("last_checkin_at", "last_checkin_status").
-				Where("id = ?", account.ID).First(&current).Error
-			if err == nil &&
-				current.LastCheckinStatus == model.SiteExecutionStatusSuccess &&
-				current.LastCheckinAt != nil && !current.LastCheckinAt.IsZero() &&
-				isSameLocalDay(*current.LastCheckinAt, now) {
-				writeRevision := account.CredentialRevision
-				if shouldPersistSiteCredential(account, accessToken) {
-					updated, credErr := persistSiteCredentialCAS(
-						tx,
-						account.ID,
-						writeRevision,
-						accessToken,
-						siteCredentialIsCookie(account, accessToken),
-					)
-					if credErr != nil {
-						return credErr
-					}
-					if !updated {
-						return errSiteAccountCredentialRevisionChanged
-					}
-				}
-				return nil
-			} else if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
-				return err
-			}
-		}
 		writeRevision := account.CredentialRevision
 		if shouldPersistSiteCredential(account, accessToken) {
 			updated, err := persistSiteCredentialCAS(
@@ -842,13 +812,35 @@ func updateAccountCheckinState(ctx context.Context, account *model.SiteAccount, 
 			}
 			writeRevision++
 		}
-		result := tx.Model(&model.SiteAccount{}).
-			Where("id = ? AND credential_revision = ?", account.ID, writeRevision).
-			Updates(updatePayload)
+		// 当日成功保护并入写谓词（对抗复审 P1）：迟到的失败结果不得把当日
+		// success 覆写回 failed。守卫必须存在于 UPDATE 的 WHERE 里——仅靠
+		// 事务内先 SELECT 再 UPDATE，在 MySQL/PostgreSQL 下并发提交的
+		// success 会落在两步之间（SELECT 读不到），TOCTOU 重新打开。
+		query := tx.Model(&model.SiteAccount{}).
+			Where("id = ? AND credential_revision = ?", account.ID, writeRevision)
+		if status != model.SiteExecutionStatusSuccess {
+			startOfToday := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+			query = query.Where(
+				"(last_checkin_status IS NULL OR last_checkin_status <> ?) OR last_checkin_at IS NULL OR last_checkin_at < ?",
+				model.SiteExecutionStatusSuccess,
+				startOfToday,
+			)
+		}
+		result := query.Updates(updatePayload)
 		if result.Error != nil {
 			return result.Error
 		}
 		if result.RowsAffected != 1 {
+			// 区分凭据 revision 并发变更与当日成功保护命中：前者是真实冲突，
+			// 后者保持当日成功现状、静默返回。
+			var current model.SiteAccount
+			if err := tx.Select("last_checkin_at", "last_checkin_status").
+				Where("id = ?", account.ID).First(&current).Error; err == nil &&
+				current.LastCheckinStatus == model.SiteExecutionStatusSuccess &&
+				current.LastCheckinAt != nil && !current.LastCheckinAt.IsZero() &&
+				isSameLocalDay(*current.LastCheckinAt, now) {
+				return nil
+			}
 			return errSiteAccountCredentialRevisionChanged
 		}
 		return nil

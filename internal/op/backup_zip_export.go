@@ -69,10 +69,11 @@ func (counter *backupZipEntryCounter) Write(p []byte) (int, error) {
 	return n, err
 }
 
-// backupZipRecordTokenCheckMinBytes：导入端 100k JSON token 上限的最小字节数
-// 下界（紧凑 JSON 里每个 token 至少约 2 字节，如 `0,`）。低于该字节数的记录
-// 不可能超过导入端 token 上限，跳过昂贵的 token 计数；超过才逐 token 校验。
-const backupZipRecordTokenCheckMinBytes = 200_000
+// backupZipRecordTokenCheckMinBytes：token 计数的字节阈值。JSON 里 `{`/`}`/
+// `[`/`]`/`0` 都是 1 字节 token，理论上每 token 可低至 1 字节，因此阈值取
+// 导入端 token 上限（100k）本身：低于该字节数的记录不可能超过导入上限，
+// 跳过昂贵的逐 token 计数；超过才校验。
+const backupZipRecordTokenCheckMinBytes = 100_000
 
 func newBackupZipExportGuard(sink io.Writer) *backupZipExportGuard {
 	guard := &backupZipExportGuard{sink: sink}

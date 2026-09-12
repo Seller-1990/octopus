@@ -15,6 +15,9 @@ services:
        # - OCTOPUS_BOOTSTRAP_PASSWORD=change-me
     container_name: octopus
     restart: unless-stopped
+    # 停机链路预算：HTTP drain(≤8s) + 统计/日志 flush(≤20s) 需要超出 docker
+    # 默认 10s 宽限的时间窗，否则 SIGKILL 会截断尾部写者（统计/日志丢失）。
+    stop_grace_period: 40s
 
 volumes:
   octopus-data:

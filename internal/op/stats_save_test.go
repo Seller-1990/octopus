@@ -135,13 +135,10 @@ func TestStatsSaveDBLockWaitRespectsContext(t *testing.T) {
 	}
 }
 
-// 日切覆盖保存在热路径上等锁超时：覆盖快照必须挂起重试队列且不向调用方
-// 报错（请求完成路径不能为统计落库阻塞或失败）。
-func TestStatsDailyUpdateEnqueuesOverrideOnLockTimeout(t *testing.T) {
+// 日切覆盖快照回归：翻转缓存之前，昨日累计值必须先单行落库（幂等 upsert），
+// 关闭「翻转后进程崩溃丢昨日尾窗」的窗口；热路径不再等待保存锁。
+func TestStatsDailyUpdatePersistsRolloverSnapshot(t *testing.T) {
 	ctx := setupBackupTestDB(t)
-	statsSaveCh <- struct{}{}
-	t.Cleanup(func() { <-statsSaveCh })
-
 	pendingDailyOverridesLock.Lock()
 	pendingDailyOverrides = nil
 	pendingDailyOverridesLock.Unlock()
@@ -152,17 +149,23 @@ func TestStatsDailyUpdateEnqueuesOverrideOnLockTimeout(t *testing.T) {
 	})
 
 	statsDailyCacheLock.Lock()
-	statsDailyCache = model.StatsDaily{Date: "20000101"}
+	statsDailyCache = model.StatsDaily{Date: "20000101", StatsMetrics: model.StatsMetrics{RequestSuccess: 5}}
 	statsDailyCacheLock.Unlock()
 
 	if err := StatsDailyUpdate(ctx, model.StatsMetrics{RequestSuccess: 1}); err != nil {
-		t.Fatalf("StatsDailyUpdate must degrade gracefully on lock timeout, got %v", err)
+		t.Fatalf("StatsDailyUpdate: %v", err)
 	}
-	pendingDailyOverridesLock.Lock()
-	count := len(pendingDailyOverrides)
-	pendingDailyOverridesLock.Unlock()
-	if count == 0 {
-		t.Fatal("rollover snapshot should be enqueued for retry after the lock timeout")
+
+	var rolloverRow model.StatsDaily
+	if err := dbpkg.GetDB().WithContext(ctx).
+		Where("date = ?", "20000101").First(&rolloverRow).Error; err != nil {
+		t.Fatalf("rollover snapshot must be persisted before the cache flip: %v", err)
+	}
+	if rolloverRow.StatsMetrics != (model.StatsMetrics{RequestSuccess: 5}) {
+		t.Fatalf("rollover snapshot content mismatch: %+v", rolloverRow.StatsMetrics)
+	}
+	if got := StatsTodayGet().Date; got != time.Now().Format("20060102") {
+		t.Fatalf("daily cache did not roll over: %q", got)
 	}
 }
 

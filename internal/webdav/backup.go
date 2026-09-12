@@ -45,7 +45,9 @@ func runBackupWithLimit(ctx context.Context, maxSize int64) error {
 
 	// 备份包含全部站点凭据（含明文 API Key/密码），传输通道必须留痕；
 	// http 目标意味着凭据明文过网，至少要在日志里留下可检索的告警。
-	if u, parseErr := url.Parse(cfg.URL); parseErr == nil && u.Scheme == "http" {
+	if u, parseErr := url.Parse(cfg.URL); parseErr != nil || u.Scheme == "" {
+		log.Warnf("SECURITY AUDIT: webdav backup URL is not a parseable absolute URL; backup contains all site credentials in cleartext")
+	} else if u.Scheme == "http" {
 		log.Warnf("SECURITY AUDIT: webdav backup target uses plaintext http (%s host); backup contains all site credentials in cleartext", u.Host)
 	}
 
