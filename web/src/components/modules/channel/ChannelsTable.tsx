@@ -32,6 +32,7 @@ import {
 import { toast } from '@/components/common/Toast';
 import { CardContent } from './CardContent';
 import { typeLabel } from './ChannelToolbar';
+import { useChannelFiltersStore } from './filter-store';
 import {
     Table,
     TableBody,
@@ -52,28 +53,39 @@ export type ChannelListItem = { raw: Channel; formatted: StatsMetricsFormatted }
 interface ChannelsTableProps {
     items: ChannelListItem[];
     highlightedId: number | null;
+    /** 跳转定位目标（可能不在当前页）：存在且属于本表数据时驱动自动翻页 */
+    focusId?: number | null;
+    /** 跳转请求 id：区分对同一目标的重复跳转 */
+    focusToken?: number | string | null;
     registerRow: (id: number, node: HTMLElement | null) => void;
 }
 
 // 类型徽章配色（对齐 AxonHub 的彩色 provider 徽章）
 const TYPE_BADGE_CLASS: Record<ChannelType, string> = {
     [ChannelType.OpenAIChat]: 'border-emerald-500/20 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400',
-    [ChannelType.OpenAIResponse]: 'border-sky-500/20 bg-sky-500/10 text-sky-700 dark:text-sky-400',
+    [ChannelType.OpenAIResponse]: 'border-cyan-500/20 bg-cyan-500/10 text-cyan-700 dark:text-cyan-400',
     [ChannelType.Anthropic]: 'border-orange-500/20 bg-orange-500/10 text-orange-700 dark:text-orange-400',
     [ChannelType.Gemini]: 'border-blue-500/20 bg-blue-500/10 text-blue-700 dark:text-blue-400',
     [ChannelType.Volcengine]: 'border-violet-500/20 bg-violet-500/10 text-violet-700 dark:text-violet-400',
     [ChannelType.OpenAIEmbedding]: 'border-slate-500/20 bg-slate-500/10 text-slate-700 dark:text-slate-400',
 };
 
-export function ChannelsTable({ items, highlightedId, registerRow }: ChannelsTableProps) {
+export function ChannelsTable({ items, highlightedId, focusId = null, focusToken = null, registerRow }: ChannelsTableProps) {
     const t = useTranslations('channel.table');
     const tPage = useTranslations('channel.page');
     const tCard = useTranslations('channel.card');
     const tFilters = useTranslations('channel.filters');
     const tForm = useTranslations('channel.form');
 
-    const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
-    const [isBatchBusy, setIsBatchBusy] = useState(false);
+    // 选中集合与批量执行状态上移到 store：视图/tab 切换卸载本组件时不清空
+    const selectedIds = useChannelFiltersStore((s) => s.selectedIds);
+    const setSelectedIds = useChannelFiltersStore((s) => s.setSelectedIds);
+    const isBatchBusy = useChannelFiltersStore((s) => s.isBatchBusy);
+    const setIsBatchBusy = useChannelFiltersStore((s) => s.setIsBatchBusy);
+    const filterType = useChannelFiltersStore((s) => s.type);
+    const filterStatus = useChannelFiltersStore((s) => s.status);
+    const filterReserve = useChannelFiltersStore((s) => s.reserve);
+
     const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
     const [pageSize, setPageSize] = useState<number>(20);
     const [pageIndex, setPageIndex] = useState(0);
@@ -97,23 +109,38 @@ export function ChannelsTable({ items, highlightedId, registerRow }: ChannelsTab
             const next = new Set([...prev].filter((id) => valid.has(id)));
             return next.size === prev.size ? prev : next;
         });
-    }, [items, isBatchBusy]);
+    }, [items, isBatchBusy, setSelectedIds]);
 
-    // 数据收缩后页码越界回退
+    // 数据收缩后页码越界回退；筛选条件变化时回到第 1 页
     useEffect(() => {
         setPageIndex((prev) => Math.min(prev, pageCount - 1));
     }, [pageCount]);
 
-    // 跳转定位目标不在当前页时自动翻页，让行挂载供定位重试命中
     useEffect(() => {
-        if (!highlightedId) return;
-        const index = items.findIndex((item) => item.raw.id === highlightedId);
+        setPageIndex(0);
+    }, [filterType, filterStatus, filterReserve]);
+
+    // 跳转定位目标不在当前页时自动翻页，让行挂载供定位重试命中。
+    // 1) 用 focusToken（跳转意图）而非 highlightedId（定位成功的标志），否则互相等待死锁；
+    // 2) appliedFocusRef 防止 30s 轮询带来的 items 新引用反复触发翻页、
+    //    与用户手动翻页拉扯
+    const appliedFocusRef = useRef<string | null>(null);
+    useEffect(() => {
+        if (!focusId) return;
+        const key = `${focusId}:${focusToken ?? ''}:${pageSize}`;
+        if (appliedFocusRef.current === key) return;
+        const index = items.findIndex((item) => item.raw.id === focusId);
         if (index < 0) return;
+        appliedFocusRef.current = key;
         setPageIndex(Math.floor(index / pageSize));
-    }, [highlightedId, items, pageSize]);
+    }, [focusId, focusToken, items, pageSize]);
 
     // managed 渠道只读，不可选中、不参与批量操作
-    const selectableIds = items.filter((item) => !item.raw.managed).map((item) => item.raw.id);
+    const selectableIds = useMemo(
+        () => items.filter((item) => !item.raw.managed).map((item) => item.raw.id),
+        [items],
+    );
+    const selectableIdSet = useMemo(() => new Set(selectableIds), [selectableIds]);
     const allSelected = selectableIds.length > 0 && selectableIds.every((id) => selectedIds.has(id));
     const someSelected = selectableIds.some((id) => selectedIds.has(id));
     const headerCheckboxRef = useRef<HTMLInputElement>(null);
@@ -125,7 +152,7 @@ export function ChannelsTable({ items, highlightedId, registerRow }: ChannelsTab
     }, [allSelected, someSelected]);
 
     const toggleAll = () => {
-        setSelectedIds(allSelected ? new Set() : new Set(selectableIds));
+        setSelectedIds(() => (allSelected ? new Set<number>() : new Set(selectableIds)));
     };
 
     const toggleOne = (id: number) => {
@@ -142,7 +169,7 @@ export function ChannelsTable({ items, highlightedId, registerRow }: ChannelsTab
 
     // 分批并发：几十条选中时一口气打满后端只会放大失败数
     const runBatch = async (action: (id: number) => Promise<unknown>) => {
-        const ids = [...selectedIds].filter((id) => selectableIds.includes(id));
+        const ids = [...selectedIds].filter((id) => selectableIdSet.has(id));
         if (ids.length === 0) return;
 
         setIsBatchBusy(true);
@@ -200,7 +227,7 @@ export function ChannelsTable({ items, highlightedId, registerRow }: ChannelsTab
                             <Trash2 className="size-3.5" />
                             {t('batchDelete')}
                         </Button>
-                        <Button type="button" variant="ghost" size="sm" className="h-7 rounded-lg text-xs" disabled={isBatchBusy} onClick={() => setSelectedIds(new Set())}>
+                        <Button type="button" variant="ghost" size="sm" className="h-7 rounded-lg text-xs" disabled={isBatchBusy} onClick={() => setSelectedIds(() => new Set<number>())}>
                             {t('cancelSelection')}
                         </Button>
                     </div>
@@ -209,18 +236,21 @@ export function ChannelsTable({ items, highlightedId, registerRow }: ChannelsTab
 
             <div className="min-h-0 flex-1 overflow-auto rounded-2xl border border-border/70 bg-card/50">
                 <Table>
-                    <TableHeader className="[&_th]:sticky [&_th]:top-0 [&_th]:z-10 [&_th]:bg-muted/60 [&_th]:backdrop-blur">
-                        <TableRow className="hover:bg-transparent border-b">
+                    {/* th 不透明白底 + 下边线：backdrop-blur 在 11 个吸顶格上会让低端 GPU 滚动掉帧 */}
+                    <TableHeader className="[&_th]:sticky [&_th]:top-0 [&_th]:z-10 [&_th]:bg-muted [&_th]:border-b [&_th]:border-border">
+                        <TableRow className="hover:bg-transparent border-b-0">
                             <TableHead className="w-10 pr-0">
-                                <input
-                                    ref={headerCheckboxRef}
-                                    type="checkbox"
-                                    className="size-3.5 cursor-pointer accent-primary"
-                                    checked={allSelected}
-                                    onChange={toggleAll}
-                                    aria-label={t('selectAll')}
-                                    disabled={selectableIds.length === 0 || isBatchBusy}
-                                />
+                                <label className="inline-flex cursor-pointer items-center justify-center p-2 -m-1">
+                                    <input
+                                        ref={headerCheckboxRef}
+                                        type="checkbox"
+                                        className="size-3.5 cursor-pointer accent-primary"
+                                        checked={allSelected}
+                                        onChange={toggleAll}
+                                        aria-label={t('selectAll')}
+                                        disabled={selectableIds.length === 0 || isBatchBusy}
+                                    />
+                                </label>
                             </TableHead>
                             <TableHead className="min-w-40">{t('name')}</TableHead>
                             <TableHead>{t('type')}</TableHead>
@@ -228,9 +258,9 @@ export function ChannelsTable({ items, highlightedId, registerRow }: ChannelsTab
                             <TableHead>{t('reserve')}</TableHead>
                             <TableHead className="text-right">{t('models')}</TableHead>
                             <TableHead className="text-right">{t('keys')}</TableHead>
-                            <TableHead>{t('proxy')}</TableHead>
-                            <TableHead className="text-right">{t('requests')}</TableHead>
-                            <TableHead className="text-right">{t('cost')}</TableHead>
+                            <TableHead className="hidden md:table-cell">{t('proxy')}</TableHead>
+                            <TableHead className="hidden md:table-cell text-right">{t('requests')}</TableHead>
+                            <TableHead className="hidden md:table-cell text-right">{t('cost')}</TableHead>
                             <TableHead className="text-right">{t('actions')}</TableHead>
                         </TableRow>
                     </TableHeader>
@@ -246,14 +276,16 @@ export function ChannelsTable({ items, highlightedId, registerRow }: ChannelsTab
                             >
                                 <TableCell className="pr-0">
                                     {!channel.managed && (
-                                        <input
-                                            type="checkbox"
-                                            className="size-3.5 cursor-pointer accent-primary"
-                                            checked={selectedIds.has(channel.id)}
-                                            onChange={() => toggleOne(channel.id)}
-                                            disabled={isBatchBusy}
-                                            aria-label={t('selectOne', { name: channel.name })}
-                                        />
+                                        <label className="inline-flex cursor-pointer items-center justify-center p-2 -m-1">
+                                            <input
+                                                type="checkbox"
+                                                className="size-3.5 cursor-pointer accent-primary"
+                                                checked={selectedIds.has(channel.id)}
+                                                onChange={() => toggleOne(channel.id)}
+                                                disabled={isBatchBusy}
+                                                aria-label={t('selectOne', { name: channel.name })}
+                                            />
+                                        </label>
                                     )}
                                 </TableCell>
                                 <NameCell
@@ -285,16 +317,16 @@ export function ChannelsTable({ items, highlightedId, registerRow }: ChannelsTab
                                 <TableCell className="text-right tabular-nums">
                                     {channel.keys.filter((k) => k.enabled).length}/{channel.keys.length}
                                 </TableCell>
-                                <TableCell>
+                                <TableCell className="hidden md:table-cell">
                                     <span className="text-xs text-muted-foreground">
                                         {channel.proxy_mode === 'pool' ? t('proxyPool') : t('proxyDirect')}
                                     </span>
                                 </TableCell>
-                                <TableCell className="text-right tabular-nums">
+                                <TableCell className="hidden md:table-cell text-right tabular-nums">
                                     {formatted.request_count.formatted.value}
                                     <span className="ml-1 text-xs text-muted-foreground">{formatted.request_count.formatted.unit}</span>
                                 </TableCell>
-                                <TableCell className="text-right tabular-nums">
+                                <TableCell className="hidden md:table-cell text-right tabular-nums">
                                     {formatted.total_cost.formatted.value}
                                     <span className="ml-1 text-xs text-muted-foreground">{formatted.total_cost.formatted.unit}</span>
                                 </TableCell>

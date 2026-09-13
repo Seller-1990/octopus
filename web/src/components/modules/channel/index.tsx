@@ -242,6 +242,10 @@ export function Channel() {
             <ChannelsTable
                 items={visibleManualChannels}
                 highlightedId={highlightedChannelId}
+                // 跳转目标可能不在当前页：focusId 驱动表格自动翻页后，
+                // 定位重试才能找到行节点（highlightedId 此时尚未设置）
+                focusId={activeTab === 'manual' ? targetedChannelId : null}
+                focusToken={pendingChannelJump?.requestId ?? null}
                 registerRow={setChannelRowRef}
             />
         )

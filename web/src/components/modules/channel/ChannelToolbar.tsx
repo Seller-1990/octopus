@@ -86,7 +86,8 @@ export function ChannelToolbar({ channels }: ChannelToolbarProps) {
 
     return (
         <div className="space-y-3 px-1 pb-4">
-            <div className="flex flex-wrap items-center gap-2">
+            {/* 移动端单行横滑，避免 chips 换行挤压固定高度下的内容区 */}
+            <div className="flex flex-nowrap items-center gap-2 overflow-x-auto pb-1 -mx-1 px-1 sm:flex-wrap sm:overflow-visible sm:mx-0 sm:px-0 [&>*]:shrink-0">
                 <TypeChip
                     active={type === 'all'}
                     label={t('chipsAll')}
@@ -274,19 +275,22 @@ function SyncModelsButton() {
 
     return (
         <Tooltip>
+            {/* disabled 按钮不派发 pointer 事件，tooltip 挂在 span 上同步中仍可看上次同步时间 */}
             <TooltipTrigger asChild>
-                <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    className="h-9 rounded-xl px-3 text-xs"
-                    disabled={syncChannel.isPending}
-                    onClick={handleSync}
-                    aria-label={t('syncModels')}
-                >
-                    <RefreshCw className={`size-3.5 ${syncChannel.isPending ? 'animate-spin' : ''}`} />
-                    {t('syncModels')}
-                </Button>
+                <span className="inline-flex">
+                    <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="h-9 rounded-xl px-3 text-xs"
+                        disabled={syncChannel.isPending}
+                        onClick={handleSync}
+                        aria-label={t('syncModels')}
+                    >
+                        <RefreshCw className={`size-3.5 ${syncChannel.isPending ? 'animate-spin' : ''}`} />
+                        {t('syncModels')}
+                    </Button>
+                </span>
             </TooltipTrigger>
             <TooltipContent>
                 <span className="block">{lastSyncLabel}</span>

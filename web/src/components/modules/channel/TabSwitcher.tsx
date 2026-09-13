@@ -3,7 +3,7 @@
 import { useMemo } from 'react';
 import { useTranslations } from 'next-intl';
 import { motion } from 'motion/react';
-import { useChannelList } from '@/api/endpoints/channel';
+import { useManualChannelCount } from '@/api/endpoints/channel';
 import { useSiteChannelList } from '@/api/endpoints/site-channel';
 import { SiteChannelCompletionAction } from '@/components/modules/site-channel';
 import { cn } from '@/lib/utils';
@@ -20,15 +20,16 @@ export function ChannelTabSwitcher({ className }: Props) {
     const t = useTranslations('channel.tabs');
     const activeTab = useChannelTabStore((s) => s.activeTab);
     const setActiveTab = useChannelTabStore((s) => s.setActiveTab);
-    const { data: channelsData } = useChannelList();
     const { data: siteChannelsData } = useSiteChannelList({ includeHistory: false });
+    // 计数用廉价投影：useChannelList 的全量格式化 select 对一个数字是双倍浪费
+    const { data: manualCount } = useManualChannelCount();
 
     const counts = useMemo(
         () => ({
             site: (siteChannelsData ?? []).filter((card) => card.account_count > 0).length,
-            manual: (channelsData ?? []).filter((c) => !c.raw.managed).length,
+            manual: manualCount ?? 0,
         }),
-        [channelsData, siteChannelsData],
+        [siteChannelsData, manualCount],
     );
 
     return (

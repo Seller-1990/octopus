@@ -188,6 +188,9 @@ export function CardContent({ channel, stats }: { channel: Channel; stats: Stats
             onSuccess: () => {
                 setIsEditing(false);
                 setIsOpen(false);
+            },
+            onError: (error) => {
+                toast.error(error.message);
             }
         });
     };

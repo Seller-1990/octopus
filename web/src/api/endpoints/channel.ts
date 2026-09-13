@@ -158,15 +158,49 @@ export type FetchModelRequest = {
     custom_header?: CustomHeader[];
 };
 
+// select 必须是模块级稳定引用：React Query v5 的 observer memo 依赖
+// select 引用不变，内联箭头只靠 React Compiler 兜底，属于隐形退化引信
+function selectChannelList(data: ChannelServer[]): Array<{ raw: Channel; formatted: StatsMetricsFormatted }> {
+    return data.map((item) => ({
+        raw: ({
+            ...item,
+            managed: item.managed ?? false,
+            managed_source: item.managed_source ?? null,
+            base_urls: item.base_urls ?? [],
+            custom_header: item.custom_header ?? [],
+            ws_mode: item.ws_mode ?? 'inherit',
+            protocol_policy: item.protocol_policy ?? 'auto',
+            tls_fingerprint: item.tls_fingerprint ?? '',
+            allow_lossy: item.allow_lossy ?? false,
+            is_reserve: item.is_reserve ?? false,
+            keys: item.keys ?? [],
+            proxy_mode: item.proxy_mode ?? 'direct',
+            proxy_config_id: item.proxy_config_id ?? null,
+        }) satisfies Channel,
+        formatted: {
+            input_token: formatCount(item.stats.input_token),
+            output_token: formatCount(item.stats.output_token),
+            total_token: formatCount(item.stats.input_token + item.stats.output_token),
+            input_cost: formatMoney(item.stats.input_cost),
+            output_cost: formatMoney(item.stats.output_cost),
+            total_cost: formatMoney(item.stats.input_cost + item.stats.output_cost),
+            request_success: formatCount(item.stats.request_success),
+            request_failed: formatCount(item.stats.request_failed),
+            request_count: formatCount(item.stats.request_success + item.stats.request_failed),
+            wait_time: formatTime(item.stats.wait_time),
+        }
+    })) as Array<{ raw: Channel; formatted: StatsMetricsFormatted }>;
+}
+
 /**
  * 获取渠道列表 Hook
- * 
+ *
  * @example
  * const { data: channels, isLoading, error } = useChannelList();
- * 
+ *
  * if (isLoading) return <Loading />;
  * if (error) return <Error message={error.message} />;
- * 
+ *
  * channels?.forEach(channel => console.log(channel.raw.name));
  */
 export function useChannelList() {
@@ -175,35 +209,22 @@ export function useChannelList() {
         queryFn: async () => {
             return apiClient.get<ChannelServer[]>('/api/v1/channel/list');
         },
-        select: (data) => data.map((item) => ({
-            raw: ({
-                ...item,
-                managed: item.managed ?? false,
-                managed_source: item.managed_source ?? null,
-                base_urls: item.base_urls ?? [],
-                custom_header: item.custom_header ?? [],
-                ws_mode: item.ws_mode ?? 'inherit',
-                protocol_policy: item.protocol_policy ?? 'auto',
-                tls_fingerprint: item.tls_fingerprint ?? '',
-                allow_lossy: item.allow_lossy ?? false,
-                is_reserve: item.is_reserve ?? false,
-                keys: item.keys ?? [],
-                proxy_mode: item.proxy_mode ?? 'direct',
-                proxy_config_id: item.proxy_config_id ?? null,
-            }) satisfies Channel,
-            formatted: {
-                input_token: formatCount(item.stats.input_token),
-                output_token: formatCount(item.stats.output_token),
-                total_token: formatCount(item.stats.input_token + item.stats.output_token),
-                input_cost: formatMoney(item.stats.input_cost),
-                output_cost: formatMoney(item.stats.output_cost),
-                total_cost: formatMoney(item.stats.input_cost + item.stats.output_cost),
-                request_success: formatCount(item.stats.request_success),
-                request_failed: formatCount(item.stats.request_failed),
-                request_count: formatCount(item.stats.request_success + item.stats.request_failed),
-                wait_time: formatTime(item.stats.wait_time),
-            }
-        })) as Array<{ raw: Channel; formatted: StatsMetricsFormatted }>,
+        select: selectChannelList,
+        refetchInterval: 30000,
+    });
+}
+
+/**
+ * 普通渠道数量的廉价投影：与 useChannelList 共享缓存，但 select 只做计数，
+ * 避免 tab 计数为一次全量格式化付双倍成本
+ */
+export function useManualChannelCount() {
+    return useQuery({
+        queryKey: ['channels', 'list'],
+        queryFn: async () => {
+            return apiClient.get<ChannelServer[]>('/api/v1/channel/list');
+        },
+        select: (data: ChannelServer[]) => data.filter((item) => !item.managed).length,
         refetchInterval: 30000,
     });
 }

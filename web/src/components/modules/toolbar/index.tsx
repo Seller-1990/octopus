@@ -30,7 +30,6 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { buttonVariants } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { useNavStore, type NavItem } from '@/components/modules/navbar';
-import { CreateDialogContent as ChannelCreateContent } from '@/components/modules/channel/Create';
 import { CreateDialogContent as GroupCreateContent } from '@/components/modules/group/Create';
 import { GroupAutoGroupDialogContent } from '@/components/modules/group/AutoGroupDialog';
 import { CreateDialogContent as ModelCreateContent } from '@/components/modules/model/Create';
@@ -90,15 +89,12 @@ function isToolbarPage(item: NavItem): item is ToolbarPage {
 
 function CreateDialogContent({ activeItem }: { activeItem: ToolbarPage }) {
     switch (activeItem) {
-        case 'site':
-            return null;
-        case 'channel':
-            return <ChannelCreateContent />;
         case 'group':
             return <GroupCreateContent />;
         case 'model':
             return <ModelCreateContent />;
-        case 'log':
+        default:
+            // 渠道的新建对话框已内聚到渠道页工具栏（ChannelToolbar）
             return null;
     }
 }
@@ -154,7 +150,10 @@ export function Toolbar() {
     };
 
     const isLogToolbar = toolbarItem === 'log';
-    const showLayoutOptions = toolbarItem === 'channel' || toolbarItem === 'model';
+    // 渠道 manual tab 的布局切换在页面工具栏的分段控件里，避免双入口
+    const showLayoutOptions = toolbarItem === 'model';
+    // 渠道 manual tab 有常驻内联搜索框，隐藏全局搜索避免同名双输入互扰
+    const hideGlobalSearch = toolbarItem === 'channel' && activeChannelTab === 'manual';
     const showSiteSortOptions = toolbarItem === 'site';
     const showCombinedSortOptions = toolbarItem === 'channel' || toolbarItem === 'group';
     const showSortOptions = !isLogToolbar;
@@ -267,8 +266,9 @@ export function Toolbar() {
                 transition={{ duration: 0.2 }}
                 className="flex items-center gap-2"
             >
-                {/* 搜索框 - 始终可见 */}
-                <div className="relative h-9 w-9">
+                {/* 搜索框 - 始终可见（渠道 manual tab 例外：页面有常驻内联搜索） */}
+                {!hideGlobalSearch && (
+                    <div className="relative h-9 w-9">
                     {!searchExpanded ? (
                         <motion.button
                             ref={searchButtonRef}
@@ -320,6 +320,7 @@ export function Toolbar() {
                         </motion.div>
                     )}
                 </div>
+                )}
 
                 {/* 日志页面的筛选按钮 */}
                 {isLogToolbar && <LogFilterPopover />}
@@ -353,7 +354,7 @@ export function Toolbar() {
                                         <p className="text-xs font-medium text-muted-foreground">
                                             {t('popover.layout')}
                                         </p>
-                                        <div className={cn('grid gap-2', toolbarItem === 'channel' ? 'grid-cols-3' : 'grid-cols-2')}>
+                                        <div className="grid grid-cols-2 gap-2">
                                             {layoutOptionsFor(toolbarItem).map(({ value, icon: Icon, labelKey }) => (
                                                 <button
                                                     key={value}
