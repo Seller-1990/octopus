@@ -110,7 +110,8 @@
           "siteFallback": "站点 #{id}",
           "empty": "未找到渠道"
         }
-      }
+      },
+      "table": "表格"
     }
   },
   "common": {
@@ -1409,7 +1410,8 @@
       "toast": {
         "enabled": "渠道已启用",
         "disabled": "渠道已禁用"
-      }
+      },
+      "managedBadge": "站点投影"
     },
     "detail": {
       "title": {
@@ -1520,6 +1522,36 @@
       "tlsFingerprintFirefox": "Firefox",
       "uaPreset": "UA 伪装预设",
       "uaPresetCustom": "自定义 / 不设置"
+    },
+    "table": {
+      "name": "名称",
+      "type": "类型",
+      "status": "状态",
+      "reserve": "公益/中转",
+      "models": "模型数",
+      "keys": "Key",
+      "proxy": "代理",
+      "requests": "请求数",
+      "cost": "花费",
+      "proxyDirect": "直连",
+      "proxyPool": "代理池",
+      "empty": "当前筛选下没有普通渠道",
+      "loadFailed": "普通渠道加载失败：{message}",
+      "targetedManagedTitle": "定位的托管渠道",
+      "targetedManagedHint": "这个渠道由站点账号投影生成，默认不会出现在普通渠道列表中。"
+    },
+    "filters": {
+      "type": "类型",
+      "typeAll": "全部类型",
+      "status": "状态",
+      "statusAll": "全部状态",
+      "statusEnabled": "已启用",
+      "statusDisabled": "已停用",
+      "reserve": "公益/中转",
+      "reserveAll": "全部",
+      "charity": "公益",
+      "transit": "中转",
+      "reset": "清除筛选"
     }
   },
   "siteChannel": {

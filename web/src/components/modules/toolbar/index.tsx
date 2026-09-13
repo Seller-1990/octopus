@@ -15,6 +15,7 @@ import {
     RefreshCw,
     Search,
     SlidersHorizontal,
+    Table2,
     WandSparkles,
     X
 } from 'lucide-react';
@@ -45,10 +46,22 @@ import { ToolbarMenu, type ToolbarAction } from './ToolbarMenu';
 import {
     useToolbarViewOptionsStore,
     TOOLBAR_PAGES,
+    type ToolbarLayout,
     type ToolbarPage,
     type ToolbarSortField,
     type ToolbarSortOrder,
 } from './view-options-store';
+
+// 表格布局目前仅渠道页支持，其余页保持 网格/列表 两态
+function layoutOptionsFor(item: ToolbarPage | null): Array<{ value: ToolbarLayout; icon: typeof LayoutGrid; labelKey: string }> {
+    const base = [
+        { value: 'grid' as const, icon: LayoutGrid, labelKey: 'popover.grid' },
+        { value: 'list' as const, icon: List, labelKey: 'popover.list' },
+    ];
+    return item === 'channel'
+        ? [...base, { value: 'table' as const, icon: Table2, labelKey: 'popover.table' }]
+        : base;
+}
 
 type CombinedSortOption = {
     value: `${ToolbarSortField}-${ToolbarSortOrder}`;
@@ -348,33 +361,23 @@ export function Toolbar() {
                                         <p className="text-xs font-medium text-muted-foreground">
                                             {t('popover.layout')}
                                         </p>
-                                        <div className="grid grid-cols-2 gap-2">
-                                            <button
-                                                type="button"
-                                                onClick={() => setLayout(toolbarItem, 'grid')}
-                                                className={cn(
-                                                    'h-8 rounded-lg border text-xs font-medium inline-flex items-center justify-center gap-1.5 transition-colors',
-                                                    layout === 'grid'
-                                                        ? 'border-primary/30 bg-primary text-primary-foreground'
-                                                        : 'border-border bg-muted/20 text-foreground hover:bg-muted/30'
-                                                )}
-                                            >
-                                                <LayoutGrid className="size-3.5" />
-                                                {t('popover.grid')}
-                                            </button>
-                                            <button
-                                                type="button"
-                                                onClick={() => setLayout(toolbarItem, 'list')}
-                                                className={cn(
-                                                    'h-8 rounded-lg border text-xs font-medium inline-flex items-center justify-center gap-1.5 transition-colors',
-                                                    layout === 'list'
-                                                        ? 'border-primary/30 bg-primary text-primary-foreground'
-                                                        : 'border-border bg-muted/20 text-foreground hover:bg-muted/30'
-                                                )}
-                                            >
-                                                <List className="size-3.5" />
-                                                {t('popover.list')}
-                                            </button>
+                                        <div className={cn('grid gap-2', toolbarItem === 'channel' ? 'grid-cols-3' : 'grid-cols-2')}>
+                                            {layoutOptionsFor(toolbarItem).map(({ value, icon: Icon, labelKey }) => (
+                                                <button
+                                                    key={value}
+                                                    type="button"
+                                                    onClick={() => setLayout(toolbarItem, value)}
+                                                    className={cn(
+                                                        'h-8 rounded-lg border text-xs font-medium inline-flex items-center justify-center gap-1.5 transition-colors',
+                                                        layout === value
+                                                            ? 'border-primary/30 bg-primary text-primary-foreground'
+                                                            : 'border-border bg-muted/20 text-foreground hover:bg-muted/30'
+                                                    )}
+                                                >
+                                                    <Icon className="size-3.5" />
+                                                    {t(labelKey)}
+                                                </button>
+                                            ))}
                                         </div>
                                     </div>
                                 )}

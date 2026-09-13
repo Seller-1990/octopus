@@ -110,7 +110,8 @@
           "siteFallback": "Site #{id}",
           "empty": "No channels found"
         }
-      }
+      },
+      "table": "Table"
     }
   },
   "common": {
@@ -1409,7 +1410,8 @@
       "toast": {
         "enabled": "Channel enabled",
         "disabled": "Channel disabled"
-      }
+      },
+      "managedBadge": "Site projected"
     },
     "detail": {
       "title": {
@@ -1520,6 +1522,36 @@
       "tlsFingerprintFirefox": "Firefox",
       "uaPreset": "User-Agent Preset",
       "uaPresetCustom": "Custom / None"
+    },
+    "table": {
+      "name": "Name",
+      "type": "Type",
+      "status": "Status",
+      "reserve": "Free/Transit",
+      "models": "Models",
+      "keys": "Keys",
+      "proxy": "Proxy",
+      "requests": "Requests",
+      "cost": "Cost",
+      "proxyDirect": "Direct",
+      "proxyPool": "Pool",
+      "empty": "No channels match the current filters",
+      "loadFailed": "Failed to load channels: {message}",
+      "targetedManagedTitle": "Targeted managed channel",
+      "targetedManagedHint": "This channel is projected from a site account and does not appear in the manual channel list by default."
+    },
+    "filters": {
+      "type": "Type",
+      "typeAll": "All types",
+      "status": "Status",
+      "statusAll": "All statuses",
+      "statusEnabled": "Enabled",
+      "statusDisabled": "Disabled",
+      "reserve": "Free/Transit",
+      "reserveAll": "All",
+      "charity": "Free",
+      "transit": "Transit",
+      "reset": "Clear filters"
     }
   },
   "siteChannel": {

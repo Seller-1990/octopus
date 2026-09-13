@@ -2,7 +2,8 @@ import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { DEFAULT_LOG_DATE_RANGE, isLogDateRange, type LogDateRange } from '@/lib/log-range';
 
-export type ToolbarLayout = 'grid' | 'list';
+// 'table' 目前仅渠道页消费；其余页读到该值时按各自渲染回退为 grid。
+export type ToolbarLayout = 'grid' | 'list' | 'table';
 export type ToolbarSortOrder = 'asc' | 'desc';
 export type ToolbarSortField = 'default' | 'name' | 'created' | 'balance';
 export type ToolbarSortablePage = 'site' | 'channel' | 'group';
