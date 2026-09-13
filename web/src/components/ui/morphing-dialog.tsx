@@ -253,9 +253,11 @@ function MorphingDialogContent({
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
         // 与下方 useClickOutside 的忽略逻辑一致：上层 portal 内容（Select/浮层等）
-        // 打开时 Escape 只关闭上层，不连带关闭本对话框
+        // 打开时 Escape 只关闭上层，不连带关闭本对话框。
+        // 排除 data-state="closed"：Radix Presence 退场动画期间 content 仍在
+        // DOM，不过滤会让连续第二次 Esc 被误判为"上层还开着"而吞掉。
         for (const slot of PORTAL_IGNORED_SLOTS) {
-          if (document.querySelector(`[data-slot="${slot}"]`)) return;
+          if (document.querySelector(`[data-slot="${slot}"][data-state="open"]`)) return;
         }
         setIsOpen(false);
       }
@@ -320,7 +322,8 @@ function MorphingDialogContent({
     (event) => {
       const target = event.target as HTMLElement | null;
       for (const slot of PORTAL_IGNORED_SLOTS) {
-        const selector = `[data-slot="${slot}"]`;
+        // 与 Esc 处理同口径：排除退场动画中 data-state="closed" 的残留节点
+        const selector = `[data-slot="${slot}"][data-state="open"]`;
         if (target?.closest(selector)) return true;
         if (document.querySelector(selector)) return true;
       }

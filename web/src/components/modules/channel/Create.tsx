@@ -1,4 +1,5 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import {
     MorphingDialogClose,
     MorphingDialogTitle,
@@ -51,25 +52,53 @@ const EMPTY_FORM: ChannelFormData = {
 export function CreateDialogContent() {
     const { setIsOpen } = useMorphingDialog();
     const createChannel = useCreateChannel();
+    const queryClient = useQueryClient();
     const [formData, setFormData] = useState<ChannelFormData>({ ...EMPTY_FORM });
+    // 预设选择器是「一次性命令」而非持久选中态：应用后立即清空显示，
+    // 同一预设可重复选择，触发器也不会在用户手改后显示过期名称
+    const [presetSelection, setPresetSelection] = useState('');
     const t = useTranslations('channel.create');
     const tForm = useTranslations('channel.form');
     const tProxy = useTranslations('proxyPool');
 
-    // 预设填充：名称留空才覆盖（尊重用户已输入的名称），URL/类型以预设为准
+    // 名称溯源：预设填的名允许被下一个预设覆盖，用户手输名则尊重。
+    // ChannelForm 的每次名称变更都会清掉该标志（applyPreset 例外，见下）
+    const nameFromPresetRef = useRef(false);
+
+    // 预设填充：名称为空或来自上一个预设时覆盖；地址仅替换第一行（保留
+    // 用户已添加的其余行）；协议切换后与该协议无关的 ws_mode 脏值一并复位
     const applyPreset = (presetId: string) => {
         const preset = PROVIDER_PRESETS.find((p) => p.id === presetId);
         if (!preset) return;
+        const fillName = formData.name.trim() === '' || nameFromPresetRef.current;
         setFormData((prev) => ({
             ...prev,
-            name: prev.name.trim() === '' ? preset.name : prev.name,
+            name: prev.name.trim() === '' || nameFromPresetRef.current ? preset.name : prev.name,
             type: preset.type,
-            base_urls: [{ url: preset.baseUrl, delay: 0 }],
+            ws_mode: preset.type === ChannelType.OpenAIResponse ? prev.ws_mode : 'inherit',
+            base_urls: [
+                { url: preset.baseUrl, delay: 0 },
+                ...prev.base_urls.slice(1),
+            ],
         }));
+        nameFromPresetRef.current = fillName;
+        setPresetSelection('');
+    };
+
+    const handleFormDataChange = (next: ChannelFormData) => {
+        if (next.name !== formData.name) {
+            nameFromPresetRef.current = false;
+        }
+        setFormData(next);
     };
 
     const handleSubmit = (event: React.FormEvent<HTMLFormElement>) => {
         event.preventDefault();
+        const cachedChannels = queryClient.getQueryData<{ name?: string }[]>(['channels', 'list']);
+        if (cachedChannels?.some((item) => item.name === formData.name.trim())) {
+            toast.error(t('duplicateName'));
+            return;
+        }
         const normalizedBaseUrls = (formData.base_urls ?? []).filter((u) => u.url.trim()).map((u) => ({
             url: u.url.trim(),
             delay: Number(u.delay || 0),
@@ -134,13 +163,13 @@ export function CreateDialogContent() {
                 </header>
             </MorphingDialogTitle>
             <MorphingDialogDescription disableLayoutAnimation className="flex-1 min-h-0 overflow-auto">
-                <div className="space-y-3">
+                <div className="space-y-4 px-1">
                     <div className="space-y-2">
-                        <label className="text-sm font-medium text-card-foreground">
+                        <label htmlFor="channel-preset-select" className="text-sm font-medium text-card-foreground">
                             {tForm('presetPlaceholder')}
                         </label>
-                        <Select onValueChange={applyPreset}>
-                            <SelectTrigger className="rounded-xl w-full border border-border px-4 py-2 text-foreground">
+                        <Select value={presetSelection} onValueChange={applyPreset}>
+                            <SelectTrigger id="channel-preset-select" className="rounded-xl w-full border border-border px-4 py-2 text-foreground">
                                 <SelectValue placeholder={tForm('presetPlaceholder')} />
                             </SelectTrigger>
                             <SelectContent className="rounded-xl">
@@ -158,10 +187,11 @@ export function CreateDialogContent() {
                                 ))}
                             </SelectContent>
                         </Select>
+                        <p className="text-xs text-muted-foreground">{tForm('presetHint')}</p>
                     </div>
                     <ChannelForm
                         formData={formData}
-                        onFormDataChange={setFormData}
+                        onFormDataChange={handleFormDataChange}
                         onSubmit={handleSubmit}
                         isPending={createChannel.isPending}
                         submitText={t('submit')}

@@ -11,6 +11,7 @@ import (
 
 	"github.com/bestruirui/octopus/internal/model"
 	"github.com/bestruirui/octopus/internal/transformer/outbound"
+	outGemini "github.com/bestruirui/octopus/internal/transformer/outbound/gemini"
 	"github.com/dlclark/regexp2"
 )
 
@@ -91,10 +92,16 @@ func fetchGeminiModels(client *http.Client, ctx context.Context, request model.C
 	pageToken := ""
 
 	for {
+		// 与 chat 适配器的 G-H5 规则同口径：base 缺版本段时先补 /v1beta 再拼
+		// /models，否则裸主机渠道 chat 正常但 /models 404（Gemini 官方域名即裸主机）
+		versionedBase, urlErr := outGemini.AppendVersionFallback(request.GetBaseUrl())
+		if urlErr != nil {
+			versionedBase = request.GetBaseUrl()
+		}
 		req, err := http.NewRequestWithContext(
 			ctx,
 			http.MethodGet,
-			request.GetBaseUrl()+"/models",
+			strings.TrimSuffix(versionedBase, "/")+"/models",
 			nil,
 		)
 		if err != nil {

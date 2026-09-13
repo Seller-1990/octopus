@@ -12,18 +12,26 @@ export interface ProviderPreset {
     group: ProviderPresetGroup;
 }
 
-// 调研基线（2026-09）：所有列出的提供商均提供 OpenAI 兼容或既有适配器协议端点，
-// 无需新增 OutboundType。Anthropic 协议端点的 base_url 需带 /v1（适配器只追加 /messages）。
+// 调研基线（2026-09 核对官方文档）：所有列出的提供商均提供 OpenAI 兼容或既有
+// 适配器协议端点，无需新增 OutboundType。注意事项：
+// 1. base_url 与后端拼接规则组合后的完整路径（openai 系追加 /chat/completions、
+//    anthropic 系追加 /messages、gemini 自动补版本段）
+// 2. 「拉取模型」(base + /models) 并非所有提供商都有——deepseek-anthropic、
+//    volcengine(Responses) 未证实有模型列表端点，这些预设需手填模型
+// 3. 本地组以 Octopus 服务端进程视角解析：容器部署时 127.0.0.1 指向容器自身，
+//    需改为 host.docker.internal 或局域网 IP
 export const PROVIDER_PRESETS: ProviderPreset[] = [
     // 官方
     { id: 'openai', name: 'OpenAI', type: ChannelType.OpenAIChat, baseUrl: 'https://api.openai.com/v1', group: 'official' },
+    { id: 'openai-responses', name: 'OpenAI (Responses API)', type: ChannelType.OpenAIResponse, baseUrl: 'https://api.openai.com/v1', group: 'official' },
     { id: 'anthropic', name: 'Anthropic', type: ChannelType.Anthropic, baseUrl: 'https://api.anthropic.com/v1', group: 'official' },
-    { id: 'gemini', name: 'Google Gemini', type: ChannelType.Gemini, baseUrl: 'https://generativelanguage.googleapis.com', group: 'official' },
+    // chat 适配器与 fetch-models 均可处理带 /v1beta 的 base；裸主机在 fetch 链路无版本回退
+    { id: 'gemini', name: 'Google Gemini', type: ChannelType.Gemini, baseUrl: 'https://generativelanguage.googleapis.com/v1beta', group: 'official' },
 
     // 国内
     { id: 'deepseek', name: 'DeepSeek (深度求索)', type: ChannelType.OpenAIChat, baseUrl: 'https://api.deepseek.com', group: 'china' },
     { id: 'deepseek-anthropic', name: 'DeepSeek (Anthropic 协议)', type: ChannelType.Anthropic, baseUrl: 'https://api.deepseek.com/anthropic/v1', group: 'china' },
-    { id: 'moonshot', name: 'Moonshot Kimi', type: ChannelType.OpenAIChat, baseUrl: 'https://api.moonshot.cn/v1', group: 'china' },
+    { id: 'moonshot', name: 'Moonshot AI (Kimi)', type: ChannelType.OpenAIChat, baseUrl: 'https://api.moonshot.cn/v1', group: 'china' },
     { id: 'zhipu', name: 'Zhipu GLM (智谱)', type: ChannelType.OpenAIChat, baseUrl: 'https://open.bigmodel.cn/api/paas/v4', group: 'china' },
     { id: 'minimax-cn', name: 'MiniMax (国内)', type: ChannelType.OpenAIChat, baseUrl: 'https://api.minimaxi.com/v1', group: 'china' },
     { id: 'dashscope', name: 'DashScope (阿里百炼·兼容模式)', type: ChannelType.OpenAIChat, baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1', group: 'china' },

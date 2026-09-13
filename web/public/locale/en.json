@@ -1484,7 +1484,8 @@
     "create": {
       "dialogTitle": "Create New Channel",
       "submit": "Create Channel",
-      "submitting": "Creating..."
+      "submitting": "Creating...",
+      "duplicateName": "A channel with this name already exists"
     },
     "form": {
       "add": "Add",
@@ -1506,7 +1507,7 @@
       "modelAdd": "Add",
       "modelRefresh": "Refresh",
       "modelRefreshSuccess": "Models fetched successfully",
-      "modelRefreshFailed": "Failed to fetch models",
+      "modelRefreshFailed": "Failed to fetch models — you can enter models manually",
       "modelRefreshEmpty": "No models found",
       "modelSelected": "Selected Models",
       "modelNoSelected": "No models selected",
@@ -1541,7 +1542,9 @@
       "presetGroupOfficial": "Official",
       "presetGroupChina": "China",
       "presetGroupGlobal": "Global",
-      "presetGroupLocal": "Local"
+      "presetGroupLocal": "Local",
+      "presetHint": "Template fills the URL and protocol type; local (127.0.0.1) templates resolve inside the server process — adjust for container deployments",
+      "duplicateName": "A channel with this name already exists"
     },
     "table": {
       "name": "Name",

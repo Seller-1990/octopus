@@ -1484,7 +1484,8 @@
     "create": {
       "dialogTitle": "建立新供應源",
       "submit": "建立供應源",
-      "submitting": "建立中..."
+      "submitting": "建立中...",
+      "duplicateName": "已存在同名渠道，請更換名稱"
     },
     "form": {
       "add": "新增",
@@ -1506,7 +1507,7 @@
       "modelAdd": "新增",
       "modelRefresh": "重新整理",
       "modelRefreshSuccess": "模型列表獲取成功",
-      "modelRefreshFailed": "模型列表獲取失敗",
+      "modelRefreshFailed": "模型清單取得失敗，可手動填寫模型",
       "modelRefreshEmpty": "未獲取到模型列表",
       "modelSelected": "已選模型",
       "modelNoSelected": "暫未選擇模型",
@@ -1541,7 +1542,9 @@
       "presetGroupOfficial": "官方",
       "presetGroupChina": "國內",
       "presetGroupGlobal": "國際",
-      "presetGroupLocal": "本地"
+      "presetGroupLocal": "本地",
+      "presetHint": "模板自動填充位址與協議類型；本地（127.0.0.1）模板在容器部署下指向容器自身，需按需修改",
+      "duplicateName": "已存在同名渠道，請更換名稱"
     },
     "table": {
       "name": "名稱",

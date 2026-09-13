@@ -85,7 +85,15 @@ export function FormBasicSection({ formData, onFormDataChange, idPrefix }: Props
                     </label>
                     <Select
                         value={String(formData.type)}
-                        onValueChange={(value) => onFormDataChange({ ...formData, type: Number(value) as ChannelType })}
+                        onValueChange={(value) => {
+                            const nextType = Number(value) as ChannelType;
+                            // 切出 Responses 协议时复位 ws_mode 脏值，避免无效字段随请求提交
+                            const wsModePatch =
+                                formData.type === ChannelType.OpenAIResponse && nextType !== ChannelType.OpenAIResponse
+                                    ? { ws_mode: 'inherit' as const }
+                                    : {};
+                            onFormDataChange({ ...formData, type: nextType, ...wsModePatch });
+                        }}
                     >
                         <SelectTrigger id={`${idPrefix}-type`} className="rounded-xl w-full border border-border px-4 py-2 text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
                             <SelectValue />
