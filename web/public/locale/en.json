@@ -1538,7 +1538,24 @@
       "empty": "No channels match the current filters",
       "loadFailed": "Failed to load channels: {message}",
       "targetedManagedTitle": "Targeted managed channel",
-      "targetedManagedHint": "This channel is projected from a site account and does not appear in the manual channel list by default."
+      "targetedManagedHint": "This channel is projected from a site account and does not appear in the manual channel list by default.",
+      "selectAll": "Select all",
+      "selectOne": "Select channel {name}",
+      "selectedCount": "{count} selected",
+      "batchEnable": "Enable",
+      "batchDisable": "Disable",
+      "batchDelete": "Delete",
+      "cancelSelection": "Clear selection",
+      "actions": "Actions",
+      "batchAllSuccess": "Batch operation succeeded for {count} items",
+      "batchPartial": "Batch operation finished: {success} succeeded, {failed} failed",
+      "batchDeleteTitle": "Delete selected channels?",
+      "batchDeleteHint": "{count} channels will be deleted. This cannot be undone.",
+      "batchDeleteCancel": "Cancel",
+      "batchDeleteConfirm": "Delete",
+      "test": "Test connection",
+      "testSuccess": "Test passed, {count} models fetched",
+      "testFailed": "Test failed"
     },
     "filters": {
       "type": "Type",
@@ -1551,7 +1568,13 @@
       "reserveAll": "All",
       "charity": "Free",
       "transit": "Transit",
-      "reset": "Clear filters"
+      "reset": "Clear filters",
+      "syncModels": "Sync channel models",
+      "syncHint": "Only syncs channels with \"Auto sync models\" enabled",
+      "lastSyncAt": "Last sync: {time}",
+      "neverSynced": "Never synced",
+      "syncSuccess": "Sync task started",
+      "syncFailed": "Sync failed"
     }
   },
   "siteChannel": {

@@ -1538,7 +1538,24 @@
       "empty": "目前篩選下沒有普通渠道",
       "loadFailed": "普通渠道載入失敗：{message}",
       "targetedManagedTitle": "定位的託管渠道",
-      "targetedManagedHint": "這個渠道由站點帳號投影生成，預設不會出現在普通渠道清單中。"
+      "targetedManagedHint": "這個渠道由站點帳號投影生成，預設不會出現在普通渠道清單中。",
+      "selectAll": "全選",
+      "selectOne": "選擇渠道 {name}",
+      "selectedCount": "已選 {count} 項",
+      "batchEnable": "批次啟用",
+      "batchDisable": "批次停用",
+      "batchDelete": "批次刪除",
+      "cancelSelection": "取消選擇",
+      "actions": "操作",
+      "batchAllSuccess": "批次操作成功，共 {count} 項",
+      "batchPartial": "批次操作完成：成功 {success} 項，失敗 {failed} 項",
+      "batchDeleteTitle": "刪除選中的渠道？",
+      "batchDeleteHint": "將刪除 {count} 個渠道，操作不可撤銷。",
+      "batchDeleteCancel": "取消",
+      "batchDeleteConfirm": "刪除",
+      "test": "測試連通",
+      "testSuccess": "測試成功，取得 {count} 個模型",
+      "testFailed": "測試失敗"
     },
     "filters": {
       "type": "類型",
@@ -1551,7 +1568,13 @@
       "reserveAll": "全部",
       "charity": "公益",
       "transit": "中轉",
-      "reset": "清除篩選"
+      "reset": "清除篩選",
+      "syncModels": "同步渠道模型",
+      "syncHint": "僅同步開啟「自動同步模型」的渠道",
+      "lastSyncAt": "上次同步：{time}",
+      "neverSynced": "從未同步",
+      "syncSuccess": "同步任務已開始",
+      "syncFailed": "同步失敗"
     }
   },
   "siteChannel": {

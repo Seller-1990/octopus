@@ -1,10 +1,27 @@
 'use client';
 
+import { useEffect, useRef, useState } from 'react';
 import { useTranslations } from 'next-intl';
-import { type Channel, useEnableChannel } from '@/api/endpoints/channel';
+import { useFetchModel, type Channel, useEnableChannel, useDeleteChannel } from '@/api/endpoints/channel';
 import { MorphingDialog, MorphingDialogTrigger, MorphingDialogContainer, MorphingDialogContent } from '@/components/ui/morphing-dialog';
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
 import { Switch } from '@/components/ui/switch';
+import {
+    AlertDialog,
+    AlertDialogAction,
+    AlertDialogCancel,
+    AlertDialogContent,
+    AlertDialogDescription,
+    AlertDialogFooter,
+    AlertDialogHeader,
+    AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
+import {
+    Tooltip,
+    TooltipTrigger,
+    TooltipContent,
+} from '@/components/animate-ui/components/animate/tooltip';
 import { toast } from '@/components/common/Toast';
 import { CardContent } from './CardContent';
 import { typeLabel } from './ChannelFilters';
@@ -18,6 +35,7 @@ import {
 } from '@/components/ui/table';
 import { cn } from '@/lib/utils';
 import type { StatsMetricsFormatted } from '@/api/endpoints/stats';
+import { TestTube2, Trash2 } from 'lucide-react';
 
 export type ChannelListItem = { raw: Channel; formatted: StatsMetricsFormatted };
 
@@ -33,73 +51,222 @@ export function ChannelsTable({ items, highlightedId, registerRow }: ChannelsTab
     const tFilters = useTranslations('channel.filters');
     const tForm = useTranslations('channel.form');
 
+    const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+    const [isBatchBusy, setIsBatchBusy] = useState(false);
+    const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+
+    const enableChannel = useEnableChannel();
+    const deleteChannel = useDeleteChannel();
+
+    // 筛选/同步导致行集合变化后，清掉已不存在的选中项
+    useEffect(() => {
+        setSelectedIds((prev) => {
+            const valid = new Set(items.map((item) => item.raw.id));
+            const next = new Set([...prev].filter((id) => valid.has(id)));
+            return next.size === prev.size ? prev : next;
+        });
+    }, [items]);
+
+    // managed 渠道只读，不可选中、不参与批量操作
+    const selectableIds = items.filter((item) => !item.raw.managed).map((item) => item.raw.id);
+    const allSelected = selectableIds.length > 0 && selectableIds.every((id) => selectedIds.has(id));
+    const someSelected = selectableIds.some((id) => selectedIds.has(id));
+    const headerCheckboxRef = useRef<HTMLInputElement>(null);
+
+    useEffect(() => {
+        if (headerCheckboxRef.current) {
+            headerCheckboxRef.current.indeterminate = !allSelected && someSelected;
+        }
+    }, [allSelected, someSelected]);
+
+    const toggleAll = () => {
+        setSelectedIds(allSelected ? new Set() : new Set(selectableIds));
+    };
+
+    const toggleOne = (id: number) => {
+        setSelectedIds((prev) => {
+            const next = new Set(prev);
+            if (next.has(id)) {
+                next.delete(id);
+            } else {
+                next.add(id);
+            }
+            return next;
+        });
+    };
+
+    const runBatch = async (action: (id: number) => Promise<unknown>) => {
+        const ids = [...selectedIds].filter((id) => selectableIds.includes(id));
+        if (ids.length === 0) return;
+
+        setIsBatchBusy(true);
+        try {
+            const results = await Promise.allSettled(ids.map((id) => action(id)));
+            const success = results.filter((r) => r.status === 'fulfilled').length;
+            const failed = results.length - success;
+            if (failed === 0) {
+                toast.success(t('batchAllSuccess', { count: success }));
+            } else {
+                const firstError = results.find((r): r is PromiseRejectedResult => r.status === 'rejected');
+                const reason = firstError?.reason instanceof Error ? firstError.reason.message : String(firstError?.reason ?? '');
+                toast.error(t('batchPartial', { success, failed }), { description: reason });
+            }
+            setSelectedIds(new Set());
+        } finally {
+            setIsBatchBusy(false);
+        }
+    };
+
+    const handleBatchSetEnabled = (enabled: boolean) => {
+        void runBatch((id) => enableChannel.mutateAsync({ id, enabled }));
+    };
+
+    const handleBatchDelete = () => {
+        setDeleteConfirmOpen(false);
+        void runBatch((id) => deleteChannel.mutateAsync(id));
+    };
+
     return (
-        <div className="min-h-0 flex-1 overflow-y-auto rounded-2xl border border-border/70 bg-card/50">
-            <Table>
-                <TableHeader className="sticky top-0 z-10 bg-card/95 backdrop-blur">
-                    <TableRow className="hover:bg-transparent">
-                        <TableHead className="min-w-40">{t('name')}</TableHead>
-                        <TableHead>{t('type')}</TableHead>
-                        <TableHead>{t('status')}</TableHead>
-                        <TableHead>{t('reserve')}</TableHead>
-                        <TableHead className="text-right">{t('models')}</TableHead>
-                        <TableHead className="text-right">{t('keys')}</TableHead>
-                        <TableHead>{t('proxy')}</TableHead>
-                        <TableHead className="text-right">{t('requests')}</TableHead>
-                        <TableHead className="text-right">{t('cost')}</TableHead>
-                    </TableRow>
-                </TableHeader>
-                <TableBody>
-                    {items.map(({ raw: channel, formatted }) => (
-                        <TableRow
-                            key={channel.id}
-                            ref={(node: HTMLTableRowElement | null) => registerRow(channel.id, node)}
-                            className={cn(highlightedId === channel.id && 'bg-primary/10')}
-                        >
-                            <NameCell
-                                channel={channel}
-                                formatted={formatted}
-                                viewDetailsLabel={tCard('viewDetails', { name: channel.name })}
-                                managedBadge={tCard('managedBadge')}
-                            />
-                            <TableCell>
-                                <Badge variant="outline" className="rounded-lg font-normal">
-                                    {typeLabel(tForm, channel.type)}
-                                </Badge>
-                            </TableCell>
-                            <TableCell>
-                                <EnableSwitch
-                                    channel={channel}
-                                    enabledToast={tCard('toast.enabled')}
-                                    disabledToast={tCard('toast.disabled')}
+        <div className="flex min-h-0 flex-1 flex-col gap-2">
+            {selectedIds.size > 0 && (
+                <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-primary/30 bg-primary/5 px-3 py-2">
+                    <span className="text-sm font-medium">{t('selectedCount', { count: selectedIds.size })}</span>
+                    <div className="flex flex-wrap items-center gap-1.5">
+                        <Button type="button" variant="outline" size="sm" className="h-7 rounded-lg text-xs" disabled={isBatchBusy} onClick={() => handleBatchSetEnabled(true)}>
+                            {t('batchEnable')}
+                        </Button>
+                        <Button type="button" variant="outline" size="sm" className="h-7 rounded-lg text-xs" disabled={isBatchBusy} onClick={() => handleBatchSetEnabled(false)}>
+                            {t('batchDisable')}
+                        </Button>
+                        <Button type="button" variant="destructive" size="sm" className="h-7 rounded-lg text-xs" disabled={isBatchBusy} onClick={() => setDeleteConfirmOpen(true)}>
+                            <Trash2 className="size-3.5" />
+                            {t('batchDelete')}
+                        </Button>
+                        <Button type="button" variant="ghost" size="sm" className="h-7 rounded-lg text-xs" disabled={isBatchBusy} onClick={() => setSelectedIds(new Set())}>
+                            {t('cancelSelection')}
+                        </Button>
+                    </div>
+                </div>
+            )}
+
+            <div className="min-h-0 flex-1 overflow-y-auto rounded-2xl border border-border/70 bg-card/50">
+                <Table>
+                    <TableHeader className="sticky top-0 z-10 bg-card/95 backdrop-blur">
+                        <TableRow className="hover:bg-transparent">
+                            <TableHead className="w-10 pr-0">
+                                <input
+                                    ref={headerCheckboxRef}
+                                    type="checkbox"
+                                    className="size-3.5 cursor-pointer accent-primary"
+                                    checked={allSelected}
+                                    onChange={toggleAll}
+                                    aria-label={t('selectAll')}
+                                    disabled={selectableIds.length === 0}
                                 />
-                            </TableCell>
-                            <TableCell>
-                                <span className="text-xs text-muted-foreground">
-                                    {channel.is_reserve ? tFilters('transit') : tFilters('charity')}
-                                </span>
-                            </TableCell>
-                            <TableCell className="text-right tabular-nums">{modelCount(channel)}</TableCell>
-                            <TableCell className="text-right tabular-nums">
-                                {channel.keys.filter((k) => k.enabled).length}/{channel.keys.length}
-                            </TableCell>
-                            <TableCell>
-                                <span className="text-xs text-muted-foreground">
-                                    {channel.proxy_mode === 'pool' ? t('proxyPool') : t('proxyDirect')}
-                                </span>
-                            </TableCell>
-                            <TableCell className="text-right tabular-nums">
-                                {formatted.request_count.formatted.value}
-                                <span className="ml-1 text-xs text-muted-foreground">{formatted.request_count.formatted.unit}</span>
-                            </TableCell>
-                            <TableCell className="text-right tabular-nums">
-                                {formatted.total_cost.formatted.value}
-                                <span className="ml-1 text-xs text-muted-foreground">{formatted.total_cost.formatted.unit}</span>
-                            </TableCell>
+                            </TableHead>
+                            <TableHead className="min-w-40">{t('name')}</TableHead>
+                            <TableHead>{t('type')}</TableHead>
+                            <TableHead>{t('status')}</TableHead>
+                            <TableHead>{t('reserve')}</TableHead>
+                            <TableHead className="text-right">{t('models')}</TableHead>
+                            <TableHead className="text-right">{t('keys')}</TableHead>
+                            <TableHead>{t('proxy')}</TableHead>
+                            <TableHead className="text-right">{t('requests')}</TableHead>
+                            <TableHead className="text-right">{t('cost')}</TableHead>
+                            <TableHead className="text-right">{t('actions')}</TableHead>
                         </TableRow>
-                    ))}
-                </TableBody>
-            </Table>
+                    </TableHeader>
+                    <TableBody>
+                        {items.map(({ raw: channel, formatted }) => (
+                            <TableRow
+                                key={channel.id}
+                                ref={(node: HTMLTableRowElement | null) => registerRow(channel.id, node)}
+                                data-selected={selectedIds.has(channel.id) || highlightedId === channel.id || undefined}
+                                className={cn((selectedIds.has(channel.id) || highlightedId === channel.id) && 'bg-primary/10')}
+                            >
+                                <TableCell className="pr-0">
+                                    {!channel.managed && (
+                                        <input
+                                            type="checkbox"
+                                            className="size-3.5 cursor-pointer accent-primary"
+                                            checked={selectedIds.has(channel.id)}
+                                            onChange={() => toggleOne(channel.id)}
+                                            aria-label={t('selectOne', { name: channel.name })}
+                                        />
+                                    )}
+                                </TableCell>
+                                <NameCell
+                                    channel={channel}
+                                    formatted={formatted}
+                                    viewDetailsLabel={tCard('viewDetails', { name: channel.name })}
+                                    managedBadge={tCard('managedBadge')}
+                                />
+                                <TableCell>
+                                    <Badge variant="outline" className="rounded-lg font-normal">
+                                        {typeLabel(tForm, channel.type)}
+                                    </Badge>
+                                </TableCell>
+                                <TableCell>
+                                    <EnableSwitch
+                                        channel={channel}
+                                        enabledToast={tCard('toast.enabled')}
+                                        disabledToast={tCard('toast.disabled')}
+                                    />
+                                </TableCell>
+                                <TableCell>
+                                    <span className="text-xs text-muted-foreground">
+                                        {channel.is_reserve ? tFilters('transit') : tFilters('charity')}
+                                    </span>
+                                </TableCell>
+                                <TableCell className="text-right tabular-nums">{modelCount(channel)}</TableCell>
+                                <TableCell className="text-right tabular-nums">
+                                    {channel.keys.filter((k) => k.enabled).length}/{channel.keys.length}
+                                </TableCell>
+                                <TableCell>
+                                    <span className="text-xs text-muted-foreground">
+                                        {channel.proxy_mode === 'pool' ? t('proxyPool') : t('proxyDirect')}
+                                    </span>
+                                </TableCell>
+                                <TableCell className="text-right tabular-nums">
+                                    {formatted.request_count.formatted.value}
+                                    <span className="ml-1 text-xs text-muted-foreground">{formatted.request_count.formatted.unit}</span>
+                                </TableCell>
+                                <TableCell className="text-right tabular-nums">
+                                    {formatted.total_cost.formatted.value}
+                                    <span className="ml-1 text-xs text-muted-foreground">{formatted.total_cost.formatted.unit}</span>
+                                </TableCell>
+                                <TableCell className="text-right">
+                                    {!channel.managed && <TestButton channel={channel} labels={t} />}
+                                </TableCell>
+                            </TableRow>
+                        ))}
+                    </TableBody>
+                </Table>
+            </div>
+
+            <AlertDialog open={deleteConfirmOpen} onOpenChange={setDeleteConfirmOpen}>
+                <AlertDialogContent className="rounded-3xl">
+                    <AlertDialogHeader>
+                        <AlertDialogTitle>{t('batchDeleteTitle')}</AlertDialogTitle>
+                        <AlertDialogDescription>
+                            {t('batchDeleteHint', { count: selectedIds.size })}
+                        </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter>
+                        <AlertDialogCancel className="rounded-xl">{t('batchDeleteCancel')}</AlertDialogCancel>
+                        <AlertDialogAction
+                            className="rounded-xl bg-destructive text-white hover:bg-destructive/90"
+                            disabled={isBatchBusy}
+                            onClick={(event) => {
+                                event.preventDefault();
+                                handleBatchDelete();
+                            }}
+                        >
+                            {t('batchDeleteConfirm')}
+                        </AlertDialogAction>
+                    </AlertDialogFooter>
+                </AlertDialogContent>
+            </AlertDialog>
         </div>
     );
 }
@@ -108,6 +275,58 @@ function modelCount(channel: Channel): number {
     const split = (models: string) =>
         models.split(',').map((m) => m.trim()).filter(Boolean);
     return new Set([...split(channel.model), ...split(channel.custom_model)]).size;
+}
+
+// next-intl 的 t 支持携带插值参数调用，宽松签名便于向子组件传递
+type TableT = (key: string, values?: Record<string, string | number>) => string;
+
+function TestButton({ channel, labels }: { channel: Channel; labels: TableT }) {
+    const fetchModel = useFetchModel();
+    const effectiveKey = channel.keys.find((k) => k.enabled && k.channel_key.trim())?.channel_key.trim() ?? '';
+    const canTest = Boolean(channel.base_urls?.[0]?.url) && Boolean(effectiveKey);
+
+    const handleTest = () => {
+        fetchModel.mutate(
+            {
+                type: channel.type,
+                base_urls: channel.base_urls,
+                keys: channel.keys
+                    .filter((k) => k.channel_key.trim())
+                    .map((k) => ({ enabled: k.enabled, channel_key: k.channel_key.trim() })),
+                proxy_mode: channel.proxy_mode,
+                proxy_config_id: channel.proxy_mode === 'pool' ? channel.proxy_config_id : null,
+                match_regex: channel.match_regex || null,
+                custom_header: channel.custom_header.filter((h) => h.header_key.trim()),
+            },
+            {
+                onSuccess: (data) => {
+                    toast.success(labels('testSuccess', { count: data?.length ?? 0 }));
+                },
+                onError: (error) => {
+                    toast.error(labels('testFailed'), { description: error.message });
+                },
+            }
+        );
+    };
+
+    return (
+        <Tooltip>
+            <TooltipTrigger asChild>
+                <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className="size-7 rounded-lg text-muted-foreground hover:text-primary"
+                    disabled={!canTest || fetchModel.isPending}
+                    onClick={handleTest}
+                    aria-label={labels('test')}
+                >
+                    <TestTube2 className={cn('size-4', fetchModel.isPending && 'animate-pulse')} />
+                </Button>
+            </TooltipTrigger>
+            <TooltipContent>{labels('test')}</TooltipContent>
+        </Tooltip>
+    );
 }
 
 function NameCell({

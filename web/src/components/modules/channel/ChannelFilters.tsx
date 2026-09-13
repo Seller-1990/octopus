@@ -1,7 +1,8 @@
 'use client';
 
 import { useTranslations } from 'next-intl';
-import { ChannelType } from '@/api/endpoints/channel';
+import { useQueryClient } from '@tanstack/react-query';
+import { ChannelType, useLastSyncTime, useSyncChannel } from '@/api/endpoints/channel';
 import {
     Select,
     SelectContent,
@@ -10,7 +11,13 @@ import {
     SelectValue,
 } from '@/components/ui/select';
 import { Button } from '@/components/ui/button';
-import { FilterX } from 'lucide-react';
+import {
+    Tooltip,
+    TooltipTrigger,
+    TooltipContent,
+} from '@/components/animate-ui/components/animate/tooltip';
+import { FilterX, RefreshCw } from 'lucide-react';
+import { toast } from '@/components/common/Toast';
 import {
     useChannelFiltersStore,
     type ChannelReserveFilter,
@@ -84,6 +91,60 @@ export function ChannelFilters() {
                     {t('reset')}
                 </Button>
             )}
+
+            <SyncModelsButton />
+        </div>
+    );
+}
+
+function SyncModelsButton() {
+    const t = useTranslations('channel.filters');
+    const queryClient = useQueryClient();
+    const syncChannel = useSyncChannel();
+    const { data: lastSyncTime } = useLastSyncTime();
+
+    // 后端未同步过时返回零值时间（"0001-01-01..."），按从未同步处理
+    const parsedSync = lastSyncTime ? new Date(lastSyncTime) : null;
+    const hasSynced = parsedSync && !Number.isNaN(parsedSync.getTime()) && parsedSync.getFullYear() > 2000;
+    const lastSyncLabel = hasSynced
+        ? t('lastSyncAt', { time: parsedSync.toLocaleString() })
+        : t('neverSynced');
+
+    const handleSync = () => {
+        syncChannel.mutate(undefined, {
+            onSuccess: () => {
+                // 同步任务会改写渠道模型列表，列表缓存需要一并失效
+                queryClient.invalidateQueries({ queryKey: ['channels', 'list'] });
+                toast.success(t('syncSuccess'));
+            },
+            onError: (error) => {
+                toast.error(t('syncFailed'), { description: error.message });
+            },
+        });
+    };
+
+    return (
+        <div className="ml-auto">
+            <Tooltip>
+                <TooltipTrigger asChild>
+                    <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="h-8 rounded-xl px-3 text-xs"
+                        disabled={syncChannel.isPending}
+                        onClick={handleSync}
+                        aria-label={t('syncModels')}
+                    >
+                        <RefreshCw className={`size-3.5 ${syncChannel.isPending ? 'animate-spin' : ''}`} />
+                        {t('syncModels')}
+                    </Button>
+                </TooltipTrigger>
+                <TooltipContent>
+                    <span className="block">{lastSyncLabel}</span>
+                    <span className="block text-muted-foreground">{t('syncHint')}</span>
+                </TooltipContent>
+            </Tooltip>
         </div>
     );
 }
