@@ -91,13 +91,15 @@ func fetchGeminiModels(client *http.Client, ctx context.Context, request model.C
 	var allModels []string
 	pageToken := ""
 
+	// 与 chat 适配器的 G-H5 规则同口径：base 缺版本段时补 /v1beta 再拼 /models，
+	// 否则裸主机渠道 chat 正常但 /models 404（Gemini 官方域名即裸主机）。
+	// 解析失败直接上抛——与 chat 路径口径一致，后续 NewRequest 也会以同样错误失败
+	versionedBase, urlErr := outGemini.AppendVersionFallback(request.GetBaseUrl())
+	if urlErr != nil {
+		return nil, urlErr
+	}
+
 	for {
-		// 与 chat 适配器的 G-H5 规则同口径：base 缺版本段时先补 /v1beta 再拼
-		// /models，否则裸主机渠道 chat 正常但 /models 404（Gemini 官方域名即裸主机）
-		versionedBase, urlErr := outGemini.AppendVersionFallback(request.GetBaseUrl())
-		if urlErr != nil {
-			versionedBase = request.GetBaseUrl()
-		}
 		req, err := http.NewRequestWithContext(
 			ctx,
 			http.MethodGet,

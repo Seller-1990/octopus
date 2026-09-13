@@ -70,7 +70,14 @@ export function ChannelToolbar({ channels }: ChannelToolbarProps) {
     const t = useTranslations('channel.page');
     const tForm = useTranslations('channel.form');
     const tFilters = useTranslations('channel.filters');
-    const { type, status, reserve, setType, setStatus, setReserve, reset } = useChannelFiltersStore();
+    // 细粒度订阅：避免批量勾选写 selectedIds 时重渲染工具栏
+    const type = useChannelFiltersStore((s) => s.type);
+    const status = useChannelFiltersStore((s) => s.status);
+    const reserve = useChannelFiltersStore((s) => s.reserve);
+    const setType = useChannelFiltersStore((s) => s.setType);
+    const setStatus = useChannelFiltersStore((s) => s.setStatus);
+    const setReserve = useChannelFiltersStore((s) => s.setReserve);
+    const reset = useChannelFiltersStore((s) => s.reset);
     const searchTerm = useSearchStore((s) => s.getSearchTerm('channel'));
     const setSearchTerm = useSearchStore((s) => s.setSearchTerm);
     const layout = useToolbarViewOptionsStore((s) => s.getLayout('channel'));

@@ -15,7 +15,6 @@ import {
     RefreshCw,
     Search,
     SlidersHorizontal,
-    Table2,
     WandSparkles,
     X
 } from 'lucide-react';
@@ -51,15 +50,12 @@ import {
     type ToolbarSortOrder,
 } from './view-options-store';
 
-// 表格布局目前仅渠道页支持，其余页保持 网格/列表 两态
-function layoutOptionsFor(item: ToolbarPage | null): Array<{ value: ToolbarLayout; icon: typeof LayoutGrid; labelKey: string }> {
-    const base = [
+// 表格布局已内聚到渠道页的 ViewSwitcher，此处只剩 网格/列表 两态（model 页）
+function layoutOptionsFor(): Array<{ value: ToolbarLayout; icon: typeof LayoutGrid; labelKey: string }> {
+    return [
         { value: 'grid' as const, icon: LayoutGrid, labelKey: 'popover.grid' },
         { value: 'list' as const, icon: List, labelKey: 'popover.list' },
     ];
-    return item === 'channel'
-        ? [...base, { value: 'table' as const, icon: Table2, labelKey: 'popover.table' }]
-        : base;
 }
 
 type CombinedSortOption = {
@@ -355,7 +351,7 @@ export function Toolbar() {
                                             {t('popover.layout')}
                                         </p>
                                         <div className="grid grid-cols-2 gap-2">
-                                            {layoutOptionsFor(toolbarItem).map(({ value, icon: Icon, labelKey }) => (
+                                            {layoutOptionsFor().map(({ value, icon: Icon, labelKey }) => (
                                                 <button
                                                     key={value}
                                                     type="button"
@@ -541,7 +537,7 @@ export function Toolbar() {
                 避免其触发器外层 div 作为 flex 子项在工具栏右侧产生逐页不同的间隔 */}
             <div className="hidden">
                 {/* 创建对话框 (channel/group/model) */}
-                {toolbarItem !== 'site' && toolbarItem !== 'log' && (
+                {(toolbarItem === 'group' || toolbarItem === 'model') && (
                     <MorphingDialog open={createDialogOpen} onOpenChange={setCreateDialogOpen}>
                         <MorphingDialogTrigger>
                             <button type="button" className="hidden">

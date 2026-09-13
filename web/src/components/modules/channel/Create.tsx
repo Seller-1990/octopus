@@ -73,7 +73,7 @@ export function CreateDialogContent() {
         const fillName = formData.name.trim() === '' || nameFromPresetRef.current;
         setFormData((prev) => ({
             ...prev,
-            name: prev.name.trim() === '' || nameFromPresetRef.current ? preset.name : prev.name,
+            name: fillName ? preset.name : prev.name,
             type: preset.type,
             ws_mode: preset.type === ChannelType.OpenAIResponse ? prev.ws_mode : 'inherit',
             base_urls: [
@@ -94,8 +94,14 @@ export function CreateDialogContent() {
 
     const handleSubmit = (event: React.FormEvent<HTMLFormElement>) => {
         event.preventDefault();
+        // 统一口径：检查、提交、展示都以 trim 后的名称为准（HTML required 挡不住纯空格）
+        const trimmedName = formData.name.trim();
+        if (!trimmedName) {
+            toast.error(t('nameRequired'));
+            return;
+        }
         const cachedChannels = queryClient.getQueryData<{ name?: string }[]>(['channels', 'list']);
-        if (cachedChannels?.some((item) => item.name === formData.name.trim())) {
+        if (cachedChannels?.some((item) => item.name?.trim() === trimmedName)) {
             toast.error(t('duplicateName'));
             return;
         }
@@ -117,7 +123,7 @@ export function CreateDialogContent() {
         }
         createChannel.mutate(
             {
-                name: formData.name,
+                name: trimmedName,
                 type: formData.type,
                 enabled: formData.enabled,
                 base_urls: normalizedBaseUrls,

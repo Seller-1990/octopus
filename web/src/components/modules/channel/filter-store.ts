@@ -45,20 +45,9 @@ export const useChannelFiltersStore = create<ChannelFiltersState>()(
         {
             name: 'octopus:channel-filters',
             version: 1,
-            // 持久化值无运行时校验会让手改/异常数据造成永久空列表且难自救
-            merge: (persisted, current) => {
-                const p = (persisted ?? {}) as Partial<ChannelFiltersState>;
-                const validType = p.type === 'all' || (typeof p.type === 'number' && p.type >= 0 && p.type <= 5);
-                const validStatus = p.status === 'all' || p.status === 'enabled' || p.status === 'disabled';
-                const validReserve = p.reserve === 'all' || p.reserve === 'transit' || p.reserve === 'charity';
-                return {
-                    ...current,
-                    type: validType ? (p.type as ChannelTypeFilter) : current.type,
-                    status: validStatus ? (p.status as ChannelStatusFilter) : current.status,
-                    reserve: validReserve ? (p.reserve as ChannelReserveFilter) : current.reserve,
-                };
-            },
-            // 只持久化筛选偏好；选中集合是会话内瞬态
+            // 只持久化筛选偏好；选中集合是会话内瞬态。
+            // 非法持久化值无需运行时校验：异常筛选会让列表为空但「清除筛选」
+            // 按钮自动出现（hasActiveFilters 对非法值恒真），一键自救
             partialize: (state) => ({
                 type: state.type,
                 status: state.status,

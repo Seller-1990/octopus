@@ -45,7 +45,6 @@ import { cn } from '@/lib/utils';
 import type { StatsMetricsFormatted } from '@/api/endpoints/stats';
 import { ChevronLeft, ChevronRight, TestTube2, Trash2 } from 'lucide-react';
 
-const BATCH_CHUNK_SIZE = 5;
 const PAGE_SIZE_OPTIONS = [10, 20, 50, 100] as const;
 
 export type ChannelListItem = { raw: Channel; formatted: StatsMetricsFormatted };
@@ -55,8 +54,6 @@ interface ChannelsTableProps {
     highlightedId: number | null;
     /** 跳转定位目标（可能不在当前页）：存在且属于本表数据时驱动自动翻页 */
     focusId?: number | null;
-    /** 跳转请求 id：区分对同一目标的重复跳转 */
-    focusToken?: number | string | null;
     registerRow: (id: number, node: HTMLElement | null) => void;
 }
 
@@ -70,7 +67,9 @@ const TYPE_BADGE_CLASS: Record<ChannelType, string> = {
     [ChannelType.OpenAIEmbedding]: 'border-slate-500/20 bg-slate-500/10 text-slate-700 dark:text-slate-400',
 };
 
-export function ChannelsTable({ items, highlightedId, focusId = null, focusToken = null, registerRow }: ChannelsTableProps) {
+// 调用方契约：items 不含 managed 渠道（index.tsx 的 visibleManualChannels 已过滤，
+// managed 跳转目标走 targetedSection 卡片）；managed 的只读由后端强制，此处不做双重防御。
+export function ChannelsTable({ items, highlightedId, focusId = null, registerRow }: ChannelsTableProps) {
     const t = useTranslations('channel.table');
     const tPage = useTranslations('channel.page');
     const tCard = useTranslations('channel.card');
@@ -121,25 +120,16 @@ export function ChannelsTable({ items, highlightedId, focusId = null, focusToken
     }, [filterType, filterStatus, filterReserve]);
 
     // 跳转定位目标不在当前页时自动翻页，让行挂载供定位重试命中。
-    // 1) 用 focusToken（跳转意图）而非 highlightedId（定位成功的标志），否则互相等待死锁；
-    // 2) appliedFocusRef 防止 30s 轮询带来的 items 新引用反复触发翻页、
-    //    与用户手动翻页拉扯
-    const appliedFocusRef = useRef<string | null>(null);
+    // focusId（跳转意图）而非 highlightedId（定位成功的标志），否则互相等待死锁；
+    // items 引用变化导致的重复触发被 setPageIndex 同值 bail-out 吞掉
     useEffect(() => {
         if (!focusId) return;
-        const key = `${focusId}:${focusToken ?? ''}:${pageSize}`;
-        if (appliedFocusRef.current === key) return;
         const index = items.findIndex((item) => item.raw.id === focusId);
         if (index < 0) return;
-        appliedFocusRef.current = key;
         setPageIndex(Math.floor(index / pageSize));
-    }, [focusId, focusToken, items, pageSize]);
+    }, [focusId, items, pageSize]);
 
-    // managed 渠道只读，不可选中、不参与批量操作
-    const selectableIds = useMemo(
-        () => items.filter((item) => !item.raw.managed).map((item) => item.raw.id),
-        [items],
-    );
+    const selectableIds = useMemo(() => items.map((item) => item.raw.id), [items]);
     const selectableIdSet = useMemo(() => new Set(selectableIds), [selectableIds]);
     const allSelected = selectableIds.length > 0 && selectableIds.every((id) => selectedIds.has(id));
     const someSelected = selectableIds.some((id) => selectedIds.has(id));
@@ -167,34 +157,37 @@ export function ChannelsTable({ items, highlightedId, focusId = null, focusToken
         });
     };
 
-    // 分批并发：几十条选中时一口气打满后端只会放大失败数
+    // 分批并发已简化为单次 allSettled：自托管局域网规模（≤500）下浏览器
+    // 自身的每主机并发上限已足够收敛，分批只会拉长总时长
     const runBatch = async (action: (id: number) => Promise<unknown>) => {
         const ids = [...selectedIds].filter((id) => selectableIdSet.has(id));
         if (ids.length === 0) return;
 
         setIsBatchBusy(true);
         try {
-            const results: PromiseSettledResult<unknown>[] = [];
-            for (let i = 0; i < ids.length; i += BATCH_CHUNK_SIZE) {
-                const chunk = ids.slice(i, i + BATCH_CHUNK_SIZE);
-                results.push(...(await Promise.allSettled(chunk.map((id) => action(id)))));
-            }
-            const success = results.filter((r) => r.status === 'fulfilled').length;
-            const failed = results.length - success;
-            if (failed === 0) {
+            const results = await Promise.allSettled(ids.map((id) => action(id)));
+            const failedIds = new Set(
+                results
+                    .map((r, i) => (r.status === 'rejected' ? ids[i] : null))
+                    .filter((id): id is number => id !== null),
+            );
+            const success = ids.length - failedIds.size;
+            if (failedIds.size === 0) {
                 toast.success(t('batchAllSuccess', { count: success }));
             } else {
                 const firstError = results.find((r): r is PromiseRejectedResult => r.status === 'rejected');
                 const reason = firstError?.reason instanceof Error ? firstError.reason.message : String(firstError?.reason ?? '');
-                const message = failed === results.length
-                    ? t('batchAllFailed', { count: failed })
-                    : t('batchPartial', { success, failed });
+                const message = failedIds.size === ids.length
+                    ? t('batchAllFailed', { count: failedIds.size })
+                    : t('batchPartial', { success, failed: failedIds.size });
                 toast.error(message, { description: reason });
             }
-            // 只清本次操作过的项：期间新勾选的属于用户后续意图，不该无提示吞掉
+            // 失败项保留勾选，方便就地重试；只清成功项，不吞执行期间的新勾选
             setSelectedIds((prev) => {
                 const next = new Set(prev);
-                for (const id of ids) next.delete(id);
+                for (const id of ids) {
+                    if (!failedIds.has(id)) next.delete(id);
+                }
                 return next;
             });
         } finally {
@@ -213,7 +206,7 @@ export function ChannelsTable({ items, highlightedId, focusId = null, focusToken
 
     return (
         <div className="flex min-h-0 flex-1 flex-col gap-2">
-            {(selectedIds.size > 0 || isBatchBusy) && (
+            {selectedIds.size > 0 && (
                 <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-primary/30 bg-primary/5 px-3 py-2">
                     <span className="text-sm font-medium">{t('selectedCount', { count: selectedIds.size })}</span>
                     <div className="flex flex-wrap items-center gap-1.5">
@@ -275,24 +268,21 @@ export function ChannelsTable({ items, highlightedId, focusId = null, focusToken
                                 )}
                             >
                                 <TableCell className="pr-0">
-                                    {!channel.managed && (
-                                        <label className="inline-flex cursor-pointer items-center justify-center p-2 -m-1">
-                                            <input
-                                                type="checkbox"
-                                                className="size-3.5 cursor-pointer accent-primary"
-                                                checked={selectedIds.has(channel.id)}
-                                                onChange={() => toggleOne(channel.id)}
-                                                disabled={isBatchBusy}
-                                                aria-label={t('selectOne', { name: channel.name })}
-                                            />
-                                        </label>
-                                    )}
+                                    <label className="inline-flex cursor-pointer items-center justify-center p-2 -m-1">
+                                        <input
+                                            type="checkbox"
+                                            className="size-3.5 cursor-pointer accent-primary"
+                                            checked={selectedIds.has(channel.id)}
+                                            onChange={() => toggleOne(channel.id)}
+                                            disabled={isBatchBusy}
+                                            aria-label={t('selectOne', { name: channel.name })}
+                                        />
+                                    </label>
                                 </TableCell>
                                 <NameCell
                                     channel={channel}
                                     formatted={formatted}
                                     viewDetailsLabel={tCard('viewDetails', { name: channel.name })}
-                                    managedBadge={tCard('managedBadge')}
                                 />
                                 <TableCell>
                                     <Badge variant="outline" className={cn('rounded-lg font-normal', TYPE_BADGE_CLASS[channel.type])}>
@@ -331,7 +321,7 @@ export function ChannelsTable({ items, highlightedId, focusId = null, focusToken
                                     <span className="ml-1 text-xs text-muted-foreground">{formatted.total_cost.formatted.unit}</span>
                                 </TableCell>
                                 <TableCell className="text-right">
-                                    {!channel.managed && <TestButton channel={channel} labels={t} />}
+                                    <TestButton channel={channel} labels={t} />
                                 </TableCell>
                             </TableRow>
                         ))}
@@ -349,7 +339,9 @@ export function ChannelsTable({ items, highlightedId, focusId = null, focusToken
                     <Select
                         value={String(pageSize)}
                         onValueChange={(value) => {
-                            setPageSize(Number(value));
+                            const next = Number(value);
+                            if (next === pageSize) return;
+                            setPageSize(next);
                             setPageIndex(0);
                         }}
                     >
@@ -484,29 +476,17 @@ function NameCell({
     channel,
     formatted,
     viewDetailsLabel,
-    managedBadge,
 }: {
     channel: Channel;
     formatted: StatsMetricsFormatted;
     viewDetailsLabel: string;
-    managedBadge: string;
 }) {
     return (
         <TableCell className="max-w-56">
             <MorphingDialog>
                 <MorphingDialogTrigger className="max-w-full" aria-label={viewDetailsLabel}>
-                    <span className="flex min-w-0 items-center gap-1.5">
-                        <span className="truncate text-sm font-medium transition-colors hover:text-primary">
-                            {channel.name}
-                        </span>
-                        {channel.managed && (
-                            <Badge
-                                variant="outline"
-                                className="shrink-0 rounded-full border-amber-500/30 bg-amber-500/10 px-1.5 text-[10px] font-medium text-amber-700 dark:text-amber-300"
-                            >
-                                {managedBadge}
-                            </Badge>
-                        )}
+                    <span className="truncate text-sm font-medium transition-colors hover:text-primary">
+                        {channel.name}
                     </span>
                 </MorphingDialogTrigger>
                 <MorphingDialogContainer>
@@ -552,7 +532,7 @@ function EnableSwitch({
         <Switch
             checked={channel.enabled}
             onCheckedChange={handleEnableChange}
-            disabled={enableChannel.isPending || channel.managed}
+            disabled={enableChannel.isPending}
             aria-label={channel.enabled ? disableAria : enableAria}
         />
     );

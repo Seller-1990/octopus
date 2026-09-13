@@ -1485,7 +1485,8 @@
       "dialogTitle": "创建新渠道",
       "submit": "创建渠道",
       "submitting": "创建中...",
-      "duplicateName": "已存在同名渠道，请更换名称"
+      "duplicateName": "已存在同名渠道，请更换名称",
+      "nameRequired": "名称不能为空"
     },
     "form": {
       "add": "添加",
@@ -1543,8 +1544,7 @@
       "presetGroupChina": "国内",
       "presetGroupGlobal": "国际",
       "presetGroupLocal": "本地",
-      "presetHint": "模板自动填充地址与协议类型；本地（127.0.0.1）模板在容器部署下指向容器自身，需按需修改",
-      "duplicateName": "已存在同名渠道，请更换名称"
+      "presetHint": "模板自动填充地址与协议类型；本地（127.0.0.1）模板在容器部署下指向容器自身，需按需修改"
     },
     "table": {
       "name": "名称",

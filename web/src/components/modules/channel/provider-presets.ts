@@ -25,7 +25,8 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     { id: 'openai', name: 'OpenAI', type: ChannelType.OpenAIChat, baseUrl: 'https://api.openai.com/v1', group: 'official' },
     { id: 'openai-responses', name: 'OpenAI (Responses API)', type: ChannelType.OpenAIResponse, baseUrl: 'https://api.openai.com/v1', group: 'official' },
     { id: 'anthropic', name: 'Anthropic', type: ChannelType.Anthropic, baseUrl: 'https://api.anthropic.com/v1', group: 'official' },
-    // chat 适配器与 fetch-models 均可处理带 /v1beta 的 base；裸主机在 fetch 链路无版本回退
+    // chat 适配器与 fetch-models(Gemini 分支) 均可处理带 /v1beta 的 base，
+    // 且 fetch 已与 chat 同口径支持裸主机回退（helper/fetch.go G-H5）
     { id: 'gemini', name: 'Google Gemini', type: ChannelType.Gemini, baseUrl: 'https://generativelanguage.googleapis.com/v1beta', group: 'official' },
 
     // 国内

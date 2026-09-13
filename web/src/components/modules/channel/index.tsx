@@ -46,7 +46,10 @@ export function Channel() {
     const layout = useToolbarViewOptionsStore((s) => s.getLayout(pageKey));
     const sortField = useToolbarViewOptionsStore((s) => s.getSortField(pageKey));
     const sortOrder = useToolbarViewOptionsStore((s) => s.getSortOrder(pageKey));
-    const filters = useChannelFiltersStore();
+    // 细粒度订阅：勾选/批量会写 selectedIds，整 store 订阅会让每次勾选重渲染整个页面
+    const filterType = useChannelFiltersStore((s) => s.type);
+    const filterStatus = useChannelFiltersStore((s) => s.status);
+    const filterReserve = useChannelFiltersStore((s) => s.reserve);
     const [highlightedChannelId, setHighlightedChannelId] = useState<number | null>(null);
     const activeTab = useChannelTabStore((s) => s.activeTab);
     // 卡片与表格统一按 id 注册行元素，跳转定位时滚动并高亮
@@ -111,14 +114,14 @@ export function Channel() {
                 // 跳转目标不被持久化筛选吃掉：筛选是跨会话残留状态，
                 // 把定位目标滤掉会让跳转静默失败
                 if (channel.raw.id === targetedChannelId) return true;
-                if (filters.type !== 'all' && channel.raw.type !== filters.type) return false;
-                if (filters.status === 'enabled' && !channel.raw.enabled) return false;
-                if (filters.status === 'disabled' && channel.raw.enabled) return false;
-                if (filters.reserve === 'transit' && !channel.raw.is_reserve) return false;
-                if (filters.reserve === 'charity' && channel.raw.is_reserve) return false;
+                if (filterType !== 'all' && channel.raw.type !== filterType) return false;
+                if (filterStatus === 'enabled' && !channel.raw.enabled) return false;
+                if (filterStatus === 'disabled' && channel.raw.enabled) return false;
+                if (filterReserve === 'transit' && !channel.raw.is_reserve) return false;
+                if (filterReserve === 'charity' && channel.raw.is_reserve) return false;
                 return true;
             }),
-        [visibleChannels, filters.type, filters.status, filters.reserve, targetedChannelId],
+        [visibleChannels, filterType, filterStatus, filterReserve, targetedChannelId],
     );
 
     const targetedManagedChannel = useMemo(
@@ -172,13 +175,13 @@ export function Channel() {
     // 网格视图是虚拟化渲染：目标在窗口外时节点不存在，需要先编程式滚动到该行。
     // requestId 作为 token 保证对同一目标的重复跳转也能再次触发滚动。
     const gridScrollTarget = useMemo(() => {
-        if (!pendingChannelJump || activeTab !== 'manual' || layout === 'table') return null;
+        if (!pendingChannelJump || layout === 'table') return null;
         if (pendingChannelJump.target.channelId === targetedManagedChannel?.raw.id) return null;
         const index = visibleManualChannels.findIndex(
             (item) => item.raw.id === pendingChannelJump.target.channelId,
         );
         return index >= 0 ? { index, token: pendingChannelJump.requestId } : null;
-    }, [pendingChannelJump, activeTab, layout, visibleManualChannels, targetedManagedChannel]);
+    }, [pendingChannelJump, layout, visibleManualChannels, targetedManagedChannel]);
 
     const renderChannelCard = useCallback((item: NonNullable<typeof channelsData>[number]) => (
         <div
@@ -244,8 +247,7 @@ export function Channel() {
                 highlightedId={highlightedChannelId}
                 // 跳转目标可能不在当前页：focusId 驱动表格自动翻页后，
                 // 定位重试才能找到行节点（highlightedId 此时尚未设置）
-                focusId={activeTab === 'manual' ? targetedChannelId : null}
-                focusToken={pendingChannelJump?.requestId ?? null}
+                focusId={targetedChannelId}
                 registerRow={setChannelRowRef}
             />
         )

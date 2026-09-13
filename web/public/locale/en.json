@@ -1485,7 +1485,8 @@
       "dialogTitle": "Create New Channel",
       "submit": "Create Channel",
       "submitting": "Creating...",
-      "duplicateName": "A channel with this name already exists"
+      "duplicateName": "A channel with this name already exists",
+      "nameRequired": "Name cannot be empty"
     },
     "form": {
       "add": "Add",
@@ -1543,8 +1544,7 @@
       "presetGroupChina": "China",
       "presetGroupGlobal": "Global",
       "presetGroupLocal": "Local",
-      "presetHint": "Template fills the URL and protocol type; local (127.0.0.1) templates resolve inside the server process — adjust for container deployments",
-      "duplicateName": "A channel with this name already exists"
+      "presetHint": "Template fills the URL and protocol type; local (127.0.0.1) templates resolve inside the server process — adjust for container deployments"
     },
     "table": {
       "name": "Name",

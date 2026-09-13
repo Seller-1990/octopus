@@ -1485,7 +1485,8 @@
       "dialogTitle": "建立新供應源",
       "submit": "建立供應源",
       "submitting": "建立中...",
-      "duplicateName": "已存在同名渠道，請更換名稱"
+      "duplicateName": "已存在同名渠道，請更換名稱",
+      "nameRequired": "名稱不能為空"
     },
     "form": {
       "add": "新增",
@@ -1543,8 +1544,7 @@
       "presetGroupChina": "國內",
       "presetGroupGlobal": "國際",
       "presetGroupLocal": "本地",
-      "presetHint": "模板自動填充位址與協議類型；本地（127.0.0.1）模板在容器部署下指向容器自身，需按需修改",
-      "duplicateName": "已存在同名渠道，請更換名稱"
+      "presetHint": "模板自動填充位址與協議類型；本地（127.0.0.1）模板在容器部署下指向容器自身，需按需修改"
     },
     "table": {
       "name": "名稱",
