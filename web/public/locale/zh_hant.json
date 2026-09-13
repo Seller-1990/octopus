@@ -1536,7 +1536,12 @@
       "tlsFingerprintChrome": "Chrome",
       "tlsFingerprintFirefox": "Firefox",
       "uaPreset": "UA 偽裝預設",
-      "uaPresetCustom": "自定義 / 不設置"
+      "uaPresetCustom": "自定義 / 不設置",
+      "presetPlaceholder": "從提供商模板快速填充(可選)",
+      "presetGroupOfficial": "官方",
+      "presetGroupChina": "國內",
+      "presetGroupGlobal": "國際",
+      "presetGroupLocal": "本地"
     },
     "table": {
       "name": "名稱",
@@ -1554,7 +1559,7 @@
       "loadFailed": "普通渠道載入失敗：{message}",
       "targetedManagedTitle": "定位的託管渠道",
       "targetedManagedHint": "這個渠道由站點帳號投影生成，預設不會出現在普通渠道清單中。",
-      "selectAll": "全選",
+      "selectAll": "全選當前篩選結果",
       "selectOne": "選擇渠道 {name}",
       "selectedCount": "已選 {count} 項",
       "batchEnable": "批次啟用",
@@ -1598,7 +1603,7 @@
       "create": "新建渠道",
       "chipsAll": "全部",
       "searchPlaceholder": "搜尋名稱、模型、位址或備註",
-      "total": "共 {count} 個渠道",
+      "total": "匹配 {count} 個渠道",
       "rowsPerPage": "每頁條數",
       "pageStatus": "第 {page} / {total} 頁",
       "prevPage": "上一頁",

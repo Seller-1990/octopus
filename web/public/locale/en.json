@@ -1536,7 +1536,12 @@
       "tlsFingerprintChrome": "Chrome",
       "tlsFingerprintFirefox": "Firefox",
       "uaPreset": "User-Agent Preset",
-      "uaPresetCustom": "Custom / None"
+      "uaPresetCustom": "Custom / None",
+      "presetPlaceholder": "Quick fill from provider template (optional)",
+      "presetGroupOfficial": "Official",
+      "presetGroupChina": "China",
+      "presetGroupGlobal": "Global",
+      "presetGroupLocal": "Local"
     },
     "table": {
       "name": "Name",
@@ -1554,7 +1559,7 @@
       "loadFailed": "Failed to load channels: {message}",
       "targetedManagedTitle": "Targeted managed channel",
       "targetedManagedHint": "This channel is projected from a site account and does not appear in the manual channel list by default.",
-      "selectAll": "Select all",
+      "selectAll": "Select all matching",
       "selectOne": "Select channel {name}",
       "selectedCount": "{count, plural, =1 {# item selected} other {# items selected}}",
       "batchEnable": "Enable",
@@ -1598,7 +1603,7 @@
       "create": "Add Channel",
       "chipsAll": "All",
       "searchPlaceholder": "Search name, model, URL or remark",
-      "total": "{count, plural, =1 {1 channel} other {# channels}} in total",
+      "total": "{count, plural, =1 {1 channel} other {# channels}} matched",
       "rowsPerPage": "Rows per page",
       "pageStatus": "Page {page} of {total}",
       "prevPage": "Previous page",

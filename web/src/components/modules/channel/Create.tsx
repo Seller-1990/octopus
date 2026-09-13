@@ -9,32 +9,64 @@ import { useCreateChannel, ChannelType, AutoGroupType } from '@/api/endpoints/ch
 import { useTranslations } from 'next-intl';
 import { toast } from '@/components/common/Toast';
 import { ChannelForm, type ChannelFormData } from './Form';
+import { PRESET_GROUP_ORDER, PROVIDER_PRESETS, type ProviderPresetGroup } from './provider-presets';
+import {
+    Select,
+    SelectContent,
+    SelectGroup,
+    SelectItem,
+    SelectLabel,
+    SelectTrigger,
+    SelectValue,
+} from '@/components/ui/select';
+
+const GROUP_LABEL_KEYS: Record<ProviderPresetGroup, string> = {
+    official: 'presetGroupOfficial',
+    china: 'presetGroupChina',
+    global: 'presetGroupGlobal',
+    local: 'presetGroupLocal',
+};
+
+const EMPTY_FORM: ChannelFormData = {
+    name: '',
+    type: ChannelType.OpenAIChat,
+    base_urls: [{ url: '', delay: 0 }],
+    custom_header: [],
+    ws_mode: 'inherit',
+    protocol_policy: 'auto',
+    tls_fingerprint: '',
+    allow_lossy: false,
+    proxy_mode: 'direct',
+    proxy_config_id: null,
+    param_override: '',
+    keys: [{ enabled: true, channel_key: '', remark: '' }],
+    model: '',
+    custom_model: '',
+    auto_sync: false,
+    auto_group: AutoGroupType.None,
+    enabled: true,
+    match_regex: '',
+};
 
 export function CreateDialogContent() {
     const { setIsOpen } = useMorphingDialog();
     const createChannel = useCreateChannel();
-    const [formData, setFormData] = useState<ChannelFormData>({
-        name: '',
-        type: ChannelType.OpenAIChat,
-        base_urls: [{ url: '', delay: 0 }],
-        custom_header: [],
-        ws_mode: 'inherit',
-        protocol_policy: 'auto',
-        tls_fingerprint: '',
-        allow_lossy: false,
-        proxy_mode: 'direct',
-        proxy_config_id: null,
-        param_override: '',
-        keys: [{ enabled: true, channel_key: '', remark: '' }],
-        model: '',
-        custom_model: '',
-        auto_sync: false,
-        auto_group: AutoGroupType.None,
-        enabled: true,
-        match_regex: '',
-    });
+    const [formData, setFormData] = useState<ChannelFormData>({ ...EMPTY_FORM });
     const t = useTranslations('channel.create');
+    const tForm = useTranslations('channel.form');
     const tProxy = useTranslations('proxyPool');
+
+    // 预设填充：名称留空才覆盖（尊重用户已输入的名称），URL/类型以预设为准
+    const applyPreset = (presetId: string) => {
+        const preset = PROVIDER_PRESETS.find((p) => p.id === presetId);
+        if (!preset) return;
+        setFormData((prev) => ({
+            ...prev,
+            name: prev.name.trim() === '' ? preset.name : prev.name,
+            type: preset.type,
+            base_urls: [{ url: preset.baseUrl, delay: 0 }],
+        }));
+    };
 
     const handleSubmit = (event: React.FormEvent<HTMLFormElement>) => {
         event.preventDefault();
@@ -77,26 +109,7 @@ export function CreateDialogContent() {
             },
             {
                 onSuccess: () => {
-                    setFormData({
-                        name: '',
-                        type: ChannelType.OpenAIChat,
-                        base_urls: [{ url: '', delay: 0 }],
-                        custom_header: [],
-                        ws_mode: 'inherit',
-                        protocol_policy: 'auto',
-                        tls_fingerprint: '',
-                        allow_lossy: false,
-                        proxy_mode: 'direct',
-                        proxy_config_id: null,
-                        param_override: '',
-                        keys: [{ enabled: true, channel_key: '', remark: '' }],
-                        model: '',
-                        custom_model: '',
-                        auto_sync: false,
-                        auto_group: AutoGroupType.None,
-                        enabled: true,
-                        match_regex: '',
-                    });
+                    setFormData({ ...EMPTY_FORM });
                     setIsOpen(false);
                 },
                 onError: (error) => {
@@ -121,15 +134,41 @@ export function CreateDialogContent() {
                 </header>
             </MorphingDialogTitle>
             <MorphingDialogDescription disableLayoutAnimation className="flex-1 min-h-0 overflow-auto">
-                <ChannelForm
-                    formData={formData}
-                    onFormDataChange={setFormData}
-                    onSubmit={handleSubmit}
-                    isPending={createChannel.isPending}
-                    submitText={t('submit')}
-                    pendingText={t('submitting')}
-                    idPrefix="new-channel"
-                />
+                <div className="space-y-3">
+                    <div className="space-y-2">
+                        <label className="text-sm font-medium text-card-foreground">
+                            {tForm('presetPlaceholder')}
+                        </label>
+                        <Select onValueChange={applyPreset}>
+                            <SelectTrigger className="rounded-xl w-full border border-border px-4 py-2 text-foreground">
+                                <SelectValue placeholder={tForm('presetPlaceholder')} />
+                            </SelectTrigger>
+                            <SelectContent className="rounded-xl">
+                                {PRESET_GROUP_ORDER.map((group) => (
+                                    <SelectGroup key={group}>
+                                        <SelectLabel className="text-xs text-muted-foreground">
+                                            {tForm(GROUP_LABEL_KEYS[group])}
+                                        </SelectLabel>
+                                        {PROVIDER_PRESETS.filter((p) => p.group === group).map((preset) => (
+                                            <SelectItem key={preset.id} className="rounded-xl" value={preset.id}>
+                                                {preset.name}
+                                            </SelectItem>
+                                        ))}
+                                    </SelectGroup>
+                                ))}
+                            </SelectContent>
+                        </Select>
+                    </div>
+                    <ChannelForm
+                        formData={formData}
+                        onFormDataChange={setFormData}
+                        onSubmit={handleSubmit}
+                        isPending={createChannel.isPending}
+                        submitText={t('submit')}
+                        pendingText={t('submitting')}
+                        idPrefix="new-channel"
+                    />
+                </div>
             </MorphingDialogDescription>
         </div>
     );
