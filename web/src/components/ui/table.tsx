@@ -5,8 +5,10 @@ import * as React from 'react';
 import { cn } from '@/lib/utils';
 
 function Table({ className, ...props }: React.ComponentProps<'table'>) {
+    // 容器不设 overflow：中间滚动容器会让 thead/th 的 sticky 相对它计算，
+    // 吸附失效；滚动（含横向）由使用方最外层容器承担
     return (
-        <div data-slot="table-container" className="relative w-full overflow-x-auto">
+        <div data-slot="table-container" className="relative w-full">
             <table data-slot="table" className={cn('w-full caption-bottom text-sm', className)} {...props} />
         </div>
     );

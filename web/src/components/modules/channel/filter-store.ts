@@ -35,6 +35,19 @@ export const useChannelFiltersStore = create<ChannelFiltersState>()(
         {
             name: 'octopus:channel-filters',
             version: 1,
+            // 持久化值无运行时校验会让手改/异常数据造成永久空列表且难自救
+            merge: (persisted, current) => {
+                const p = (persisted ?? {}) as Partial<ChannelFiltersState>;
+                const validType = p.type === 'all' || (typeof p.type === 'number' && p.type >= 0 && p.type <= 5);
+                const validStatus = p.status === 'all' || p.status === 'enabled' || p.status === 'disabled';
+                const validReserve = p.reserve === 'all' || p.reserve === 'transit' || p.reserve === 'charity';
+                return {
+                    ...current,
+                    type: validType ? (p.type as ChannelTypeFilter) : current.type,
+                    status: validStatus ? (p.status as ChannelStatusFilter) : current.status,
+                    reserve: validReserve ? (p.reserve as ChannelReserveFilter) : current.reserve,
+                };
+            },
         }
     )
 );

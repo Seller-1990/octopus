@@ -22,6 +22,10 @@ import { useChannelFiltersStore } from './filter-store';
 
 type ChannelPendingJump = PendingJump & { target: ChannelJumpTarget };
 
+const JUMP_LOCATE_RETRY_INTERVAL_MS = 50;
+// ~6s：覆盖 tab 切换退场动画（180ms）、列表数据加载与编程式滚动后虚拟行的挂载
+const JUMP_LOCATE_MAX_ATTEMPTS = 120;
+
 // 搜索命中范围：名称 / 模型（含自定义）/ 接口地址 / Key 备注
 function matchesChannelSearch(channel: Channel, term: string): boolean {
     if (channel.name.toLowerCase().includes(term)) return true;
@@ -47,6 +51,7 @@ export function Channel() {
     const activeTab = useChannelTabStore((s) => s.activeTab);
     // 卡片与表格统一按 id 注册行元素，跳转定位时滚动并高亮
     const channelRowRefs = useRef<Map<number, HTMLElement>>(new Map());
+    const highlightTimerRef = useRef<number | null>(null);
 
     const pendingChannelJump = pendingJump && isChannelJumpTarget(pendingJump.target)
         ? pendingJump as ChannelPendingJump
@@ -64,7 +69,11 @@ export function Channel() {
 
     const flashChannelRow = useCallback((channelId: number) => {
         setHighlightedChannelId(channelId);
-        window.setTimeout(() => {
+        if (highlightTimerRef.current !== null) {
+            window.clearTimeout(highlightTimerRef.current);
+        }
+        highlightTimerRef.current = window.setTimeout(() => {
+            highlightTimerRef.current = null;
             setHighlightedChannelId((current) => (current === channelId ? null : current));
         }, 1800);
     }, []);
@@ -99,6 +108,9 @@ export function Channel() {
         () =>
             visibleChannels.filter((channel) => {
                 if (channel.raw.managed) return false;
+                // 跳转目标不被持久化筛选吃掉：筛选是跨会话残留状态，
+                // 把定位目标滤掉会让跳转静默失败
+                if (channel.raw.id === targetedChannelId) return true;
                 if (filters.type !== 'all' && channel.raw.type !== filters.type) return false;
                 if (filters.status === 'enabled' && !channel.raw.enabled) return false;
                 if (filters.status === 'disabled' && channel.raw.enabled) return false;
@@ -106,7 +118,7 @@ export function Channel() {
                 if (filters.reserve === 'charity' && channel.raw.is_reserve) return false;
                 return true;
             }),
-        [visibleChannels, filters.type, filters.status, filters.reserve],
+        [visibleChannels, filters.type, filters.status, filters.reserve, targetedChannelId],
     );
 
     const targetedManagedChannel = useMemo(
@@ -114,22 +126,53 @@ export function Channel() {
         [visibleChannels, targetedChannelId],
     );
 
+    // 跳转定位：目标行可能因 tab 切换动画（AnimatePresence mode="wait" 延迟挂载）、
+    // 数据未加载或虚拟化窗口外在首次检查时不存在，必须轮询重试；放弃时也要清掉
+    // pending，否则跳转意图永久悬挂并钉住搜索豁免
     useEffect(() => {
         if (!pendingChannelJump) return;
         if (activeTab !== 'manual') return;
 
         const channelId = pendingChannelJump.target.channelId;
-        const node = channelRowRefs.current.get(channelId);
-        if (!node) return;
+        const requestId = pendingChannelJump.requestId;
+        let cancelled = false;
+        let attempts = 0;
+        let timer: number | undefined;
 
-        const timer = window.setTimeout(() => {
-            node.scrollIntoView({ behavior: 'smooth', block: 'center' });
-            flashChannelRow(channelId);
-            clearPending(pendingChannelJump.requestId);
-        }, 80);
+        const tryLocate = () => {
+            if (cancelled) return;
+            const node = channelRowRefs.current.get(channelId);
+            if (node) {
+                node.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                flashChannelRow(channelId);
+                clearPending(requestId);
+                return;
+            }
+            attempts += 1;
+            if (attempts > JUMP_LOCATE_MAX_ATTEMPTS) {
+                clearPending(requestId);
+                return;
+            }
+            timer = window.setTimeout(tryLocate, JUMP_LOCATE_RETRY_INTERVAL_MS);
+        };
 
-        return () => window.clearTimeout(timer);
-    }, [pendingChannelJump, clearPending, flashChannelRow, visibleManualChannels.length, targetedManagedChannel, activeTab]);
+        timer = window.setTimeout(tryLocate, JUMP_LOCATE_RETRY_INTERVAL_MS);
+        return () => {
+            cancelled = true;
+            if (timer !== undefined) window.clearTimeout(timer);
+        };
+    }, [pendingChannelJump, clearPending, flashChannelRow, activeTab]);
+
+    // 网格视图是虚拟化渲染：目标在窗口外时节点不存在，需要先编程式滚动到该行。
+    // requestId 作为 token 保证对同一目标的重复跳转也能再次触发滚动。
+    const gridScrollTarget = useMemo(() => {
+        if (!pendingChannelJump || activeTab !== 'manual' || layout === 'table') return null;
+        if (pendingChannelJump.target.channelId === targetedManagedChannel?.raw.id) return null;
+        const index = visibleManualChannels.findIndex(
+            (item) => item.raw.id === pendingChannelJump.target.channelId,
+        );
+        return index >= 0 ? { index, token: pendingChannelJump.requestId } : null;
+    }, [pendingChannelJump, activeTab, layout, visibleManualChannels, targetedManagedChannel]);
 
     const renderChannelCard = useCallback((item: NonNullable<typeof channelsData>[number]) => (
         <div
@@ -189,7 +232,7 @@ export function Channel() {
             {t('loadFailed', { message: error.message })}
         </div>
     ) : showTableView ? (
-        manualEmpty ? emptyBox : isLoading ? loadingBox : (
+        manualEmpty ? emptyBox : isLoading ? loadingBox : visibleManualChannels.length === 0 ? null : (
             <ChannelsTable
                 items={visibleManualChannels}
                 highlightedId={highlightedChannelId}
@@ -204,6 +247,7 @@ export function Channel() {
             estimateItemHeight={216}
             header={targetedSection}
             footer={manualFooter ?? (manualEmpty ? emptyBox : null)}
+            scrollToItem={gridScrollTarget}
             getItemKey={(item) => `channel-${item.raw.id}`}
             renderItem={renderChannelCard}
         />

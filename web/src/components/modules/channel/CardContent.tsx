@@ -13,7 +13,7 @@ import {
     Layers,
     SlidersHorizontal
 } from 'lucide-react';
-import { useUpdateChannel, useDeleteChannel, type Channel, type UpdateChannelRequest } from '@/api/endpoints/channel';
+import { useUpdateChannel, useDeleteChannel, type Channel, type ChannelWSMode, type UpdateChannelRequest } from '@/api/endpoints/channel';
 import {
     MorphingDialogTitle,
     MorphingDialogDescription,
@@ -84,6 +84,19 @@ export function CardContent({ channel, stats }: { channel: Channel; stats: Stats
         : [];
     const hasCustomHeader = (channel.custom_header ?? []).some((h) => h.header_key.trim());
     const hasAdvanced = hasCustomHeader || Boolean(channel.match_regex) || Boolean(channel.param_override);
+
+    // 查看模式复用表单的三语标签，避免裸枚举值（"passthrough-only"）混入 UI
+    const protocolPolicyLabel: Record<Channel['protocol_policy'], string> = {
+        'auto': tForm('protocolPolicyAuto'),
+        'passthrough-only': tForm('protocolPolicyPassthrough'),
+        'transform-allowed': tForm('protocolPolicyTransform'),
+    };
+    const wsModeLabel: Record<ChannelWSMode, string> = {
+        'inherit': tForm('wsModeInherit'),
+        'off': tForm('wsModeOff'),
+        'passthrough': tForm('wsModePassthrough'),
+        'transform': tForm('wsModeTransform'),
+    };
 
     const currentView = isEditing ? 'editing' : 'viewing';
 
@@ -325,7 +338,7 @@ export function CardContent({ channel, stats }: { channel: Channel; stats: Stats
                                     <dl className="grid gap-3 sm:grid-cols-3">
                                         <div className="rounded-lg border px-3 py-2">
                                             <dt className="text-xs text-muted-foreground">{t('protocol.policy')}</dt>
-                                            <dd className="mt-1 text-sm font-medium">{channel.protocol_policy}</dd>
+                                            <dd className="mt-1 text-sm font-medium">{protocolPolicyLabel[channel.protocol_policy]}</dd>
                                         </div>
                                         <div className="rounded-lg border px-3 py-2">
                                             <dt className="text-xs text-muted-foreground">{t('protocol.allowLossy')}</dt>
@@ -335,7 +348,7 @@ export function CardContent({ channel, stats }: { channel: Channel; stats: Stats
                                         </div>
                                         <div className="rounded-lg border px-3 py-2">
                                             <dt className="text-xs text-muted-foreground">{t('protocol.wsMode')}</dt>
-                                            <dd className="mt-1 text-sm font-medium">{channel.ws_mode}</dd>
+                                            <dd className="mt-1 text-sm font-medium">{wsModeLabel[channel.ws_mode ?? 'inherit']}</dd>
                                         </div>
                                     </dl>
                                 </section>

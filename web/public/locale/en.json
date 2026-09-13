@@ -1556,22 +1556,24 @@
       "targetedManagedHint": "This channel is projected from a site account and does not appear in the manual channel list by default.",
       "selectAll": "Select all",
       "selectOne": "Select channel {name}",
-      "selectedCount": "{count} selected",
+      "selectedCount": "{count, plural, =1 {# item selected} other {# items selected}}",
       "batchEnable": "Enable",
       "batchDisable": "Disable",
       "batchDelete": "Delete",
       "cancelSelection": "Clear selection",
       "actions": "Actions",
-      "batchAllSuccess": "Batch operation succeeded for {count} items",
+      "batchAllSuccess": "Batch operation succeeded for {count, plural, =1 {1 item} other {# items}}",
       "batchPartial": "Batch operation finished: {success} succeeded, {failed} failed",
       "batchDeleteTitle": "Delete selected channels?",
-      "batchDeleteHint": "{count} channels will be deleted. This cannot be undone.",
+      "batchDeleteHint": "{count, plural, =1 {1 channel will be deleted. This cannot be undone.} other {# channels will be deleted. This cannot be undone.}}",
       "batchDeleteCancel": "Cancel",
       "batchDeleteConfirm": "Delete",
       "test": "Test connection",
-      "testSuccess": "Test passed, {count} models fetched",
+      "testSuccess": "Test passed, {count, plural, =1 {1 model} other {# models}} fetched",
       "testFailed": "Test failed",
-      "loading": "Loading…"
+      "loading": "Loading…",
+      "batchAllFailed": "Batch operation failed for all {count, plural, =1 {1 item} other {# items}}",
+      "testDisabled": "Unavailable: needs a base URL and an enabled key"
     },
     "filters": {
       "type": "Type",
@@ -1589,7 +1591,7 @@
       "syncHint": "Only syncs channels with \"Auto sync models\" enabled",
       "lastSyncAt": "Last sync: {time}",
       "neverSynced": "Never synced",
-      "syncSuccess": "Sync task started",
+      "syncSuccess": "Channel models synced",
       "syncFailed": "Sync failed"
     }
   },

@@ -37,6 +37,8 @@ import { cn } from '@/lib/utils';
 import type { StatsMetricsFormatted } from '@/api/endpoints/stats';
 import { TestTube2, Trash2 } from 'lucide-react';
 
+const BATCH_CHUNK_SIZE = 5;
+
 export type ChannelListItem = { raw: Channel; formatted: StatsMetricsFormatted };
 
 interface ChannelsTableProps {
@@ -58,14 +60,16 @@ export function ChannelsTable({ items, highlightedId, registerRow }: ChannelsTab
     const enableChannel = useEnableChannel();
     const deleteChannel = useDeleteChannel();
 
-    // 筛选/同步导致行集合变化后，清掉已不存在的选中项
+    // 筛选/同步导致行集合变化后，清掉已不存在的选中项；批量执行期间冻结，
+    // 否则第一条成功触发列表重取就会把操作条从用户眼前抽走
     useEffect(() => {
+        if (isBatchBusy) return;
         setSelectedIds((prev) => {
             const valid = new Set(items.map((item) => item.raw.id));
             const next = new Set([...prev].filter((id) => valid.has(id)));
             return next.size === prev.size ? prev : next;
         });
-    }, [items]);
+    }, [items, isBatchBusy]);
 
     // managed 渠道只读，不可选中、不参与批量操作
     const selectableIds = items.filter((item) => !item.raw.managed).map((item) => item.raw.id);
@@ -95,13 +99,18 @@ export function ChannelsTable({ items, highlightedId, registerRow }: ChannelsTab
         });
     };
 
+    // 分批并发：几十条选中时一口气打满后端只会放大失败数
     const runBatch = async (action: (id: number) => Promise<unknown>) => {
         const ids = [...selectedIds].filter((id) => selectableIds.includes(id));
         if (ids.length === 0) return;
 
         setIsBatchBusy(true);
         try {
-            const results = await Promise.allSettled(ids.map((id) => action(id)));
+            const results: PromiseSettledResult<unknown>[] = [];
+            for (let i = 0; i < ids.length; i += BATCH_CHUNK_SIZE) {
+                const chunk = ids.slice(i, i + BATCH_CHUNK_SIZE);
+                results.push(...(await Promise.allSettled(chunk.map((id) => action(id)))));
+            }
             const success = results.filter((r) => r.status === 'fulfilled').length;
             const failed = results.length - success;
             if (failed === 0) {
@@ -109,9 +118,17 @@ export function ChannelsTable({ items, highlightedId, registerRow }: ChannelsTab
             } else {
                 const firstError = results.find((r): r is PromiseRejectedResult => r.status === 'rejected');
                 const reason = firstError?.reason instanceof Error ? firstError.reason.message : String(firstError?.reason ?? '');
-                toast.error(t('batchPartial', { success, failed }), { description: reason });
+                const message = failed === results.length
+                    ? t('batchAllFailed', { count: failed })
+                    : t('batchPartial', { success, failed });
+                toast.error(message, { description: reason });
             }
-            setSelectedIds(new Set());
+            // 只清本次操作过的项：期间新勾选的属于用户后续意图，不该无提示吞掉
+            setSelectedIds((prev) => {
+                const next = new Set(prev);
+                for (const id of ids) next.delete(id);
+                return next;
+            });
         } finally {
             setIsBatchBusy(false);
         }
@@ -128,7 +145,7 @@ export function ChannelsTable({ items, highlightedId, registerRow }: ChannelsTab
 
     return (
         <div className="flex min-h-0 flex-1 flex-col gap-2">
-            {selectedIds.size > 0 && (
+            {(selectedIds.size > 0 || isBatchBusy) && (
                 <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-primary/30 bg-primary/5 px-3 py-2">
                     <span className="text-sm font-medium">{t('selectedCount', { count: selectedIds.size })}</span>
                     <div className="flex flex-wrap items-center gap-1.5">
@@ -149,9 +166,9 @@ export function ChannelsTable({ items, highlightedId, registerRow }: ChannelsTab
                 </div>
             )}
 
-            <div className="min-h-0 flex-1 overflow-y-auto rounded-2xl border border-border/70 bg-card/50">
+            <div className="min-h-0 flex-1 overflow-auto rounded-2xl border border-border/70 bg-card/50">
                 <Table>
-                    <TableHeader className="sticky top-0 z-10 bg-card/95 backdrop-blur">
+                    <TableHeader className="[&_th]:sticky [&_th]:top-0 [&_th]:z-10 [&_th]:bg-card/95 [&_th]:backdrop-blur">
                         <TableRow className="hover:bg-transparent">
                             <TableHead className="w-10 pr-0">
                                 <input
@@ -161,7 +178,7 @@ export function ChannelsTable({ items, highlightedId, registerRow }: ChannelsTab
                                     checked={allSelected}
                                     onChange={toggleAll}
                                     aria-label={t('selectAll')}
-                                    disabled={selectableIds.length === 0}
+                                    disabled={selectableIds.length === 0 || isBatchBusy}
                                 />
                             </TableHead>
                             <TableHead className="min-w-40">{t('name')}</TableHead>
@@ -191,6 +208,7 @@ export function ChannelsTable({ items, highlightedId, registerRow }: ChannelsTab
                                             className="size-3.5 cursor-pointer accent-primary"
                                             checked={selectedIds.has(channel.id)}
                                             onChange={() => toggleOne(channel.id)}
+                                            disabled={isBatchBusy}
                                             aria-label={t('selectOne', { name: channel.name })}
                                         />
                                     )}
@@ -211,6 +229,8 @@ export function ChannelsTable({ items, highlightedId, registerRow }: ChannelsTab
                                         channel={channel}
                                         enabledToast={tCard('toast.enabled')}
                                         disabledToast={tCard('toast.disabled')}
+                                        enableAria={tCard('enableChannel', { name: channel.name })}
+                                        disableAria={tCard('disableChannel', { name: channel.name })}
                                     />
                                 </TableCell>
                                 <TableCell>
@@ -311,20 +331,23 @@ function TestButton({ channel, labels }: { channel: Channel; labels: TableT }) {
 
     return (
         <Tooltip>
+            {/* disabled 按钮不派发 pointer 事件，tooltip 挂在 span 上才能解释禁用原因 */}
             <TooltipTrigger asChild>
-                <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon"
-                    className="size-7 rounded-lg text-muted-foreground hover:text-primary"
-                    disabled={!canTest || fetchModel.isPending}
-                    onClick={handleTest}
-                    aria-label={labels('test')}
-                >
-                    <TestTube2 className={cn('size-4', fetchModel.isPending && 'animate-pulse')} />
-                </Button>
+                <span className="inline-flex">
+                    <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        className="size-7 rounded-lg text-muted-foreground hover:text-primary"
+                        disabled={!canTest || fetchModel.isPending}
+                        onClick={handleTest}
+                        aria-label={labels('test')}
+                    >
+                        <TestTube2 className={cn('size-4', fetchModel.isPending && 'animate-pulse')} />
+                    </Button>
+                </span>
             </TooltipTrigger>
-            <TooltipContent>{labels('test')}</TooltipContent>
+            <TooltipContent>{canTest ? labels('test') : labels('testDisabled')}</TooltipContent>
         </Tooltip>
     );
 }
@@ -372,10 +395,14 @@ function EnableSwitch({
     channel,
     enabledToast,
     disabledToast,
+    enableAria,
+    disableAria,
 }: {
     channel: Channel;
     enabledToast: string;
     disabledToast: string;
+    enableAria: string;
+    disableAria: string;
 }) {
     const enableChannel = useEnableChannel();
 
@@ -398,7 +425,7 @@ function EnableSwitch({
             checked={channel.enabled}
             onCheckedChange={handleEnableChange}
             disabled={enableChannel.isPending || channel.managed}
-            aria-label={channel.enabled ? disabledToast : enabledToast}
+            aria-label={channel.enabled ? disableAria : enableAria}
         />
     );
 }

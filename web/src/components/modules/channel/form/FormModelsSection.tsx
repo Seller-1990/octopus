@@ -111,7 +111,6 @@ export function FormModelsSection({ formData, onFormDataChange, idPrefix }: Prop
                     {t('modelRefresh')}
                 </Button>
             </div>
-            <input type="hidden" value={formData.model} required />
 
             <div className="relative">
                 <Input

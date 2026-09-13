@@ -38,6 +38,8 @@ interface VirtualizedGridProps<T> {
     onScroll?: (info: { scrollTop: number; scrollHeight: number; clientHeight: number }) => void;
     /** 暴露内部滚动容器（如"回到顶部以查看新日志"的编程式滚动） */
     onScrollContainer?: (element: HTMLDivElement | null) => void;
+    /** 跳转定位：虚拟窗口外的目标行需要先编程式滚动才能挂载；token 变化即重新滚动 */
+    scrollToItem?: { index: number; token: number | string } | null;
 }
 
 function getColumnsForWidth(
@@ -68,6 +70,7 @@ export function VirtualizedGrid<T>({
     reachEndOffset = 1,
     onScroll,
     onScrollContainer,
+    scrollToItem = null,
 }: VirtualizedGridProps<T>) {
     'use no memo';
 
@@ -150,6 +153,15 @@ export function VirtualizedGrid<T>({
     });
 
     const virtualRows = rowVirtualizer.getVirtualItems();
+
+    // virtualizer 每次渲染都是新实例，依赖只留业务入参，避免滚动被无关渲染反复触发
+    useEffect(() => {
+        if (!scrollToItem) return;
+        if (scrollToItem.index < 0 || scrollToItem.index >= items.length) return;
+        const rowIndex = headerRowCount + Math.floor(scrollToItem.index / columnCount);
+        rowVirtualizer.scrollToIndex(rowIndex, { align: 'center', behavior: 'smooth' });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [scrollToItem, items.length, columnCount, headerRowCount]);
 
     useEffect(() => {
         if (!onReachEnd || !reachEndEnabled || itemRowCount === 0) return;

@@ -1571,7 +1571,9 @@
       "test": "测试连通",
       "testSuccess": "测试成功，获取到 {count} 个模型",
       "testFailed": "测试失败",
-      "loading": "加载中…"
+      "loading": "加载中…",
+      "batchAllFailed": "批量操作全部失败（{count} 项）",
+      "testDisabled": "无法测试：需要接口地址与已启用的 Key"
     },
     "filters": {
       "type": "类型",
@@ -1589,7 +1591,7 @@
       "syncHint": "仅同步开启「自动同步模型」的渠道",
       "lastSyncAt": "上次同步：{time}",
       "neverSynced": "从未同步",
-      "syncSuccess": "同步任务已开始",
+      "syncSuccess": "渠道模型同步完成",
       "syncFailed": "同步失败"
     }
   },
