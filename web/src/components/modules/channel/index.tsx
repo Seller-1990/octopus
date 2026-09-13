@@ -167,21 +167,29 @@ export function Channel() {
                 <div key={index} className="h-56 animate-pulse rounded-3xl border border-border/70 bg-muted/40" />
             ))}
         </div>
-    ) : error ? (
-        <div className="rounded-3xl border border-destructive/30 bg-destructive/10 px-4 py-6 text-sm text-destructive">
-            {t('loadFailed', { message: error.message })}
-        </div>
     ) : null;
 
     const showTableView = layout === 'table';
     const manualEmpty = !isLoading && !error && visibleManualChannels.length === 0 && !targetedManagedChannel;
 
-    const manualContent = showTableView ? (
-        manualEmpty ? (
-            <div className="rounded-3xl border border-border/70 bg-card/70 px-4 py-8 text-center text-sm text-muted-foreground">
-                {t('empty')}
-            </div>
-        ) : (
+    const emptyBox = (
+        <div className="rounded-3xl border border-border/70 bg-card/70 px-4 py-8 text-center text-sm text-muted-foreground">
+            {t('empty')}
+        </div>
+    );
+    const loadingBox = (
+        <div className="rounded-3xl border border-border/70 bg-card/70 px-4 py-8 text-center text-sm text-muted-foreground">
+            {t('loading')}
+        </div>
+    );
+
+    // 错误态优先于视图分支，避免表格视图把加载失败误报成「没有渠道」
+    const manualContent = error ? (
+        <div className="rounded-3xl border border-destructive/30 bg-destructive/10 px-4 py-6 text-sm text-destructive">
+            {t('loadFailed', { message: error.message })}
+        </div>
+    ) : showTableView ? (
+        manualEmpty ? emptyBox : isLoading ? loadingBox : (
             <ChannelsTable
                 items={visibleManualChannels}
                 highlightedId={highlightedChannelId}
@@ -195,11 +203,7 @@ export function Channel() {
             columns={manualColumnCompute}
             estimateItemHeight={216}
             header={targetedSection}
-            footer={manualFooter ?? (manualEmpty ? (
-                <div className="rounded-3xl border border-border/70 bg-card/70 px-4 py-8 text-center text-sm text-muted-foreground">
-                    {t('empty')}
-                </div>
-            ) : null)}
+            footer={manualFooter ?? (manualEmpty ? emptyBox : null)}
             getItemKey={(item) => `channel-${item.raw.id}`}
             renderItem={renderChannelCard}
         />

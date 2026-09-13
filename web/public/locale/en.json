@@ -1409,9 +1409,15 @@
       "disableChannel": "Disable channel {name}",
       "toast": {
         "enabled": "Channel enabled",
-        "disabled": "Channel disabled"
+        "disabled": "Channel disabled",
+        "markTransit": "Marked as transit channel",
+        "markCharity": "Marked as free channel"
       },
-      "managedBadge": "Site projected"
+      "managedBadge": "Site projected",
+      "charity": "Free",
+      "transit": "Transit",
+      "reserveToCharity": "Switch to free channel",
+      "reserveToTransit": "Switch to transit channel"
     },
     "detail": {
       "title": {
@@ -1424,7 +1430,10 @@
         "costs": "Cost Details",
         "baseUrls": "Base URLs",
         "keys": "Keys",
-        "protocol": "Protocol routing"
+        "protocol": "Protocol routing",
+        "basics": "Basics",
+        "models": "Models",
+        "advanced": "Advanced"
       },
       "protocol": {
         "policy": "Protocol policy",
@@ -1455,6 +1464,21 @@
         "delete": "Delete",
         "confirmDelete": "Confirm Delete",
         "deleting": "Deleting..."
+      },
+      "basics": {
+        "type": "Type",
+        "proxy": "Proxy",
+        "reserve": "Free/Transit",
+        "autoSync": "Auto sync models"
+      },
+      "noModels": "No models",
+      "managedNotice": "This managed channel is projected automatically from a site account. Manage the account, group, models, proxy or enable state in site management; this page no longer allows direct edit, delete or toggling, to avoid being overwritten by later projections.",
+      "viewSourceSite": "View source site",
+      "viewSiteChannel": "View site channel",
+      "advanced": {
+        "customHeader": "Custom headers",
+        "matchRegex": "Model match regex",
+        "paramOverride": "Parameter override"
       }
     },
     "create": {
@@ -1468,20 +1492,16 @@
       "type": "Channel Type",
       "baseUrls": "Base URLs",
       "baseUrlUrl": "URL",
-      "baseUrlDelay": "Delay(ms)",
       "advanced": "Advanced Settings",
       "apiKey": "API Key",
       "customHeader": "Custom Headers",
       "customHeaderKey": "Header Key",
       "customHeaderValue": "Header Value",
       "customHeaderAdd": "Add Header",
-      "channelProxy": "Channel Proxy",
-      "channelProxyPlaceholder": "Optional: proxy for this channel (overrides global proxy)",
       "paramOverride": "Param Override",
       "paramOverridePlaceholder": "Optional: JSON string to override request params",
       "model": "Model",
       "enabled": "Enabled",
-      "proxy": "Use Proxy",
       "modelCustomPlaceholder": "Custom model name",
       "modelAdd": "Add",
       "modelRefresh": "Refresh",
@@ -1498,11 +1518,6 @@
       "typeGemini": "Gemini",
       "typeVolcengine": "Volcengine",
       "autoSync": "Auto Sync",
-      "autoGroup": "Auto Group",
-      "autoGroupNone": "None",
-      "autoGroupFuzzy": "Fuzzy",
-      "autoGroupExact": "Exact",
-      "autoGroupRegex": "Regex",
       "wsMode": "Responses WS Mode",
       "wsModeInherit": "Inherit global",
       "wsModePassthrough": "Passthrough",
@@ -1555,7 +1570,8 @@
       "batchDeleteConfirm": "Delete",
       "test": "Test connection",
       "testSuccess": "Test passed, {count} models fetched",
-      "testFailed": "Test failed"
+      "testFailed": "Test failed",
+      "loading": "Loading…"
     },
     "filters": {
       "type": "Type",

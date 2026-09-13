@@ -48,7 +48,7 @@ export function Card({ channel, stats, layout = 'grid' }: { channel: Channel; st
             { id: channel.id, is_reserve: checked },
             {
                 onSuccess: () => {
-                    toast.success(checked ? '已设为中转渠道' : '已转为公益渠道');
+                    toast.success(checked ? t('toast.markTransit') : t('toast.markCharity'));
                 },
                 onError: (error) => {
                     toast.error(error.message);
@@ -76,7 +76,7 @@ export function Card({ channel, stats, layout = 'grid' }: { channel: Channel; st
                             {channel.managed ? (
                                 <div className="mt-1">
                                     <span className="inline-flex rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-[10px] font-medium text-amber-700 dark:text-amber-300">
-                                        站点投影
+                                        {t('managedBadge')}
                                     </span>
                                 </div>
                             ) : (
@@ -88,15 +88,15 @@ export function Card({ channel, stats, layout = 'grid' }: { channel: Channel; st
                                                     checked={channel.is_reserve}
                                                     disabled={updateChannel.isPending}
                                                     onCheckedChange={handleReserveChange}
-                                                    aria-label={channel.is_reserve ? '转为公益渠道' : '设为中转渠道'}
+                                                    aria-label={channel.is_reserve ? t('reserveToCharity') : t('reserveToTransit')}
                                                 />
                                                 <span className="text-[10px] font-medium text-muted-foreground">
-                                                    {channel.is_reserve ? '中转' : '公益'}
+                                                    {channel.is_reserve ? t('transit') : t('charity')}
                                                 </span>
                                             </span>
                                         </TooltipTrigger>
                                         <TooltipContent>
-                                            {channel.is_reserve ? '转为公益渠道' : '设为中转渠道'}
+                                            {channel.is_reserve ? t('reserveToCharity') : t('reserveToTransit')}
                                         </TooltipContent>
                                     </Tooltip>
                                 </div>

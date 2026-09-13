@@ -9,7 +9,9 @@ import {
     Activity,
     TrendingUp,
     Globe,
-    Key
+    Key,
+    Layers,
+    SlidersHorizontal
 } from 'lucide-react';
 import { useUpdateChannel, useDeleteChannel, type Channel, type UpdateChannelRequest } from '@/api/endpoints/channel';
 import {
@@ -24,6 +26,7 @@ import { useTranslations } from 'next-intl';
 import { toast } from '@/components/common/Toast';
 import { Button } from '@/components/ui/button';
 import { ChannelForm, type ChannelFormData } from './Form';
+import { typeLabel } from './ChannelFilters';
 import { formatMoney } from '@/lib/utils';
 import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
@@ -68,6 +71,19 @@ export function CardContent({ channel, stats }: { channel: Channel; stats: Stats
     });
     const t = useTranslations('channel.detail');
     const tProxy = useTranslations('proxyPool');
+    const tTable = useTranslations('channel.table');
+    const tFilters = useTranslations('channel.filters');
+    const tForm = useTranslations('channel.form');
+    const tCard = useTranslations('channel.card');
+
+    const autoModels = channel.model
+        ? channel.model.split(',').map((m) => m.trim()).filter(Boolean)
+        : [];
+    const customModels = channel.custom_model
+        ? channel.custom_model.split(',').map((m) => m.trim()).filter(Boolean)
+        : [];
+    const hasCustomHeader = (channel.custom_header ?? []).some((h) => h.header_key.trim());
+    const hasAdvanced = hasCustomHeader || Boolean(channel.match_regex) || Boolean(channel.param_override);
 
     const currentView = isEditing ? 'editing' : 'viewing';
 
@@ -203,7 +219,7 @@ export function CardContent({ channel, stats }: { channel: Channel; stats: Stats
                     </h2>
                     {channel.managed ? (
                         <Badge variant="outline" className="ml-3 border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300">
-                            站点投影
+                            {tCard('managedBadge')}
                         </Badge>
                     ) : null}
                     <MorphingDialogClose
@@ -225,7 +241,7 @@ export function CardContent({ channel, stats }: { channel: Channel; stats: Stats
                                 {channel.managed ? (
                                     <section className="rounded-2xl border border-amber-500/30 bg-amber-500/10 p-4 text-sm text-amber-800 dark:text-amber-200">
                                         <div>
-                                            这是站点账号自动投影生成的托管 channel。请到站点管理中修改账号、分组、模型、代理或启停状态；该页面不再允许直接编辑、删除或启停，避免被后续投影覆盖。
+                                            {t('managedNotice')}
                                         </div>
                                         {channel.managed_source ? (
                                             <div className="mt-3 flex flex-wrap gap-2">
@@ -236,7 +252,7 @@ export function CardContent({ channel, stats }: { channel: Channel; stats: Stats
                                                     className="rounded-xl border-amber-500/30 bg-white/70 text-amber-900 hover:bg-white dark:bg-background/40 dark:text-amber-100"
                                                     onClick={() => handleManagedSourceJump('site')}
                                                 >
-                                                    查看来源站点
+                                                    {t('viewSourceSite')}
                                                 </Button>
                                                 <Button
                                                     type="button"
@@ -245,12 +261,63 @@ export function CardContent({ channel, stats }: { channel: Channel; stats: Stats
                                                     className="rounded-xl border-amber-500/30 bg-white/70 text-amber-900 hover:bg-white dark:bg-background/40 dark:text-amber-100"
                                                     onClick={() => handleManagedSourceJump('site-channel')}
                                                 >
-                                                    查看站点渠道
+                                                    {t('viewSiteChannel')}
                                                 </Button>
                                             </div>
                                         ) : null}
                                     </section>
                                 ) : null}
+                                <section className="space-y-3">
+                                    <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                                        {t('sections.basics')}
+                                    </h3>
+                                    <dl className="grid gap-3 sm:grid-cols-3">
+                                        <div className="rounded-lg border px-3 py-2">
+                                            <dt className="text-xs text-muted-foreground">{t('basics.type')}</dt>
+                                            <dd className="mt-1 text-sm font-medium">{typeLabel(tForm, channel.type)}</dd>
+                                        </div>
+                                        <div className="rounded-lg border px-3 py-2">
+                                            <dt className="text-xs text-muted-foreground">{t('basics.proxy')}</dt>
+                                            <dd className="mt-1 text-sm font-medium">
+                                                {channel.proxy_mode === 'pool' ? tTable('proxyPool') : tTable('proxyDirect')}
+                                            </dd>
+                                        </div>
+                                        <div className="rounded-lg border px-3 py-2">
+                                            <dt className="text-xs text-muted-foreground">{t('basics.reserve')}</dt>
+                                            <dd className="mt-1 text-sm font-medium">
+                                                {channel.is_reserve ? tFilters('transit') : tFilters('charity')}
+                                            </dd>
+                                        </div>
+                                        <div className="rounded-lg border px-3 py-2">
+                                            <dt className="text-xs text-muted-foreground">{t('basics.autoSync')}</dt>
+                                            <dd className="mt-1 text-sm font-medium">
+                                                {channel.auto_sync ? t('protocol.yes') : t('protocol.no')}
+                                            </dd>
+                                        </div>
+                                    </dl>
+                                </section>
+
+                                <section className="space-y-3">
+                                    <h3 className="flex items-center gap-2 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+                                        <Layers className="size-3.5" />
+                                        {t('sections.models')}
+                                    </h3>
+                                    <div className="rounded-2xl border bg-card p-3">
+                                        {(autoModels.length + customModels.length) > 0 ? (
+                                            <div className="flex max-h-40 flex-wrap gap-1.5 overflow-y-auto">
+                                                {autoModels.map((model) => (
+                                                    <Badge key={model} variant="secondary">{model}</Badge>
+                                                ))}
+                                                {customModels.map((model) => (
+                                                    <Badge key={model} className="bg-primary hover:bg-primary/90">{model}</Badge>
+                                                ))}
+                                            </div>
+                                        ) : (
+                                            <div className="py-2 text-center text-sm text-muted-foreground">{t('noModels')}</div>
+                                        )}
+                                    </div>
+                                </section>
+
                                 <section className="space-y-3">
                                     <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                                         {t('sections.protocol')}
@@ -494,6 +561,49 @@ export function CardContent({ channel, stats }: { channel: Channel; stats: Stats
                                         )}
                                     </div>
                                 </section>
+
+                                {/* 高级配置摘要（有内容才展示） */}
+                                {hasAdvanced && (
+                                    <section className="space-y-3">
+                                        <h3 className="flex items-center gap-2 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+                                            <SlidersHorizontal className="size-3.5" />
+                                            {t('sections.advanced')}
+                                        </h3>
+                                        <div className="divide-y rounded-2xl border bg-card">
+                                            {hasCustomHeader && (
+                                                <div className="p-3 sm:p-4">
+                                                    <dt className="mb-2 text-xs text-muted-foreground">{t('advanced.customHeader')}</dt>
+                                                    <dd className="space-y-1">
+                                                        {channel.custom_header
+                                                            .filter((h) => h.header_key.trim())
+                                                            .map((h, i) => (
+                                                                <div key={`${h.header_key}-${i}`} className="font-mono text-xs">
+                                                                    <span className="text-muted-foreground">{h.header_key}:</span>{' '}
+                                                                    <span className="select-all">{h.header_value}</span>
+                                                                </div>
+                                                            ))}
+                                                    </dd>
+                                                </div>
+                                            )}
+                                            {channel.match_regex && (
+                                                <div className="p-3 sm:p-4">
+                                                    <dt className="mb-1 text-xs text-muted-foreground">{t('advanced.matchRegex')}</dt>
+                                                    <dd className="font-mono text-xs break-all select-all">{channel.match_regex}</dd>
+                                                </div>
+                                            )}
+                                            {channel.param_override && (
+                                                <div className="p-3 sm:p-4">
+                                                    <dt className="mb-1 text-xs text-muted-foreground">{t('advanced.paramOverride')}</dt>
+                                                    <dd>
+                                                        <pre className="max-h-40 overflow-auto rounded-lg bg-muted/40 p-2 font-mono text-xs whitespace-pre-wrap break-all select-all">
+                                                            {channel.param_override}
+                                                        </pre>
+                                                    </dd>
+                                                </div>
+                                            )}
+                                        </div>
+                                    </section>
+                                )}
 
                                 {/* 等待时间 */}
                                 <dl className="rounded-2xl border bg-card p-3 sm:p-4 transition-colors hover:bg-accent/5">

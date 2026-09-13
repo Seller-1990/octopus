@@ -1409,9 +1409,15 @@
       "disableChannel": "停用渠道 {name}",
       "toast": {
         "enabled": "渠道已启用",
-        "disabled": "渠道已禁用"
+        "disabled": "渠道已禁用",
+        "markTransit": "已设为中转渠道",
+        "markCharity": "已转为公益渠道"
       },
-      "managedBadge": "站点投影"
+      "managedBadge": "站点投影",
+      "charity": "公益",
+      "transit": "中转",
+      "reserveToCharity": "转为公益渠道",
+      "reserveToTransit": "设为中转渠道"
     },
     "detail": {
       "title": {
@@ -1424,7 +1430,10 @@
         "costs": "成本详情",
         "baseUrls": "Base URLs",
         "keys": "密钥",
-        "protocol": "协议路由"
+        "protocol": "协议路由",
+        "basics": "基础信息",
+        "models": "模型",
+        "advanced": "高级配置"
       },
       "protocol": {
         "policy": "协议策略",
@@ -1455,6 +1464,21 @@
         "delete": "删除",
         "confirmDelete": "确认删除",
         "deleting": "删除中..."
+      },
+      "basics": {
+        "type": "类型",
+        "proxy": "代理",
+        "reserve": "公益/中转",
+        "autoSync": "自动同步模型"
+      },
+      "noModels": "无模型",
+      "managedNotice": "这是站点账号自动投影生成的托管渠道。请到站点管理中修改账号、分组、模型、代理或启停状态；该页面不再允许直接编辑、删除或启停，避免被后续投影覆盖。",
+      "viewSourceSite": "查看来源站点",
+      "viewSiteChannel": "查看站点渠道",
+      "advanced": {
+        "customHeader": "自定义请求头",
+        "matchRegex": "模型匹配正则",
+        "paramOverride": "参数覆写"
       }
     },
     "create": {
@@ -1468,20 +1492,16 @@
       "type": "渠道类型",
       "baseUrls": "Base URLs",
       "baseUrlUrl": "地址",
-      "baseUrlDelay": "延迟(ms)",
       "advanced": "高级设置",
       "apiKey": "API Key",
       "customHeader": "自定义 Header",
       "customHeaderKey": "Header Key",
       "customHeaderValue": "Header Value",
       "customHeaderAdd": "添加 Header",
-      "channelProxy": "渠道代理",
-      "channelProxyPlaceholder": "可选：仅对该渠道生效（覆盖全局代理）",
       "paramOverride": "参数覆盖",
       "paramOverridePlaceholder": "可选：JSON 字符串，用于覆盖请求参数",
       "model": "模型",
       "enabled": "启用",
-      "proxy": "使用代理",
       "modelCustomPlaceholder": "自定义模型名称",
       "modelAdd": "添加",
       "modelRefresh": "刷新",
@@ -1498,11 +1518,6 @@
       "typeGemini": "Gemini",
       "typeVolcengine": "火山引擎",
       "autoSync": "自动同步",
-      "autoGroup": "自动分组",
-      "autoGroupNone": "不自动分组",
-      "autoGroupFuzzy": "模糊匹配",
-      "autoGroupExact": "准确匹配",
-      "autoGroupRegex": "正则匹配",
       "wsMode": "Responses WS 模式",
       "wsModeInherit": "跟随全局",
       "wsModePassthrough": "直通",
@@ -1555,7 +1570,8 @@
       "batchDeleteConfirm": "删除",
       "test": "测试连通",
       "testSuccess": "测试成功，获取到 {count} 个模型",
-      "testFailed": "测试失败"
+      "testFailed": "测试失败",
+      "loading": "加载中…"
     },
     "filters": {
       "type": "类型",
