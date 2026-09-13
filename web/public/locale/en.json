@@ -1593,6 +1593,16 @@
       "neverSynced": "Never synced",
       "syncSuccess": "Channel models synced",
       "syncFailed": "Sync failed"
+    },
+    "page": {
+      "create": "Add Channel",
+      "chipsAll": "All",
+      "searchPlaceholder": "Search name, model, URL or remark",
+      "total": "{count, plural, =1 {1 channel} other {# channels}} in total",
+      "rowsPerPage": "Rows per page",
+      "pageStatus": "Page {page} of {total}",
+      "prevPage": "Previous page",
+      "nextPage": "Next page"
     }
   },
   "siteChannel": {

@@ -26,7 +26,7 @@ import { useTranslations } from 'next-intl';
 import { toast } from '@/components/common/Toast';
 import { Button } from '@/components/ui/button';
 import { ChannelForm, type ChannelFormData } from './Form';
-import { typeLabel } from './ChannelFilters';
+import { typeLabel } from './ChannelToolbar';
 import { formatMoney } from '@/lib/utils';
 import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';

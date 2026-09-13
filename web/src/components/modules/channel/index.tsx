@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useChannelList, type Channel } from '@/api/endpoints/channel';
 import { Card } from './Card';
 import { ChannelsTable } from './ChannelsTable';
-import { ChannelFilters } from './ChannelFilters';
+import { ChannelToolbar } from './ChannelToolbar';
 import { useSearchStore, useToolbarViewOptionsStore } from '@/components/modules/toolbar';
 import { SiteChannelSection } from '@/components/modules/site-channel';
 import { cn } from '@/lib/utils';
@@ -163,6 +163,12 @@ export function Channel() {
         };
     }, [pendingChannelJump, clearPending, flashChannelRow, activeTab]);
 
+    // 类型 chips 计数基于全部普通渠道（不随筛选/搜索变化，保证各 chip 数稳定）
+    const toolbarChannels = useMemo(
+        () => (channelsData ?? []).map((item) => item.raw),
+        [channelsData],
+    );
+
     // 网格视图是虚拟化渲染：目标在窗口外时节点不存在，需要先编程式滚动到该行。
     // requestId 作为 token 保证对同一目标的重复跳转也能再次触发滚动。
     const gridScrollTarget = useMemo(() => {
@@ -275,7 +281,7 @@ export function Channel() {
                             />
                         ) : (
                             <div className="flex min-h-0 flex-1 flex-col">
-                                <ChannelFilters />
+                                <ChannelToolbar channels={toolbarChannels} />
                                 {showTableView && targetedSection ? (
                                     <div className="px-1 pb-2">{targetedSection}</div>
                                 ) : null}

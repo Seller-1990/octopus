@@ -183,7 +183,7 @@ export function Toolbar() {
             );
         }
 
-        // 渠道页面按钮
+        // 渠道页面按钮（新建渠道已内聚到渠道页工具栏，此处不再重复）
         if (toolbarItem === 'channel') {
             // 站点渠道 tab 显示统一补全按钮
             if (activeChannelTab === 'site' && completionPendingCount > 0) {
@@ -196,14 +196,6 @@ export function Toolbar() {
                     priority: 'large', // xl以上可见
                 });
             }
-
-            result.push({
-                id: 'create-channel',
-                icon: <Plus className="size-4" />,
-                label: '新增渠道',
-                onClick: () => setCreateDialogOpen(true),
-                priority: 'desktop',
-            });
         }
 
         // 分组页面按钮

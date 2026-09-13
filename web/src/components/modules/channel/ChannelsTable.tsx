@@ -1,12 +1,19 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslations } from 'next-intl';
-import { useFetchModel, type Channel, useEnableChannel, useDeleteChannel } from '@/api/endpoints/channel';
+import { ChannelType, useFetchModel, type Channel, useEnableChannel, useDeleteChannel } from '@/api/endpoints/channel';
 import { MorphingDialog, MorphingDialogTrigger, MorphingDialogContainer, MorphingDialogContent } from '@/components/ui/morphing-dialog';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Switch } from '@/components/ui/switch';
+import {
+    Select,
+    SelectContent,
+    SelectItem,
+    SelectTrigger,
+    SelectValue,
+} from '@/components/ui/select';
 import {
     AlertDialog,
     AlertDialogAction,
@@ -24,7 +31,7 @@ import {
 } from '@/components/animate-ui/components/animate/tooltip';
 import { toast } from '@/components/common/Toast';
 import { CardContent } from './CardContent';
-import { typeLabel } from './ChannelFilters';
+import { typeLabel } from './ChannelToolbar';
 import {
     Table,
     TableBody,
@@ -35,9 +42,10 @@ import {
 } from '@/components/ui/table';
 import { cn } from '@/lib/utils';
 import type { StatsMetricsFormatted } from '@/api/endpoints/stats';
-import { TestTube2, Trash2 } from 'lucide-react';
+import { ChevronLeft, ChevronRight, TestTube2, Trash2 } from 'lucide-react';
 
 const BATCH_CHUNK_SIZE = 5;
+const PAGE_SIZE_OPTIONS = [10, 20, 50, 100] as const;
 
 export type ChannelListItem = { raw: Channel; formatted: StatsMetricsFormatted };
 
@@ -47,8 +55,19 @@ interface ChannelsTableProps {
     registerRow: (id: number, node: HTMLElement | null) => void;
 }
 
+// 类型徽章配色（对齐 AxonHub 的彩色 provider 徽章）
+const TYPE_BADGE_CLASS: Record<ChannelType, string> = {
+    [ChannelType.OpenAIChat]: 'border-emerald-500/20 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400',
+    [ChannelType.OpenAIResponse]: 'border-sky-500/20 bg-sky-500/10 text-sky-700 dark:text-sky-400',
+    [ChannelType.Anthropic]: 'border-orange-500/20 bg-orange-500/10 text-orange-700 dark:text-orange-400',
+    [ChannelType.Gemini]: 'border-blue-500/20 bg-blue-500/10 text-blue-700 dark:text-blue-400',
+    [ChannelType.Volcengine]: 'border-violet-500/20 bg-violet-500/10 text-violet-700 dark:text-violet-400',
+    [ChannelType.OpenAIEmbedding]: 'border-slate-500/20 bg-slate-500/10 text-slate-700 dark:text-slate-400',
+};
+
 export function ChannelsTable({ items, highlightedId, registerRow }: ChannelsTableProps) {
     const t = useTranslations('channel.table');
+    const tPage = useTranslations('channel.page');
     const tCard = useTranslations('channel.card');
     const tFilters = useTranslations('channel.filters');
     const tForm = useTranslations('channel.form');
@@ -56,9 +75,18 @@ export function ChannelsTable({ items, highlightedId, registerRow }: ChannelsTab
     const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
     const [isBatchBusy, setIsBatchBusy] = useState(false);
     const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+    const [pageSize, setPageSize] = useState<number>(20);
+    const [pageIndex, setPageIndex] = useState(0);
 
     const enableChannel = useEnableChannel();
     const deleteChannel = useDeleteChannel();
+
+    const pageCount = Math.max(1, Math.ceil(items.length / pageSize));
+    const safePageIndex = Math.min(pageIndex, pageCount - 1);
+    const pageItems = useMemo(
+        () => items.slice(safePageIndex * pageSize, (safePageIndex + 1) * pageSize),
+        [items, safePageIndex, pageSize],
+    );
 
     // 筛选/同步导致行集合变化后，清掉已不存在的选中项；批量执行期间冻结，
     // 否则第一条成功触发列表重取就会把操作条从用户眼前抽走
@@ -70,6 +98,19 @@ export function ChannelsTable({ items, highlightedId, registerRow }: ChannelsTab
             return next.size === prev.size ? prev : next;
         });
     }, [items, isBatchBusy]);
+
+    // 数据收缩后页码越界回退
+    useEffect(() => {
+        setPageIndex((prev) => Math.min(prev, pageCount - 1));
+    }, [pageCount]);
+
+    // 跳转定位目标不在当前页时自动翻页，让行挂载供定位重试命中
+    useEffect(() => {
+        if (!highlightedId) return;
+        const index = items.findIndex((item) => item.raw.id === highlightedId);
+        if (index < 0) return;
+        setPageIndex(Math.floor(index / pageSize));
+    }, [highlightedId, items, pageSize]);
 
     // managed 渠道只读，不可选中、不参与批量操作
     const selectableIds = items.filter((item) => !item.raw.managed).map((item) => item.raw.id);
@@ -168,8 +209,8 @@ export function ChannelsTable({ items, highlightedId, registerRow }: ChannelsTab
 
             <div className="min-h-0 flex-1 overflow-auto rounded-2xl border border-border/70 bg-card/50">
                 <Table>
-                    <TableHeader className="[&_th]:sticky [&_th]:top-0 [&_th]:z-10 [&_th]:bg-card/95 [&_th]:backdrop-blur">
-                        <TableRow className="hover:bg-transparent">
+                    <TableHeader className="[&_th]:sticky [&_th]:top-0 [&_th]:z-10 [&_th]:bg-muted/60 [&_th]:backdrop-blur">
+                        <TableRow className="hover:bg-transparent border-b">
                             <TableHead className="w-10 pr-0">
                                 <input
                                     ref={headerCheckboxRef}
@@ -194,12 +235,14 @@ export function ChannelsTable({ items, highlightedId, registerRow }: ChannelsTab
                         </TableRow>
                     </TableHeader>
                     <TableBody>
-                        {items.map(({ raw: channel, formatted }) => (
+                        {pageItems.map(({ raw: channel, formatted }) => (
                             <TableRow
                                 key={channel.id}
                                 ref={(node: HTMLTableRowElement | null) => registerRow(channel.id, node)}
-                                data-selected={selectedIds.has(channel.id) || highlightedId === channel.id || undefined}
-                                className={cn((selectedIds.has(channel.id) || highlightedId === channel.id) && 'bg-primary/10')}
+                                className={cn(
+                                    'transition-colors',
+                                    (selectedIds.has(channel.id) || highlightedId === channel.id) && 'bg-primary/10',
+                                )}
                             >
                                 <TableCell className="pr-0">
                                     {!channel.managed && (
@@ -220,7 +263,7 @@ export function ChannelsTable({ items, highlightedId, registerRow }: ChannelsTab
                                     managedBadge={tCard('managedBadge')}
                                 />
                                 <TableCell>
-                                    <Badge variant="outline" className="rounded-lg font-normal">
+                                    <Badge variant="outline" className={cn('rounded-lg font-normal', TYPE_BADGE_CLASS[channel.type])}>
                                         {typeLabel(tForm, channel.type)}
                                     </Badge>
                                 </TableCell>
@@ -262,6 +305,59 @@ export function ChannelsTable({ items, highlightedId, registerRow }: ChannelsTab
                         ))}
                     </TableBody>
                 </Table>
+            </div>
+
+            <div className="flex flex-wrap items-center justify-between gap-2 px-1 text-xs text-muted-foreground">
+                <div className="flex items-center gap-3">
+                    <span>{tPage('total', { count: items.length })}</span>
+                    {selectedIds.size > 0 && <span>{t('selectedCount', { count: selectedIds.size })}</span>}
+                </div>
+                <div className="flex items-center gap-2">
+                    <span>{tPage('rowsPerPage')}</span>
+                    <Select
+                        value={String(pageSize)}
+                        onValueChange={(value) => {
+                            setPageSize(Number(value));
+                            setPageIndex(0);
+                        }}
+                    >
+                        <SelectTrigger size="sm" aria-label={tPage('rowsPerPage')} className="h-7 w-16 rounded-lg text-xs">
+                            <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent className="rounded-lg">
+                            {PAGE_SIZE_OPTIONS.map((size) => (
+                                <SelectItem key={size} className="rounded-lg text-xs" value={String(size)}>
+                                    {size}
+                                </SelectItem>
+                            ))}
+                        </SelectContent>
+                    </Select>
+                    <span className="tabular-nums">{tPage('pageStatus', { page: safePageIndex + 1, total: pageCount })}</span>
+                    <div className="flex items-center gap-1">
+                        <Button
+                            type="button"
+                            variant="outline"
+                            size="icon"
+                            className="size-7 rounded-lg"
+                            disabled={safePageIndex === 0}
+                            onClick={() => setPageIndex((prev) => Math.max(0, prev - 1))}
+                            aria-label={tPage('prevPage')}
+                        >
+                            <ChevronLeft className="size-3.5" />
+                        </Button>
+                        <Button
+                            type="button"
+                            variant="outline"
+                            size="icon"
+                            className="size-7 rounded-lg"
+                            disabled={safePageIndex >= pageCount - 1}
+                            onClick={() => setPageIndex((prev) => Math.min(pageCount - 1, prev + 1))}
+                            aria-label={tPage('nextPage')}
+                        >
+                            <ChevronRight className="size-3.5" />
+                        </Button>
+                    </div>
+                </div>
             </div>
 
             <AlertDialog open={deleteConfirmOpen} onOpenChange={setDeleteConfirmOpen}>
@@ -336,14 +432,14 @@ function TestButton({ channel, labels }: { channel: Channel; labels: TableT }) {
                 <span className="inline-flex">
                     <Button
                         type="button"
-                        variant="ghost"
+                        variant="outline"
                         size="icon"
-                        className="size-7 rounded-lg text-muted-foreground hover:text-primary"
+                        className="size-7 rounded-full border-border/70 bg-card text-muted-foreground hover:text-primary"
                         disabled={!canTest || fetchModel.isPending}
                         onClick={handleTest}
                         aria-label={labels('test')}
                     >
-                        <TestTube2 className={cn('size-4', fetchModel.isPending && 'animate-pulse')} />
+                        <TestTube2 className={cn('size-3.5', fetchModel.isPending && 'animate-pulse')} />
                     </Button>
                 </span>
             </TooltipTrigger>

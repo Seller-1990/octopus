@@ -1593,6 +1593,16 @@
       "neverSynced": "从未同步",
       "syncSuccess": "渠道模型同步完成",
       "syncFailed": "同步失败"
+    },
+    "page": {
+      "create": "新建渠道",
+      "chipsAll": "全部",
+      "searchPlaceholder": "搜索名称、模型、地址或备注",
+      "total": "共 {count} 个渠道",
+      "rowsPerPage": "每页条数",
+      "pageStatus": "第 {page} / {total} 页",
+      "prevPage": "上一页",
+      "nextPage": "下一页"
     }
   },
   "siteChannel": {

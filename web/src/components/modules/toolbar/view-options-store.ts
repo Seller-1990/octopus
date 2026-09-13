@@ -52,7 +52,8 @@ export const useToolbarViewOptionsStore = create<ToolbarViewOptionsState>()(
             logKeywordMode: 'default',
             logKeywordScope: 'default',
 
-            getLayout: (item) => get().layouts[item] || 'grid',
+            // 渠道页默认表格视图（AxonHub 式管理页）；其余页默认网格
+            getLayout: (item) => get().layouts[item] || (item === 'channel' ? 'table' : 'grid'),
             setLayout: (item, value) => {
                 set((state) => ({ layouts: { ...state.layouts, [item]: value } }));
             },
