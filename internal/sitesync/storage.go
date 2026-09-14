@@ -82,13 +82,17 @@ func persistSyncSnapshot(ctx context.Context, accountID int, snapshot *syncSnaps
 			}
 			writeRevision++
 		}
+		// F09：余额接口瞬时失败时（observed=false）不写余额列，保留上一份——
+		// 0 值会让 relay 的余额预检跳过该账号投影的全部非免费渠道。
 		updatePayload := map[string]any{
 			"last_sync_at":      &now,
 			"last_sync_status":  snapshot.status,
 			"last_sync_message": sanitizeSiteStatusText(snapshot.message),
-			"balance":           snapshot.balance,
-			"balance_used":      snapshot.balanceUsed,
-			"today_income":      snapshot.todayIncome,
+		}
+		if snapshot.balanceObserved {
+			updatePayload["balance"] = snapshot.balance
+			updatePayload["balance_used"] = snapshot.balanceUsed
+			updatePayload["today_income"] = snapshot.todayIncome
 		}
 		accountResult := tx.Model(&model.SiteAccount{}).
 			Where("id = ? AND credential_revision = ?", accountID, writeRevision).

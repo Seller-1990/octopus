@@ -24,9 +24,9 @@ var (
 	logIncomeContentNumberRE = regexp.MustCompile(`[-+]?\d+(?:\.\d+)?`)
 )
 
-func fetchSiteAccountBalance(ctx context.Context, siteRecord *model.Site, account *model.SiteAccount, accessToken string, userID int) (float64, float64, float64) {
+func fetchSiteAccountBalance(ctx context.Context, siteRecord *model.Site, account *model.SiteAccount, accessToken string, userID int) (float64, float64, float64, bool) {
 	if siteRecord == nil || account == nil {
-		return 0, 0, 0
+		return 0, 0, 0, false
 	}
 	switch siteRecord.Platform {
 	case model.SitePlatformOneAPI,
@@ -37,16 +37,20 @@ func fetchSiteAccountBalance(ctx context.Context, siteRecord *model.Site, accoun
 		model.SitePlatformDoneHub:
 		return fetchManagementQuotaBalance(ctx, siteRecord, account, accessToken, userID, true)
 	case model.SitePlatformSub2API:
-		balance, used := fetchSub2APIBalance(ctx, siteRecord, account, accessToken)
-		return balance, used, 0
+		balance, used, observed := fetchSub2APIBalance(ctx, siteRecord, account, accessToken)
+		return balance, used, 0, observed
 	default:
-		return 0, 0, 0
+		return 0, 0, 0, false
 	}
 }
 
-func fetchManagementQuotaBalance(ctx context.Context, siteRecord *model.Site, account *model.SiteAccount, accessToken string, userID int, quotaIsRemaining bool) (float64, float64, float64) {
+// 第四个返回值 observed 表示余额是否本次真实观测到。余额接口瞬时失败与
+// 「真 0 余额」在 float64 上不可区分，写回侧依据该标志决定是否落列——
+// 失败时保留上一份余额，否则 0 值会让 relay 余额预检跳过该账号全部
+// 非免费渠道（F09）。
+func fetchManagementQuotaBalance(ctx context.Context, siteRecord *model.Site, account *model.SiteAccount, accessToken string, userID int, quotaIsRemaining bool) (float64, float64, float64, bool) {
 	if !managedSessionRequestAvailable(ctx, accessToken) {
-		return 0, 0, 0
+		return 0, 0, 0, false
 	}
 	knownUserID := userID > 0
 	if !knownUserID {
@@ -95,7 +99,7 @@ func fetchManagementQuotaBalance(ctx context.Context, siteRecord *model.Site, ac
 	}
 
 	if err != nil || payload == nil {
-		return 0, 0, 0
+		return 0, 0, 0, false
 	}
 
 	data, ok := payload["data"].(map[string]any)
@@ -130,7 +134,7 @@ func fetchManagementQuotaBalance(ctx context.Context, siteRecord *model.Site, ac
 		}
 	}
 
-	return balance, balanceUsed, todayIncome
+	return balance, balanceUsed, todayIncome, true
 }
 
 func supportsTodayIncomeLogFallback(platform model.SitePlatform) bool {
@@ -299,22 +303,22 @@ func isValidUserSelfPayload(payload map[string]any, err error) bool {
 	return false
 }
 
-func fetchSub2APIBalance(ctx context.Context, siteRecord *model.Site, account *model.SiteAccount, accessToken string) (float64, float64) {
+func fetchSub2APIBalance(ctx context.Context, siteRecord *model.Site, account *model.SiteAccount, accessToken string) (float64, float64, bool) {
 	token := stripBearerPrefix(accessToken)
 	if token == "" {
-		return 0, 0
+		return 0, 0, false
 	}
 	payload, err := requestJSON(ctx, siteRecord, "GET", buildSiteURL(siteRecord.BaseURL, "/api/v1/auth/me"), nil, map[string]string{"Authorization": ensureBearer(token)}, account)
 	if err != nil {
-		return 0, 0
+		return 0, 0, false
 	}
 	unwrapped, err := unwrapSub2APIData(payload, "/api/v1/auth/me")
 	if err != nil {
-		return 0, 0
+		return 0, 0, false
 	}
 	data, ok := unwrapped.(map[string]any)
 	if !ok {
-		return 0, 0
+		return 0, 0, false
 	}
-	return jsonFloat(data["balance"]), 0
+	return jsonFloat(data["balance"]), 0, true
 }

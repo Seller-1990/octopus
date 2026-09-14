@@ -25,10 +25,12 @@ type syncSnapshot struct {
 	balance            float64
 	balanceUsed        float64
 	todayIncome        float64
-	message            string
-	proxyMode          model.ProxyUsageMode
-	proxyConfigID      *int
-	clashNode          string
+	// balanceObserved 标记本次同步是否真实观测到余额；失败时写回侧保留上一份（F09）
+	balanceObserved bool
+	message         string
+	proxyMode       model.ProxyUsageMode
+	proxyConfigID   *int
+	clashNode       string
 }
 
 type siteBatchAccount struct {
@@ -417,9 +419,13 @@ func reconcileCheckinAfterSync(ctx context.Context, accountID int) {
 // shouldReconcileCheckinAfterSync 判断是否需要补签：仅针对存在真实失败记录
 // （failed）且开启了自动签到的账号，并施加两道节流——
 // ① 距上次签到尝试不足 checkinReconcileMinInterval 不补（防与手动/定时
-//    签到互相放大）；
+//
+//	签到互相放大）；
+//
 // ② 连续失败达 checkinReconcileMaxFailStreak 后不再补（交还正常退避调度，
-//    避免按同步频率无限重试）。
+//
+//	避免按同步频率无限重试）。
+//
 // idle（从未签到）走正常调度；skipped（平台不支持）与 success 不触发。
 func shouldReconcileCheckinAfterSync(account *model.SiteAccount) bool {
 	if account == nil || !account.Enabled || !account.AutoCheckin {
