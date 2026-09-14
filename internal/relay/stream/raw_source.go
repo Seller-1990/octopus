@@ -24,13 +24,12 @@ func NewRawSource(reader io.ReadCloser, bufSize int) *RawSource {
 
 // ReadEvent reads the next chunk of raw bytes.
 func (s *RawSource) ReadEvent(ctx context.Context) ([]byte, error) {
+	// buf 每次调用都是新分配的，不存在复用冲突，直接切片返回即可——
+	// 省去 passthrough 热路径上每 32KB 一次的二次分配与拷贝。
 	buf := make([]byte, s.bufSize)
 	n, err := s.reader.Read(buf)
 	if n > 0 {
-		// Return a copy to avoid buffer reuse issues
-		chunk := make([]byte, n)
-		copy(chunk, buf[:n])
-		return chunk, nil
+		return buf[:n:n], nil
 	}
 	if err != nil {
 		return nil, err

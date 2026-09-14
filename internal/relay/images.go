@@ -545,7 +545,9 @@ func (m *imagesRelayMetrics) SaveOutcomeWithChannelStats(
 	op.StatsDailyUpdate(context.Background(), globalStats)
 	op.StatsAPIKeyUpdate(m.APIKeyID, globalStats)
 	if outcome == model.RequestOutcomeSuccess {
-		if err := op.APIKeyIncrementQuotaUsed(ctx, m.APIKeyID, m.Stats.InputCost+m.Stats.OutputCost); err != nil {
+		// 与主链路 metrics.go 保持一致：客户端收完响应即断连时裸 ctx 已取消，
+		// 会让配额 UPDATE 静默失败、费用永久漏计，必须用 WithoutCancel。
+		if err := op.APIKeyIncrementQuotaUsed(context.WithoutCancel(ctx), m.APIKeyID, m.Stats.InputCost+m.Stats.OutputCost); err != nil {
 			log.Warnf("failed to update API key quota for image request: %v", err)
 		}
 	}
@@ -1140,7 +1142,9 @@ func proxySSE(ctx context.Context, c *gin.Context, respUp *http.Response, firstT
 		select {
 		case <-ctx.Done():
 			log.Infof("client disconnected, stopping stream")
-			return completedScanner.Usage(), !firstWrite, nil
+			// 返回可识别的取消错误而非 nil——否则会被调用方误判为成功，
+			// 污染统计/熔断/粘性（主链路对客户端断连有独立的取消归类）。
+			return completedScanner.Usage(), !firstWrite, ctx.Err()
 
 		case <-firstTokenC:
 			log.Warnf("first token timeout (%ds), switching channel", firstTokenTimeOutSec)

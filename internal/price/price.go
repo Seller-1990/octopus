@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/bestruirui/octopus/internal/client"
@@ -84,7 +85,7 @@ var Provider = []string{
 	"v0",         // v0 系列
 }
 
-var lastUpdateTime time.Time
+var lastUpdateTime atomic.Pointer[time.Time]
 
 func UpdateLLMPrice(ctx context.Context) error {
 	log.Debugf("update LLM price task started")
@@ -145,7 +146,8 @@ func UpdateLLMPrice(ctx context.Context) error {
 	globalprice.Replace(prices)
 	modelvendor.ReplaceIndex(vendorIndex(rawPrice))
 	modelvendor.ReplaceCapabilityIndex(capabilityIndex(rawPrice))
-	lastUpdateTime = time.Now()
+	now := time.Now()
+	lastUpdateTime.Store(&now)
 	return nil
 }
 
@@ -203,7 +205,12 @@ func vendorIndex(raw map[string]registryProvider) map[string]string {
 }
 
 func GetLastUpdateTime() time.Time {
-	return lastUpdateTime
+	// UpdateLLMPrice 可被定时任务与 HTTP handler 并发触发，
+	// 时间戳读写必须走 atomic，避免跨 goroutine 数据竞争。
+	if t := lastUpdateTime.Load(); t != nil {
+		return *t
+	}
+	return time.Time{}
 }
 
 func GetLLMPrice(modelName string) *model.LLMPrice {

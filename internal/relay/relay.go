@@ -1281,7 +1281,8 @@ func (ra *relayAttempt) forwardViaHTTPPassthrough(ctx context.Context, pt model.
 	// Check status
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		ra.retryAfter = parseRetryAfter(response.Header.Get("Retry-After"))
-		body, _ := io.ReadAll(response.Body)
+		// 限制错误体读取上限（与 images 路径一致），避免异常上游用巨大错误体放大内存与日志
+		body, _ := io.ReadAll(io.LimitReader(response.Body, 16*1024))
 		statusCode := normalizeUpstreamStatusCode(response.StatusCode, string(body))
 		log.Warnf("upstream error from channel %s: status=%d, body=%s", ra.channel.Name, response.StatusCode, string(body))
 		// T9 失败反馈：带 tools 的真实请求遇 tools 不支持错误 → 回写 supports_tools=false（≥2 次规则在 op 内）
@@ -1370,7 +1371,8 @@ func (ra *relayAttempt) forwardViaHTTPStandard(ctx context.Context) (int, error)
 	// 检查响应状态
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		ra.retryAfter = parseRetryAfter(response.Header.Get("Retry-After"))
-		body, err := io.ReadAll(response.Body)
+		// 限制错误体读取上限（与 images 路径一致），避免异常上游用巨大错误体放大内存与日志
+		body, err := io.ReadAll(io.LimitReader(response.Body, 16*1024))
 		if err != nil {
 			return response.StatusCode, fmt.Errorf("failed to read response body: %w", err)
 		}

@@ -3,6 +3,7 @@ package task
 import (
 	"context"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/bestruirui/octopus/internal/helper"
@@ -13,7 +14,13 @@ import (
 	"github.com/bestruirui/octopus/internal/utils/xstrings"
 )
 
-var lastSyncModelsTime = time.Now()
+// 写于任务 goroutine、读于 HTTP handler goroutine，必须用 atomic 避免数据竞争。
+var lastSyncModelsTime atomic.Pointer[time.Time]
+
+func init() {
+	now := time.Now()
+	lastSyncModelsTime.Store(&now)
+}
 
 // SyncModelsTask 同步模型任务
 func SyncModelsTask() {
@@ -109,9 +116,13 @@ func SyncModelsTask() {
 			log.Errorf("failed to add models price: %v", err)
 		}
 	}
-	lastSyncModelsTime = time.Now()
+	now := time.Now()
+	lastSyncModelsTime.Store(&now)
 }
 
 func GetLastSyncModelsTime() time.Time {
-	return lastSyncModelsTime
+	if t := lastSyncModelsTime.Load(); t != nil {
+		return *t
+	}
+	return time.Time{}
 }

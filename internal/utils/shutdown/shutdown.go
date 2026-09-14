@@ -39,7 +39,9 @@ func Register(fn func() error) {
 
 func Listen() {
 	quit := make(chan os.Signal, 1)
-	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
+	// 注意：不要加入 SIGHUP——其惯用语义是"重载配置"而非终止，
+	// SSH 断开/supervisor 重载发送 SIGHUP 会导致服务意外退出。
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	defer signal.Stop(quit)
 	ilog.Infof("Program started, press Ctrl+C to exit")
 

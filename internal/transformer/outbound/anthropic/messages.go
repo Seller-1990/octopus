@@ -674,6 +674,22 @@ func resolveMaxTokens(req *model.InternalLLMRequest) int64 {
 	return maxtoken
 }
 
+// systemMessageText 提取 system 消息的文本：优先字符串形式 Content；
+// 客户端发送数组形式 content（[{"type":"text","text":"..."}]）时拼接其中的 text part，
+// 否则 system prompt 会被静默置空发出。
+func systemMessageText(msg model.Message) string {
+	if msg.Content.Content != nil {
+		return *msg.Content.Content
+	}
+	var sb strings.Builder
+	for _, part := range msg.Content.MultipleContent {
+		if part.Type == "text" && part.Text != nil {
+			sb.WriteString(*part.Text)
+		}
+	}
+	return sb.String()
+}
+
 func convertSystemPrompt(req *model.InternalLLMRequest) *anthropicModel.SystemPrompt {
 	var systemMessages []model.Message
 	for _, msg := range req.Messages {
@@ -690,7 +706,7 @@ func convertSystemPrompt(req *model.InternalLLMRequest) *anthropicModel.SystemPr
 		return &anthropicModel.SystemPrompt{
 			MultiplePrompts: []anthropicModel.SystemPromptPart{{
 				Type:         "text",
-				Text:         lo.FromPtr(systemMessages[0].Content.Content),
+				Text:         systemMessageText(systemMessages[0]),
 				CacheControl: convertCacheControl(systemMessages[0].CacheControl),
 			}},
 		}
@@ -700,7 +716,7 @@ func convertSystemPrompt(req *model.InternalLLMRequest) *anthropicModel.SystemPr
 	for _, msg := range systemMessages {
 		parts = append(parts, anthropicModel.SystemPromptPart{
 			Type:         "text",
-			Text:         lo.FromPtr(msg.Content.Content),
+			Text:         systemMessageText(msg),
 			CacheControl: convertCacheControl(msg.CacheControl),
 		})
 	}

@@ -662,6 +662,10 @@ func convertLLMToGeminiRequest(request *model.InternalLLMRequest) *model.GeminiG
 							})
 						}
 					case "image_url":
+						// 客户端可能发送 {"type":"image_url"} 但不带 image_url 对象
+						if part.ImageURL == nil {
+							continue
+						}
 						// get mime type from url extension
 						dataurl := xurl.ParseDataURL(part.ImageURL.URL)
 						if dataurl != nil && dataurl.IsBase64 {
@@ -804,8 +808,14 @@ func convertLLMToGeminiRequest(request *model.InternalLLMRequest) *model.GeminiG
 	config := &model.GeminiGenerationConfig{}
 	hasConfig := false
 
+	// MaxTokens 优先；为 nil 时回退 MaxCompletionTokens（新版 OpenAI SDK 只发
+	// max_completion_tokens，Responses 入站的 max_output_tokens 也只映射到该字段），
+	// 与 Anthropic outbound 的 resolveMaxTokens 行为对齐。
 	if request.MaxTokens != nil {
 		config.MaxOutputTokens = int(*request.MaxTokens)
+		hasConfig = true
+	} else if request.MaxCompletionTokens != nil {
+		config.MaxOutputTokens = int(*request.MaxCompletionTokens)
 		hasConfig = true
 	}
 	if request.Temperature != nil {

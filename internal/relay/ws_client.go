@@ -608,6 +608,11 @@ func runWSRelay(ctx context.Context, req *relayRequest, group *dbmodel.Group) ws
 		var result attemptResult
 		for retryNum := 0; retryNum < maxSameChannelRetries; retryNum++ {
 			if retryNum > 0 {
+				// 重建 outAdapter 以重置流式状态（toolIndex、toolCalls、outputItems 等），
+				// 与 HTTP 主链路 relay.go 的重试行为对齐，避免跨重试的状态残留。
+				if freshAdapter := outbound.Get(channel.Type); freshAdapter != nil {
+					outAdapter = freshAdapter
+				}
 				delay := computeBackoff(retryNum, result.RetryAfter)
 				select {
 				case <-relayCtx.Done():

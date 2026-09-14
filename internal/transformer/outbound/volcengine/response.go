@@ -33,7 +33,8 @@ func (o *ResponseOutbound) TransformRequest(ctx context.Context, request *model.
 	// Convert to Responses API request format
 	openaiReq := openai.ConvertToResponsesRequest(request)
 	openaiReq.Metadata = nil // volcengine not supported
-	if _, ok := supportedReasoningEffortModel[request.Model]; !ok {
+	_, reasoningSupported := supportedReasoningEffortModel[request.Model]
+	if !reasoningSupported {
 		openaiReq.Reasoning = nil
 	}
 	input, err := convertToResponsesInput(openaiReq.Input)
@@ -44,12 +45,16 @@ func (o *ResponseOutbound) TransformRequest(ctx context.Context, request *model.
 		ResponsesRequest: openaiReq,
 		Input:            input,
 	}
-	switch request.ReasoningEffort {
-	case "minimal":
-		responsesReq.Thinking.Type = ThinkingTypeDisabled
-	case "low", "medium", "high":
-		responsesReq.Thinking.Type = ThinkingTypeEnabled
-	default:
+	// 仅对支持列表内的模型下发 thinking 字段——否则 guard 剥离了 Reasoning
+	// 却仍输出 thinking:{type:"enabled"}，不支持的模型会收到非法参数。
+	if reasoningSupported {
+		switch request.ReasoningEffort {
+		case "minimal":
+			responsesReq.Thinking.Type = ThinkingTypeDisabled
+		case "low", "medium", "high":
+			responsesReq.Thinking.Type = ThinkingTypeEnabled
+		default:
+		}
 	}
 
 	body, err := json.Marshal(responsesReq)

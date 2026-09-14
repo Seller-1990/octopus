@@ -90,6 +90,7 @@ func fetchOpenAIModels(client *http.Client, ctx context.Context, request model.C
 func fetchGeminiModels(client *http.Client, ctx context.Context, request model.Channel) ([]string, error) {
 	var allModels []string
 	pageToken := ""
+	seenPageTokens := map[string]bool{}
 
 	// 与 chat 适配器的 G-H5 规则同口径：base 缺版本段时补 /v1beta 再拼 /models，
 	// 否则裸主机渠道 chat 正常但 /models 404（Gemini 官方域名即裸主机）。
@@ -137,6 +138,11 @@ func fetchGeminiModels(client *http.Client, ctx context.Context, request model.C
 		if result.NextPageToken == "" {
 			break
 		}
+		// 畸形上游可能重复返回相同的 nextPageToken，导致死循环持续请求
+		if seenPageTokens[result.NextPageToken] {
+			break
+		}
+		seenPageTokens[result.NextPageToken] = true
 		pageToken = result.NextPageToken
 	}
 	if len(allModels) == 0 {
@@ -188,6 +194,11 @@ func fetchAnthropicModels(client *http.Client, ctx context.Context, request mode
 			break
 		}
 
+		// 畸形上游可能返回 has_more=true 但 last_id 为空或不变，
+		// 下一轮请求将与本轮完全相同，导致死循环持续打上游
+		if result.LastID == "" || result.LastID == afterID {
+			break
+		}
 		afterID = result.LastID
 	}
 	if len(allModels) == 0 {

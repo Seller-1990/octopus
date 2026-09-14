@@ -57,12 +57,8 @@ func (i *MessagesInbound) TransformRequest(ctx context.Context, body []byte) (*m
 	if err := json.Unmarshal(body, &anthropicReq); err != nil {
 		return nil, err
 	}
-	if anthropicReq.MaxTokens < 1 {
-		anthropicReq.MaxTokens = 1
-	}
 	chatReq := &model.InternalLLMRequest{
 		Model:               anthropicReq.Model,
-		MaxTokens:           &anthropicReq.MaxTokens,
 		Temperature:         anthropicReq.Temperature,
 		TopP:                anthropicReq.TopP,
 		TopK:                anthropicReq.TopK,
@@ -70,6 +66,12 @@ func (i *MessagesInbound) TransformRequest(ctx context.Context, body []byte) (*m
 		Metadata:            map[string]string{},
 		RawAPIFormat:        model.APIFormatAnthropicMessage,
 		TransformerMetadata: map[string]string{},
+	}
+	// 不要把缺失/非法的 max_tokens 静默改写为 1——那会把响应截断为 1 个 token
+	// 且无任何报错。仅在客户端显式提供有效值时透传，否则交给 outbound 的默认值
+	//（如 Anthropic outbound resolveMaxTokens 的 8192）。
+	if anthropicReq.MaxTokens >= 1 {
+		chatReq.MaxTokens = &anthropicReq.MaxTokens
 	}
 	if tier := strings.TrimSpace(anthropicReq.ServiceTier); tier != "" {
 		chatReq.ServiceTier = &tier
@@ -205,7 +207,9 @@ func (i *MessagesInbound) TransformRequest(ctx context.Context, body []byte) (*m
 						Text:         block.Text,
 						CacheControl: convertToLLMCacheControl(block.CacheControl),
 					})
-					i.inputToken += int64(tokenizer.CountTokens(*block.Text, chatReq.Model))
+					if block.Text != nil {
+						i.inputToken += int64(tokenizer.CountTokens(*block.Text, chatReq.Model))
+					}
 					hasContent = true
 				case "image":
 					if block.Source != nil {
@@ -253,7 +257,9 @@ func (i *MessagesInbound) TransformRequest(ctx context.Context, body []byte) (*m
 										Type: "text",
 										Text: contentBlock.Text,
 									})
-									i.inputToken += int64(tokenizer.CountTokens(*contentBlock.Text, chatReq.Model))
+									if contentBlock.Text != nil {
+										i.inputToken += int64(tokenizer.CountTokens(*contentBlock.Text, chatReq.Model))
+									}
 								}
 							}
 
