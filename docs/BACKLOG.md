@@ -15,10 +15,10 @@
 | C250913-05 | 第三轮·逻辑 | `op/site_pricing.go:325` | P2 | F01 修复只堵新增：存量污染行（manual_override=true 且 known=true 且 multiplier=0）持续生效并可经备份传播。一次性迁移或管理面待复核清单 |
 | C250913-06 | 第三轮·数据 | `sitesync/pricing.go:56-63` | P3 | 错误信封（200+success:false）会误清报价 last_error（观测性）。行 56 前校验 success 信封（复用 balance.go 的 isValidUserSelfPayload 模式） |
 | B250913-13 | 晚间 | `sitesync/project.go:796-814` | P3 | rewriteManagedGroupItemsForAccount 逐条 Count+Update，大账号数百次单条 SQL。批量查重 + IN 更新 |
-| C250913-07 | 第三轮·前端 | `site-channel/index.tsx`（3191 行）、`site/index.tsx`（2683 行） | P2 | 巨型组件拆分（前端对抗者已给出具体边界：site-channel 拆 UnifiedCompletionDialog/HistorySummary/TableView/4 个对话框 + useModelEditing hook；site 拆 Import/Archived/Delete 对话框 + useSiteActions/useSiteInventory；jump 编排与 ref 缓存不要拆） |
+| C250913-07 | 第三轮·前端 | `site-channel/index.tsx`、`site/index.tsx` | P2 | **部分完成**：文件级三拆已落地（HistorySummary.tsx、TableView.tsx、UnifiedCompletionDialog.tsx，index.tsx 3191→2141 行，-33%，tsc/lint 验证）；**剩余**：SiteAccountPanel 的 4 个对话框状态拆分 + useModelEditing hook、site/index.tsx 的 Import/Archived/Delete 对话框与 useSiteActions/useSiteInventory。剩余部分是状态与 JSX 的咬合体，需交互回归验证支撑，不宜盲改——plan 见第三轮前端对抗者报告原文 |
 | C250913-08 | 第三轮·外行 | 多处 | P3 | 重复实现收敛：模型名拆分三套、TLS 指纹校验两份、Retry-After 解析两份、crud_errors 三胞胎、渠道后处理 goroutine 双份、27 处手写 parseIDParam；`model`/`dbmodel` 包别名同包分裂（relay/op）一次性统一 |
 | C250913-09 | 第三轮·外行 | `handlers/channel.go:101-120` vs `op/channel.go:75-91` | P2 | 渠道代理模式校验 handler/op 各抄一遍（改一处不生效的静默 bug 源）。删 handler 侧，靠 op 层 apperror 带状态码 |
-| C250913-10 | 第三轮·本质 | `op/` 27.9k 行 | P3 | op 为自救型上帝包。只拆交互面最窄的两个子域：backup（~5.2k）与 verification（~2.3k），其余不动 |
+| C250913-10 | 第三轮·本质 | `op/` 27.9k 行 | P3 | **declined（有据缓拆）**：实测依赖级联——backup 系需导出 12 个生产私有符号（含 apiKeyIDMap 缓存内部、usageAggregate 聚合内部）+6 个测试 helper；verification 与 op 双向耦合（site.go 账号删除路径调 3 个 verification 函数，拆出即成环，只能回调反转并引入未注册 no-op 弱点）。拆分会导出 op 缓存内部、破坏封装，且直插计费/账号删除关键路径——违反反过度工程立场。**重启条件**：若未来拆分，应先抽缓存层（13 个包级 cache 实例的单一所有权）再搬子域 |
 | C250913-11 | 第三轮·前端 | `site-channel/index.tsx:1150-1252` | P3 | `site-channel-model` 跳转全套死代码（无 requestJump 调用者）或接上或删除；内含「弹窗打开期间分组筛选被锁死」隐患 |
 | C250913-12 | 第三轮·性能 | `site/index.tsx:2229`、`site.ts:564-575` | P3 | 站点页无虚拟化 + 每展开账号一个 30s checkin-logs 轮询。改为进入视口才 enabled 或降频 |
 | B250913-15 | 晚间 | `update/update.go:131-148` | P3 | zip 自更新失败可致进程半挂且更新通道永久闭锁（仅用自更新功能时相关） |
@@ -88,3 +88,16 @@
 | LEGACY-250905-F25 | 损坏 ZIP 丢 pending——discard 已移至解码成功后（setting.go:211 P0 修正） | 早于本台账 |
 | LEGACY-250905-F31 | 构建干净树检查——scripts/build.sh:190 已含实际输入清单 | 3332faf |
 | LEGACY-250905-F12 | detect 丢弃请求取消——当前代码 NewRequestWithContext 已传播取消，原声明与现状不符 | 复核否决 |
+| C250913-02 | 流内不活跃上限（新设置 stream_inactivity_timeout 默认 300s）+ 自动建组首 token 默认 120s | ac50fcc |
+| C250913-03 | 配额增量 write-behind + 回压有界重试 | 3af468b |
+| C250913-01 | 出站体 BPE 计数惰性化 | 9641234 |
+| LEGACY-250905 | 09-05 报告 23 条未修项合并入账（4 条闭环/否决、19 条收录并标注复核状态） | d27cab7 |
+| C250913-05 | F01 存量污染定价数据一次性迁移（幂等，含测试） | 77ec846 |
+| B250913-07/08 | 迁移 DDL 方言适配（MySQL VARCHAR/PG TIMESTAMP，7 处） | ed50f4e |
+| C250913-06/04/14 + B250913-13 | P3 四小修：信封校验/聚合名称刷新/终态预筛/搬运批量化 | 8a5709e |
+| B250913-15 | 自更新失败健壮性（验证+回滚+退出交进程管理器） | 6493ac3 |
+| C250913-11 | site-channel-model 跳转死代码全套删除（-97 行） | bc3ba15 |
+| C250913-09 | 渠道代理校验收敛 op 层唯一权威 | 02d1fb2 |
+| C250913-12 | 站点签到历史轮询 30s→5min | 0420e25 |
+| C250913-08 | 重复实现收敛：TLS 权威/crud 三合一/后处理提取/模型拆分/Retry-After 下沉/URL 校验合并/StreamWriter 别名/UpstreamReader 删除/parseIDParam 24 处/余额格式化 | 880d29c..59b0a99 |
+| C250913-07（部分） | site-channel 文件级三拆（-33%） | d7c8fc4..a228202 |
