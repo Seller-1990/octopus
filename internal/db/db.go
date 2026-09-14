@@ -165,7 +165,11 @@ func InitDB(dbType, dsn string, debug bool) error {
 func initSQLite(path string, config *gorm.Config) (*gorm.DB, error) {
 	// glebarez/sqlite (modernc.org/sqlite) 只识别 _pragma=NAME(VALUE) 形式参数，
 	// 旧的下划线参数会被静默忽略（导致 WAL/busy_timeout 实际未生效）。
+	// _txlock=immediate：写事务在 BEGIN 时即取写锁，避免 deferred 事务中途
+	// 升级撞上 SQLITE_BUSY_SNAPSHOT（busy_timeout 不覆盖该错误）；配合
+	// busy_timeout 让并发写事务排队而非报错。
 	params := []string{
+		"_txlock=immediate",
 		"_pragma=journal_mode(WAL)",
 		"_pragma=synchronous(NORMAL)",
 		"_pragma=busy_timeout(5000)",
