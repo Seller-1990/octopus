@@ -61,10 +61,14 @@ func enqueueUsageFacts(ctx context.Context, record usagePendingRecord) error {
 		// Apply backpressure instead of dropping billing facts. The request may
 		// already be canceled, so RelayLogAdd passes a detached persistence
 		// context here.
-		if err := usageFactsFlushPendingBatch(ctx, usageFactBatchSize); err != nil {
+		if err := flushUsageFactsPendingWithRetry(ctx); err != nil {
 			return err
 		}
 	}
+}
+
+func flushUsageFactsPendingWithRetry(ctx context.Context) error {
+	return flushPendingWithRetry(ctx, usageFactsFlushPendingBatch, usageFactBatchSize)
 }
 
 func usageFactsFromRelayLog(relayLog model.RelayLog) usagePendingRecord {
@@ -376,7 +380,7 @@ func usageFactsDrainPending(ctx context.Context, maxBatches int) error {
 		if UsageFactsPendingLen() == 0 {
 			return nil
 		}
-		if err := usageFactsFlushPendingBatch(ctx, usageFactBatchSize); err != nil {
+		if err := flushUsageFactsPendingWithRetry(ctx); err != nil {
 			return err
 		}
 	}
@@ -391,7 +395,7 @@ func UsageFactsFlushPending(ctx context.Context) error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		if err := usageFactsFlushPendingBatch(ctx, usageFactBatchSize); err != nil {
+		if err := flushUsageFactsPendingWithRetry(ctx); err != nil {
 			return err
 		}
 	}

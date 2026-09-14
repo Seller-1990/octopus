@@ -49,10 +49,11 @@ func InitCache() error {
 func SaveCache() error {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	// 三路 flush 相互独立，短路会一次失败变三路丢失（F09）：
-	// 逐路执行并用 errors.Join 汇总，任何一路失败都不阻断其余两路。
+	// 各路 flush 相互独立，短路会一次失败变多路丢失（F09）：
+	// 逐路执行并用 errors.Join 汇总，任何一路失败都不阻断其余几路。
 	return errors.Join(
 		StatsSaveDB(ctx),
+		APIKeyQuotaFlushDB(ctx),
 		ChannelKeySaveDB(ctx),
 		RelayLogSaveDBTask(ctx),
 	)

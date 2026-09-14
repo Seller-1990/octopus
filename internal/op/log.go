@@ -132,6 +132,28 @@ func appendRelayLogRecent(relayLog model.RelayLog) {
 	relayLogRecentLock.Unlock()
 }
 
+// flushPendingWithRetry 同步回压刷库的有界重试（C250913-03）：SQLite 写拥塞
+// 窗口（VACUUM、备份导入）内单次刷库可能连续 BUSY，一次性失败即丢弃成对
+// 记录。最多 3 次（50ms 起指数退避），仍失败才放弃并由调用方记录。
+func flushPendingWithRetry(ctx context.Context, flush func(context.Context, int) error, batchSize int) error {
+	var err error
+	for i := 0; i < 3; i++ {
+		if err = flush(ctx, batchSize); err == nil {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return err
+		case <-time.After(50 * time.Millisecond << i):
+		}
+	}
+	return err
+}
+
+func flushRelayLogPendingWithRetry(ctx context.Context) error {
+	return flushPendingWithRetry(ctx, relayLogFlushPendingBatch, relayLogBatchSize)
+}
+
 func enqueueRelayLogPending(
 	ctx context.Context,
 	relayLog model.RelayLog,

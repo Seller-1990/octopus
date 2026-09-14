@@ -2,6 +2,7 @@ package op
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -203,6 +204,11 @@ func APIKeyResetQuota(ctx context.Context, id int, seenResetAt int64, now time.T
 	var current model.APIKey
 	unlock := lockAPIKeyQuota(id)
 	defer unlock()
+	// write-behind 增量先行落库（C250913-03）：读库判定重置窗口必须基于
+	// 含未落库增量的最新用量。
+	if err := flushAPIKeyQuotaDelta(ctx, id); err != nil {
+		log.Warnf("flush quota delta before reset failed (key=%d): %v", id, err)
+	}
 	if err := db.GetDB().WithContext(ctx).First(&current, id).Error; err != nil {
 		return current, fmt.Errorf("failed to load API key for quota reset: %w", err)
 	}
@@ -219,6 +225,7 @@ func APIKeyResetQuota(ctx context.Context, id int, seenResetAt int64, now time.T
 		}).Error; err != nil {
 			return current, fmt.Errorf("failed to reset API key quota: %w", err)
 		}
+		dropAPIKeyQuotaDelta(id)
 		current.QuotaUsed = 0
 		current.QuotaResetAt = nextReset
 		current.QuotaPeriod = period
@@ -229,20 +236,89 @@ func APIKeyResetQuota(ctx context.Context, id int, seenResetAt int64, now time.T
 	return current, nil
 }
 
+// apiKeyQuotaDeltas 配额增量 write-behind 缓冲（C250913-03）。每个成功请求
+// 此前同步 UPDATE quota_used：SQLite 单写者下与日志/统计批次、VACUUM、备份
+// 导入互相排队，写拥塞窗口内全站 P99 劣化且失败静默少记。改为内存累加 +
+// 周期落库（APIKeyQuotaFlushDB）。限额判定（auth 中间件）读缓存值——锁内
+// 同步累加，强一致不受影响。崩溃窗口最多丢一个 flush 周期的增量，与 stats
+// 的 write-behind 策略一致。
+var (
+	apiKeyQuotaDeltasMu sync.Mutex
+	apiKeyQuotaDeltas   = make(map[int]float64)
+)
+
 func APIKeyIncrementQuotaUsed(ctx context.Context, id int, cost float64) error {
 	if id == 0 || cost <= 0 {
 		return nil
 	}
 	unlock := lockAPIKeyQuota(id)
 	defer unlock()
-	if err := db.GetDB().WithContext(ctx).Model(&model.APIKey{}).Where("id = ?", id).Update("quota_used", gorm.Expr("quota_used + ?", cost)).Error; err != nil {
-		return fmt.Errorf("failed to increment API key quota: %w", err)
-	}
-	// DB 侧已是原子自增，缓存侧在锁内做同样增量即可，无需回读 SELECT——
-	// 那是每请求多付的一次 DB 往返，且曾在 SQLite 单连接下放大排队。
 	if key, ok := apiKeyCache.Get(id); ok {
 		key.QuotaUsed += cost
 		apiKeyCache.Set(id, key)
+	}
+	apiKeyQuotaDeltasMu.Lock()
+	apiKeyQuotaDeltas[id] += cost
+	apiKeyQuotaDeltasMu.Unlock()
+	return nil
+}
+
+// APIKeyQuotaFlushDB 把缓冲的配额增量落库；单 key 失败把增量放回缓冲等
+// 下个周期重试，不阻断其余 key。
+func APIKeyQuotaFlushDB(ctx context.Context) error {
+	apiKeyQuotaDeltasMu.Lock()
+	if len(apiKeyQuotaDeltas) == 0 {
+		apiKeyQuotaDeltasMu.Unlock()
+		return nil
+	}
+	pending := apiKeyQuotaDeltas
+	apiKeyQuotaDeltas = make(map[int]float64)
+	apiKeyQuotaDeltasMu.Unlock()
+
+	var errs []error
+	for id, delta := range pending {
+		if delta <= 0 {
+			continue
+		}
+		if err := db.GetDB().WithContext(ctx).Model(&model.APIKey{}).Where("id = ?", id).
+			Update("quota_used", gorm.Expr("quota_used + ?", delta)).Error; err != nil {
+			apiKeyQuotaDeltasMu.Lock()
+			apiKeyQuotaDeltas[id] += delta
+			apiKeyQuotaDeltasMu.Unlock()
+			errs = append(errs, fmt.Errorf("quota flush key %d: %w", id, err))
+		}
+	}
+	return errors.Join(errs...)
+}
+
+// dropAPIKeyQuotaDelta 周期重置时抹掉未落库增量：重置语义是清空本周期全部
+// 用量，flush 重放旧增量会让配额复活。
+func dropAPIKeyQuotaDelta(id int) {
+	apiKeyQuotaDeltasMu.Lock()
+	delete(apiKeyQuotaDeltas, id)
+	apiKeyQuotaDeltasMu.Unlock()
+}
+
+// flushAPIKeyQuotaDelta 先把单个 key 的未落库增量刷进 DB。配额重置路径
+// 必须先 flush 再读库：增量此前只存在于缓冲与缓存，直接读库会把「窗口期
+// 内的用量」误判为 0，导致重复重置判定与 DB 断言失真。flush 失败时保留
+// 增量待下轮重试，由调用方决定是否继续。
+func flushAPIKeyQuotaDelta(ctx context.Context, id int) error {
+	apiKeyQuotaDeltasMu.Lock()
+	delta := apiKeyQuotaDeltas[id]
+	if delta != 0 {
+		delete(apiKeyQuotaDeltas, id)
+	}
+	apiKeyQuotaDeltasMu.Unlock()
+	if delta == 0 {
+		return nil
+	}
+	if err := db.GetDB().WithContext(ctx).Model(&model.APIKey{}).Where("id = ?", id).
+		Update("quota_used", gorm.Expr("quota_used + ?", delta)).Error; err != nil {
+		apiKeyQuotaDeltasMu.Lock()
+		apiKeyQuotaDeltas[id] += delta
+		apiKeyQuotaDeltasMu.Unlock()
+		return err
 	}
 	return nil
 }

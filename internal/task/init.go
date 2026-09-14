@@ -13,6 +13,7 @@ import (
 
 const (
 	TaskStatsSave              = "stats_save"
+	TaskAPIKeyQuotaSave        = "api_key_quota_save"
 	TaskRelayLogSave           = "relay_log_save"
 	TaskBaseUrlDelay           = "base_url_delay"
 	TaskWSAffinityCleanup      = "ws_affinity_cleanup"
@@ -65,6 +66,16 @@ func Init() {
 	}
 	siteCheckinInterval := time.Duration(siteCheckinIntervalHours) * time.Hour
 	Register(string(model.SettingKeySiteCheckinInterval), siteCheckinInterval, true, SiteCheckinTask)
+
+	// 配额增量 write-behind 落库（C250913-03）：每成功请求不再同步 UPDATE
+	// quota_used。错相 150s 避免与 stats_save/usage_maintenance 同相抢写锁。
+	RegisterWithPhase(TaskAPIKeyQuotaSave, 5*time.Minute, 150*time.Second, false, func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		if err := op.APIKeyQuotaFlushDB(ctx); err != nil {
+			log.Warnf("api key quota flush failed: %v", err)
+		}
+	})
 
 	// 注册统计保存任务
 	statsSaveIntervalMinutes, err := op.SettingGetInt(model.SettingKeyStatsSaveInterval)

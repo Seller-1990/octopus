@@ -19,6 +19,10 @@ func setupAPIKeyOpTestDB(t *testing.T) context.Context {
 	}
 	apiKeyCache.Clear()
 	apiKeyIDMap.Clear()
+	// 配额增量缓冲是进程级状态，跨测试清零防串台（C250913-03）
+	apiKeyQuotaDeltasMu.Lock()
+	apiKeyQuotaDeltas = make(map[int]float64)
+	apiKeyQuotaDeltasMu.Unlock()
 
 	dbPath := filepath.Join(t.TempDir(), "octopus-apikey-test.db")
 	if err := dbpkg.InitDB("sqlite", dbPath, false); err != nil {
@@ -121,6 +125,10 @@ func TestAPIKeyIncrementQuotaUsedIsConcurrentSafe(t *testing.T) {
 	}
 	if math.Abs(cached.QuotaUsed-5) > 1e-9 {
 		t.Fatalf("cached quota_used = %v, want 5", cached.QuotaUsed)
+	}
+	// write-behind 契约（C250913-03）：增量落库发生在 flush 时
+	if err := APIKeyQuotaFlushDB(ctx); err != nil {
+		t.Fatalf("quota flush failed: %v", err)
 	}
 	var persisted model.APIKey
 	if err := dbpkg.GetDB().WithContext(ctx).First(&persisted, key.ID).Error; err != nil {
