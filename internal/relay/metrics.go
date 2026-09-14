@@ -610,11 +610,17 @@ func (m *RelayMetrics) saveLog(ctx context.Context, outcome model.RequestOutcome
 		}
 	}
 
-	// 响应内容
+	// 响应内容：与请求侧对称——先粗截断避免对数 MB 级 body 做全量正则扫描，
+	// 再 base64 消隐（图像生成响应的 content 内嵌 base64，filterResponseForLog
+	// 只覆盖 Images/Audio 字段），最后 256KB 硬上限入库。
 	if m.InternalResponse != nil {
 		respForLog := m.filterResponseForLog(m.InternalResponse)
 		if respJSON, jsonErr := json.Marshal(respForLog); jsonErr == nil {
-			relayLog.ResponseContent = string(respJSON)
+			respStr := string(respJSON)
+			if len(respStr) > logRequestContentPreTruncateBytes {
+				respStr = respStr[:logRequestContentPreTruncateBytes]
+			}
+			relayLog.ResponseContent = truncateString(redactBase64PayloadsForLog(respStr), logRequestContentMaxBytes)
 		}
 	}
 
