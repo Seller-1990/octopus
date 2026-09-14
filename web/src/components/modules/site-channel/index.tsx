@@ -755,8 +755,6 @@ function MoveRoutePopover({
     );
 }
 
-type SiteChannelTableHandle = { scrollToModelKey: (key: string) => void };
-
 // 10 columns: checkbox / 模型 / 分组 / 端点格式 / 来源 / Key / 状态 / 最近请求 / 渠道 / 操作.
 // Shared by the sticky header row and every body row so columns stay aligned, and
 // the explicit widths drive horizontal scroll inside the min-w-[74rem] block.
@@ -770,26 +768,24 @@ const measureRowHeight = (element: Element) =>
         ? element.offsetHeight
         : element.getBoundingClientRect().height;
 
-const SiteChannelTableView = forwardRef<
-    SiteChannelTableHandle,
-    {
-        models: SiteModelView[];
-        resetKey: string;
-        allVisibleSelected: boolean;
-        pendingModelKeys: Set<string>;
-        selectedModelKeys: Set<string>;
-        compactMode: boolean;
-        tableSort: SiteChannelTableSort;
-        highlightedModelKey: string | null;
-        onToggleModelSelection: (modelKey: string, checked: boolean) => void;
-        onToggleAllVisible: (checked: boolean) => void;
-        onSortChange: (field: SiteChannelTableSortField) => void;
-        onMoveModel: (model: SiteModelView, routeType: SiteModelRouteType) => void;
-        onToggleDisabled: (model: SiteModelView) => void;
-        onDeleteManualModel: (model: SiteModelView) => void;
-        onNavigateToChannel: (channelId: number) => void;
-    }
->(function SiteChannelTableView({
+type SiteChannelTableViewProps = {
+    models: SiteModelView[];
+    resetKey: string;
+    allVisibleSelected: boolean;
+    pendingModelKeys: Set<string>;
+    selectedModelKeys: Set<string>;
+    compactMode: boolean;
+    tableSort: SiteChannelTableSort;
+    onToggleModelSelection: (modelKey: string, checked: boolean) => void;
+    onToggleAllVisible: (checked: boolean) => void;
+    onSortChange: (field: SiteChannelTableSortField) => void;
+    onMoveModel: (model: SiteModelView, routeType: SiteModelRouteType) => void;
+    onToggleDisabled: (model: SiteModelView) => void;
+    onDeleteManualModel: (model: SiteModelView) => void;
+    onNavigateToChannel: (channelId: number) => void;
+};
+
+const SiteChannelTableView = ({
     models,
     resetKey,
     allVisibleSelected,
@@ -797,7 +793,6 @@ const SiteChannelTableView = forwardRef<
     selectedModelKeys,
     compactMode,
     tableSort,
-    highlightedModelKey,
     onToggleModelSelection,
     onToggleAllVisible,
     onSortChange,
@@ -805,7 +800,7 @@ const SiteChannelTableView = forwardRef<
     onToggleDisabled,
     onDeleteManualModel,
     onNavigateToChannel,
-}, ref) {
+}: SiteChannelTableViewProps) => {
     'use no memo';
 
     const scrollRef = useRef<HTMLDivElement | null>(null);
@@ -819,17 +814,6 @@ const SiteChannelTableView = forwardRef<
         measureElement: measureRowHeight,
         overscan: 8,
     });
-
-    useImperativeHandle(ref, () => ({
-        scrollToModelKey: (key: string) => {
-            const index = models.findIndex(
-                (model) => makeModelKey(model.group_key, model.model_name) === key,
-            );
-            if (index >= 0) {
-                rowVirtualizer.scrollToIndex(index, { align: 'center' });
-            }
-        },
-    }), [models, rowVirtualizer]);
 
     // Scroll back to the top whenever the filter / search / quick-filter scope changes.
     useEffect(() => {
@@ -907,7 +891,6 @@ const SiteChannelTableView = forwardRef<
                                     isSelected && 'bg-muted/40',
                                     model.disabled && 'opacity-60',
                                     isPending && 'opacity-70',
-                                    highlightedModelKey === modelKey && 'ring-2 ring-primary/35 ring-inset',
                                 )}
                                 style={{
                                     top: `${virtualRow.start}px`,
@@ -1074,7 +1057,7 @@ const SiteChannelTableView = forwardRef<
             </div>
         </div>
     );
-});
+};
 
 function SiteAccountPanel({
     siteId,
@@ -1085,7 +1068,6 @@ function SiteAccountPanel({
     highlightedAccountId,
     registerAccountTabRef,
     jumpRequest,
-    onJumpHandled,
     onNavigateToChannel,
 }: {
     siteId: number;
@@ -1096,7 +1078,6 @@ function SiteAccountPanel({
     highlightedAccountId: number | null;
     registerAccountTabRef: (accountId: number, node: HTMLButtonElement | null) => void;
     jumpRequest: SiteChannelPendingJump | null;
-    onJumpHandled: (requestId: number) => void;
     onNavigateToChannel: (channelId: number) => void;
 }) {
     const t = useTranslations();
@@ -1117,11 +1098,9 @@ function SiteAccountPanel({
     const [sourceKeyForm, setSourceKeyForm] = useState<SiteSourceKeyFormItem[]>([]);
     const [visibleSourceKeyRows, setVisibleSourceKeyRows] = useState<Record<string, boolean>>({});
     const [quickCreateName, setQuickCreateName] = useState('');
-    const [highlightedModelKey, setHighlightedModelKey] = useState<string | null>(null);
     const [modelSearchTerm, setModelSearchTerm] = useState('');
     const [bulkMoveTarget, setBulkMoveTarget] = useState<SiteModelRouteType>('openai_chat');
     const [deletingManualModelKey, setDeletingManualModelKey] = useState<string | null>(null);
-    const tableHandleRef = useRef<SiteChannelTableHandle | null>(null);
     const panelKey = `${siteId}:${account.account_id}`;
 
     const panelPreferences = useSiteChannelPanelViewStore(
@@ -1146,13 +1125,6 @@ function SiteAccountPanel({
         (error: unknown, fallback: string) => translateSiteMessage(locale, getErrorMessage(error, fallback), t),
         [locale, t],
     );
-
-    const forcedModelKey =
-        jumpRequest?.target.kind === 'site-channel-model' &&
-        jumpRequest.target.siteId === siteId &&
-        jumpRequest.target.accountId === account.account_id
-            ? makeModelKey(getBaseGroupKey(jumpRequest.target.groupKey), jumpRequest.target.modelName)
-            : null;
 
     const visibleGroups = useMemo(
         () => filterGroups(account.groups, activeFilter),
@@ -1179,14 +1151,6 @@ function SiteAccountPanel({
         const normalizedSearch = modelSearchTerm.trim().toLowerCase();
 
         return scopedModels.filter((model) => {
-            const modelKey = makeModelKey(model.group_key, model.model_name);
-            // Pin the jump target across the whole highlight window: forcedModelKey holds it
-            // while jumpRequest is live, then highlightedModelKey keeps it pinned after the
-            // request is cleared until the ring fades (~1.8s). Without this the row would be
-            // dropped the instant onJumpHandled clears jumpRequest when an active search /
-            // quick-filter excludes it, leaving the highlight on an unmounted row.
-            if (forcedModelKey === modelKey || highlightedModelKey === modelKey) return true;
-
             const matchesSearch =
                 !normalizedSearch ||
                 model.model_name.toLowerCase().includes(normalizedSearch) ||
@@ -1196,7 +1160,7 @@ function SiteAccountPanel({
 
             return matchesQuickFilters(model, panelPreferences.quickFilters);
         });
-    }, [scopedModels, modelSearchTerm, panelPreferences.quickFilters, forcedModelKey, highlightedModelKey]);
+    }, [scopedModels, modelSearchTerm, panelPreferences.quickFilters]);
 
     const visibleModels = useMemo(
         () => sortModels(filteredModels, panelPreferences.tableSort),
@@ -1220,36 +1184,6 @@ function SiteAccountPanel({
         [selectedModelKeys, visibleModelMap],
     );
     const hasPendingChanges = pendingModelKeys.size > 0 || routeMutation.isPending || disabledMutation.isPending || advancedMutation.isPending || addManualModelsMutation.isPending || deleteManualModelMutation.isPending;
-
-    useEffect(() => {
-        if (!jumpRequest || jumpRequest.target.kind !== 'site-channel-model') return;
-        const target = jumpRequest.target;
-        if (target.siteId !== siteId || target.accountId !== account.account_id) return;
-
-        const targetGroupKey = getBaseGroupKey(target.groupKey);
-        const targetFilter = createGroupFilter(targetGroupKey);
-        if (!isSameGroupFilter(activeFilter, targetFilter)) {
-            const frameId = window.requestAnimationFrame(() => {
-                setActiveFilter(targetFilter);
-            });
-            return () => window.cancelAnimationFrame(frameId);
-        }
-
-        const modelKey = makeModelKey(targetGroupKey, target.modelName);
-
-        const timer = window.setTimeout(() => {
-            // forcedModelKey keeps the target in visibleModels even when it doesn't match
-            // the active search / quick-filters, so the virtualizer can always find it.
-            tableHandleRef.current?.scrollToModelKey(modelKey);
-            setHighlightedModelKey(modelKey);
-            window.setTimeout(() => {
-                setHighlightedModelKey((current) => (current === modelKey ? null : current));
-            }, 1800);
-            onJumpHandled(jumpRequest.requestId);
-        }, 80);
-
-        return () => window.clearTimeout(timer);
-    }, [jumpRequest, siteId, account.account_id, activeFilter, onJumpHandled]);
 
     const setSelectionForKeys = useCallback((modelKeys: string[], checked: boolean) => {
         if (modelKeys.length === 0) return;
@@ -2418,7 +2352,6 @@ function SiteAccountPanel({
             ) : (
                 <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-3xl border border-border/70 bg-card/70">
                     <SiteChannelTableView
-                        ref={tableHandleRef}
                         models={visibleModels}
                         resetKey={modelsScopeKey}
                         allVisibleSelected={allVisibleSelected}
@@ -2426,7 +2359,6 @@ function SiteAccountPanel({
                         selectedModelKeys={selectedModelKeys}
                         compactMode={panelPreferences.compactMode}
                         tableSort={panelPreferences.tableSort}
-                        highlightedModelKey={highlightedModelKey}
                         onToggleModelSelection={handleToggleModelSelection}
                         onToggleAllVisible={handleToggleAllVisible}
                         onSortChange={handleSortChange}
@@ -2653,7 +2585,6 @@ function SiteChannelDialog({
                             highlightedAccountId={highlightedAccountId}
                             registerAccountTabRef={setAccountTabRef}
                             jumpRequest={jumpRequest}
-                            onJumpHandled={onJumpHandled}
                             onNavigateToChannel={(channelId) => closeAndNavigate(() => onNavigateToChannel(channelId))}
                         />
                     ) : (
