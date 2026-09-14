@@ -24,7 +24,23 @@
 | B250913-15 | 晚间 | `update/update.go:131-148` | P3 | zip 自更新失败可致进程半挂且更新通道永久闭锁（仅用自更新功能时相关） |
 | C250913-13 | 第三轮·性能 | `site_pricing.go:478`、`catalog.go:1122` | P3 | `LOWER(model_name)` 包列索引失效。归一化小写生成列或 COLLATE NOCASE |
 | C250913-14 | 第三轮·性能 | `processor.go:274-276` | P3 | transform 模式每 chunk 重跑 SSE 解析做终态检测（inbound 适配器本知情）。廉价子串预筛或适配器打终态标记 |
-| LEGACY-250905 | 09-05 报告 | `docs/reviews/audit-report-octopus-2026-09-05.md` | - | 该报告 23 条「未修」项自 09-06 后零更新、被后续三轮遗忘。**待办：合并去重入本台账** |
+| LEGACY-250905-F05 | 09-05 报告 | 公开入口（login 等） | P2 | 认证前无界解码正文。未复核——检查公开路由是否套 MaxBytesReader |
+| LEGACY-250905-F08 | 09-05 报告 | `op/stats.go` getter | P3 | 统计 getter 写零值可覆盖并发累计。未复核 |
+| LEGACY-250905-F10 | 09-05 报告 | 回溯正则 | P3 | 正则无执行预算。未复核 |
+| LEGACY-250905-F11 | 09-05 报告 | `helper/fetch.go` 分页 | P3 | 分页无总量边界（死循环部分已由 43c9000 修复，总量上限未修） |
+| LEGACY-250905-F13/14/15 | 09-05 报告 | `transformer/outbound/gemini` | P2 | Gemini 协议三项：数组 system 丢失/并行工具拆错 choice/流式丢图。未复核——outbound 已有 MultipleContent/systemInstruction/inlineData 处理，需逐项构造反例裁定 |
+| LEGACY-250905-F16 | 09-05 报告 | relay 流式 | P3 | 上游心跳被当作首 token。未复核 |
+| LEGACY-250905-F17 | 09-05 报告 | passthrough 读失败 | P2 | 读失败丢已收到的 usage。未复核 |
+| LEGACY-250905-F18 | 09-05 报告 | relay 流终态 | P2 | 无语义终态的 EOF 被记为成功（与 C250913 后端对抗者 N2 相互印证，确认存活） |
+| LEGACY-250905-F19 | 09-05 报告 | 前端身份切换 | P2 | 退出/切换身份后复用旧私有缓存。未复核（未见 queryClient.clear 调用） |
+| LEGACY-250905-F21 | 09-05 报告 | 前端并发 mutation | P3 | 并发 mutation 遗留行级 pending。未复核 |
+| LEGACY-250905-F22 | 09-05 报告 | 前端 trackedIds | P3 | 随日志页会话无界增长。未复核 |
+| LEGACY-250905-F23 | 09-05 报告 | 尝试详情 SSE | P3 | 断线后静默停止。未复核 |
+| LEGACY-250905-F24 | 09-05 报告 | 尝试中止 | P3 | 中止失败无用户反馈。未复核 |
+| LEGACY-250905-F26 | 09-05 报告 | `conf/config.go:149-156` | P3 | bootstrap 密码先落盘再清理（时间窗）。未复核 |
+| LEGACY-250905-F27 | 09-05 报告 | `utils/snowflake` | P3 | ID 生成无机器/实例位：重启后同毫秒 ID 可碰撞、跨实例必撞。已复核确认存活；单实例内网风险低，多实例部署前必须修 |
+| LEGACY-250905-F28 | 09-05 报告 | `db/migrate/013` 回填 | P3 | 分批回填反复扫描已完成前缀。未复核 |
+| LEGACY-250905-F29 | 09-05 报告 | 启动 API | P3 | 返回成功但 HTTP 可能未监听。未复核 |
 
 ## 二、skipped（内网自用，有意跳过——勿在后续轮次重复登记）
 
@@ -68,3 +84,7 @@
 | A250913-F11 | 路由探测三连发短路 | 337519c |
 | B250913-11 | 批量同步 CatalogSync 收敛为末尾一次 | 3ab1882 |
 | C250913-P1-9/前端 | request 超时+网络错误归一、三处静默 mutate 补 toast、幻影 setQueryData 清理 | 46dc946 |
+| LEGACY-250905-F20 | 迟到 401 登出新会话——session-guard 会话归属守卫已建（09-08 轮 F05） | 早于本台账 |
+| LEGACY-250905-F25 | 损坏 ZIP 丢 pending——discard 已移至解码成功后（setting.go:211 P0 修正） | 早于本台账 |
+| LEGACY-250905-F31 | 构建干净树检查——scripts/build.sh:190 已含实际输入清单 | 3332faf |
+| LEGACY-250905-F12 | detect 丢弃请求取消——当前代码 NewRequestWithContext 已传播取消，原声明与现状不符 | 复核否决 |
