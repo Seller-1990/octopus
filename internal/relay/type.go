@@ -2,8 +2,6 @@ package relay
 
 import (
 	"context"
-	"io"
-	"net/http"
 	"os"
 	"strconv"
 	"strings"
@@ -63,26 +61,9 @@ var hopByHopHeaders = map[string]bool{
 }
 
 // StreamWriter abstracts writing responses to the client (HTTP SSE or WebSocket).
-type StreamWriter interface {
-	Write(data []byte) (int, error)
-	Flush()
-	Written() bool
-	Header() http.Header
-	WriteHeader(code int)
-}
-
-// UpstreamReader abstracts reading events from upstream (SSE or WebSocket).
-type UpstreamReader interface {
-	// ReadEvent reads the next event data. Returns io.EOF at end of stream.
-	ReadEvent(ctx context.Context) ([]byte, error)
-	// StatusCode returns the HTTP status code (for error handling).
-	StatusCode() int
-	// Headers returns the response headers.
-	Headers() http.Header
-	// Body returns the raw response body for non-stream scenarios.
-	Body() io.ReadCloser
-	Close() error
-}
+// C250913-08：与 stream.StreamWriter 曾是同形状双胞胎，收敛为别名——同一具体
+// 对象同时满足两者，新人不知该实现哪个。
+type StreamWriter = stream.StreamWriter
 
 type relayRequest struct {
 	c                 *gin.Context

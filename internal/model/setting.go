@@ -208,49 +208,44 @@ func (s *Setting) Validate() error {
 		if s.Value == "" {
 			return nil
 		}
-		parsedURL, err := url.Parse(s.Value)
-		if err != nil {
-			return fmt.Errorf("api base URL is invalid: %w", err)
-		}
-		if parsedURL.Scheme != "http" && parsedURL.Scheme != "https" {
-			return fmt.Errorf("api base URL scheme must be http or https")
-		}
-		if parsedURL.Host == "" {
-			return fmt.Errorf("api base URL must have a host")
+		if err := validateHTTPURL(s.Value, "api base"); err != nil {
+			return err
 		}
 		return nil
 	case SettingKeyWebDAVURL:
 		if s.Value == "" {
 			return nil
 		}
-		parsedURL, err := url.Parse(s.Value)
-		if err != nil {
-			return fmt.Errorf("WebDAV URL is invalid: %w", err)
-		}
-		if parsedURL.Scheme != "http" && parsedURL.Scheme != "https" {
-			return fmt.Errorf("WebDAV URL scheme must be http or https")
-		}
-		if parsedURL.Host == "" {
-			return fmt.Errorf("WebDAV URL must have a host")
+		if err := validateHTTPURL(s.Value, "webdav"); err != nil {
+			return err
 		}
 		return nil
 	case SettingKeyVisionBridgeBaseURL:
 		if s.Value == "" {
 			return nil
 		}
-		parsedURL, err := url.Parse(s.Value)
-		if err != nil {
-			return fmt.Errorf("vision bridge base URL is invalid: %w", err)
-		}
-		if parsedURL.Scheme != "http" && parsedURL.Scheme != "https" {
-			return fmt.Errorf("vision bridge base URL scheme must be http or https")
-		}
-		if parsedURL.Host == "" {
-			return fmt.Errorf("vision bridge base URL must have a host")
+		if err := validateHTTPURL(s.Value, "vision bridge"); err != nil {
+			return err
 		}
 		return nil
 	}
 
+	return nil
+}
+
+// validateHTTPURL 校验 http/https URL 且必须有 host（C250913-08：三段
+// 「parse→scheme→host」逐字复制合并；name 用于错误文案前缀）。
+func validateHTTPURL(value, name string) error {
+	parsedURL, err := url.Parse(value)
+	if err != nil {
+		return fmt.Errorf("%s URL is invalid: %w", name, err)
+	}
+	if parsedURL.Scheme != "http" && parsedURL.Scheme != "https" {
+		return fmt.Errorf("%s URL scheme must be http or https", name)
+	}
+	if parsedURL.Host == "" {
+		return fmt.Errorf("%s URL must have a host", name)
+	}
 	return nil
 }
 
