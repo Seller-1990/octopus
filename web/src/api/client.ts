@@ -47,6 +47,18 @@ function isApiErrorParams(value: unknown): value is ApiErrorParams {
     ));
 }
 
+/** 请求整体超时：覆盖列表轮询与常规管理操作（上传走独立的 mini-client） */
+const REQUEST_TIMEOUT_MS = 30_000;
+
+/** 网络层失败（断网/DNS/超时）没有服务器错误码，用本地错误码走同一翻译通道 */
+function buildTransportError(errorCode: string): ApiError {
+    const message = translateApiErrorCode(errorCode, errorCode);
+    return Object.assign(new Error(message), {
+        code: 0,
+        errorCode,
+    }) as ApiError;
+}
+
 /**
  * 处理响应
  */
@@ -125,12 +137,26 @@ async function request<T>(
         }
     }
 
-    // 发送请求
-    const response = await fetch(url.toString(), {
-        method,
-        headers,
-        body,
-    });
+    // 发送请求。带整体超时：服务器挂起时此前 React Query 的 loading 永远转圈，
+    // 30s 轮询会在前一个请求未完成时持续堆积在途请求。
+    let response: Response;
+    try {
+        response = await fetch(url.toString(), {
+            method,
+            headers,
+            body,
+            signal: typeof AbortSignal !== 'undefined' && 'timeout' in AbortSignal
+                ? AbortSignal.timeout(REQUEST_TIMEOUT_MS)
+                : undefined,
+        });
+    } catch (error) {
+        // 断网/DNS 失败抛 TypeError（"Failed to fetch" 等浏览器本地语言文案），
+        // 超时抛 TimeoutError——归一为 ApiError 走统一错误翻译通道。
+        if (error instanceof DOMException && error.name === 'TimeoutError') {
+            throw buildTransportError('common.request_timeout');
+        }
+        throw buildTransportError('common.request_failed');
+    }
 
     return handleResponse<T>(response, requestToken);
 }

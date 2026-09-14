@@ -1667,7 +1667,9 @@
       "not_found": "請求的資源不存在。",
       "duplicate_resource": "資源已存在。",
       "database_error": "資料庫操作失敗，請稍後重試。",
-      "internal_error": "服務內部錯誤，請稍後重試。"
+      "internal_error": "服務內部錯誤，請稍後重試。",
+      "request_failed": "網路請求失敗，請檢查連線後重試。",
+      "request_timeout": "請求逾時，請稍後重試。"
     },
     "auth": {
       "unauthorized": "請先登入後再繼續操作。",

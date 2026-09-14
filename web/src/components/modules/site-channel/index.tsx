@@ -1744,10 +1744,16 @@ function SiteAccountPanel({
                         <button
                             type="button"
                             onClick={() =>
-                                enableSiteAccount.mutate({
-                                    id: account.account_id,
-                                    enabled: !account.enabled,
-                                })
+                                enableSiteAccount.mutate(
+                                    {
+                                        id: account.account_id,
+                                        enabled: !account.enabled,
+                                    },
+                                    {
+                                        onError: (error) =>
+                                            toast.error(error instanceof Error ? error.message : String(error)),
+                                    },
+                                )
                             }
                             disabled={enableSiteAccount.isPending}
                             className={cn(
@@ -2568,10 +2574,16 @@ function SiteChannelDialog({
                             <button
                                 type="button"
                                 onClick={() =>
-                                    enableSiteAccount.mutate({
-                                        id: resolvedAccount.account_id,
-                                        enabled: !resolvedAccount.enabled,
-                                    })
+                                    enableSiteAccount.mutate(
+                                        {
+                                            id: resolvedAccount.account_id,
+                                            enabled: !resolvedAccount.enabled,
+                                        },
+                                        {
+                                            onError: (error) =>
+                                                toast.error(error instanceof Error ? error.message : String(error)),
+                                        },
+                                    )
                                 }
                                 disabled={enableSiteAccount.isPending}
                                 className={cn(

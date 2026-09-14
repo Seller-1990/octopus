@@ -1667,7 +1667,9 @@
       "not_found": "请求的资源不存在。",
       "duplicate_resource": "资源已存在。",
       "database_error": "数据库操作失败，请稍后重试。",
-      "internal_error": "服务内部错误，请稍后重试。"
+      "internal_error": "服务内部错误，请稍后重试。",
+      "request_failed": "网络请求失败，请检查连接后重试。",
+      "request_timeout": "请求超时，请稍后重试。"
     },
     "auth": {
       "unauthorized": "请先登录后再继续操作。",

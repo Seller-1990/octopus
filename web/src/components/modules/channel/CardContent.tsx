@@ -203,7 +203,11 @@ export function CardContent({ channel, stats }: { channel: Channel; stats: Stats
 
         setIsOpen(false);
         setTimeout(() => {
-            deleteChannel.mutate(channel.id);
+            deleteChannel.mutate(channel.id, {
+                // hook 级 onError 只写 console：断网时弹窗已关、无任何提示，
+                // 用户会误以为已删除（错误 message 已由 api client 统一翻译）
+                onError: (error) => toast.error(error instanceof Error ? error.message : String(error)),
+            });
         }, 300);
     };
 

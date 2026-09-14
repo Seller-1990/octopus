@@ -1667,7 +1667,9 @@
       "not_found": "The requested resource was not found.",
       "duplicate_resource": "The resource already exists.",
       "database_error": "Database operation failed. Try again later.",
-      "internal_error": "Internal server error. Try again later."
+      "internal_error": "Internal server error. Try again later.",
+      "request_failed": "Network request failed. Check your connection and try again.",
+      "request_timeout": "Request timed out. Please try again later."
     },
     "auth": {
       "unauthorized": "Please sign in before continuing.",
