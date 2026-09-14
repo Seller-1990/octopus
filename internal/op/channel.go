@@ -5,11 +5,13 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"net/http"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/bestruirui/octopus/internal/apperror"
 	"github.com/bestruirui/octopus/internal/db"
 	"github.com/bestruirui/octopus/internal/model"
 	model2 "github.com/bestruirui/octopus/internal/transformer/outbound"
@@ -68,6 +70,9 @@ func normalizeChannelTLSFingerprint(value string) string {
 	}
 }
 
+// CodeChannelProxyValidation 渠道代理配置校验失败（唯一权威在 op 层）
+const CodeChannelProxyValidation = "channel.proxy_validation_failed"
+
 func ChannelCreate(channel *model.Channel, ctx context.Context) error {
 	if channel == nil {
 		return fmt.Errorf("channel is nil")
@@ -75,15 +80,17 @@ func ChannelCreate(channel *model.Channel, ctx context.Context) error {
 	if channel.ProxyMode == "" {
 		channel.ProxyMode = model.ProxyUsageModeDirect
 	}
+	// 校验错误带 400 语义（C250913-09）：代理模式校验唯一权威在此，
+	// handler 不再复制一份导致「改了没生效」的双源漂移。
 	if err := channel.ProxyMode.Validate(false); err != nil {
-		return err
+		return apperror.New(CodeChannelProxyValidation, err.Error()).WithStatus(http.StatusBadRequest)
 	}
 	if channel.ProxyMode == model.ProxyUsageModePool {
 		if channel.ProxyConfigID == nil || *channel.ProxyConfigID <= 0 {
-			return fmt.Errorf("proxy config id is required when proxy mode is pool")
+			return apperror.New(CodeChannelProxyValidation, "proxy config id is required when proxy mode is pool").WithStatus(http.StatusBadRequest)
 		}
 		if _, err := ProxyURLForConfig(*channel.ProxyConfigID, ctx); err != nil {
-			return err
+			return apperror.New(CodeChannelProxyValidation, err.Error()).WithStatus(http.StatusBadRequest)
 		}
 	} else {
 		channel.ProxyConfigID = nil

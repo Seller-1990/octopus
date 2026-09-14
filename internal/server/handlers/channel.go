@@ -98,26 +98,8 @@ func createChannel(c *gin.Context) {
 		resp.InvalidJSON(c)
 		return
 	}
-	if channel.ProxyMode == "" {
-		channel.ProxyMode = model.ProxyUsageModeDirect
-	}
-	if err := channel.ProxyMode.Validate(false); err != nil {
-		resp.Error(c, http.StatusBadRequest, err.Error())
-		return
-	}
-	if channel.ProxyMode == model.ProxyUsageModePool && (channel.ProxyConfigID == nil || *channel.ProxyConfigID <= 0) {
-		resp.Error(c, http.StatusBadRequest, "proxy config id is required when proxy mode is pool")
-		return
-	}
-	if channel.ProxyMode == model.ProxyUsageModePool {
-		if _, err := op.ProxyURLForConfig(*channel.ProxyConfigID, c.Request.Context()); err != nil {
-			resp.Error(c, http.StatusBadRequest, err.Error())
-			return
-		}
-	}
-	if channel.ProxyMode != model.ProxyUsageModePool {
-		channel.ProxyConfigID = nil
-	}
+	// 代理模式校验唯一权威在 op.ChannelCreate（C250913-09）：错误经 apperror
+	// WithStatus(400) 透传，避免 handler/op 双份规则「改一处不生效」漂移。
 	if err := op.ChannelCreate(&channel, c.Request.Context()); err != nil {
 		resp.ErrorWithAppError(c, http.StatusInternalServerError, channelError(codeChannelCreateFailed, "channel create failed", err))
 		return
