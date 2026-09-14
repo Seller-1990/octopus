@@ -92,9 +92,8 @@ func upsertClashController(c *gin.Context) {
 }
 
 func deleteClashController(c *gin.Context) {
-	id, err := strconv.Atoi(c.Param("id"))
-	if err != nil || id <= 0 {
-		resp.InvalidParam(c)
+	id, ok := parseIDParam(c, "id")
+	if !ok {
 		return
 	}
 	if err := op.ClashControllerDelete(c.Request.Context(), id); err != nil {
@@ -105,9 +104,8 @@ func deleteClashController(c *gin.Context) {
 }
 
 func getClashControllerState(c *gin.Context) {
-	id, err := strconv.Atoi(c.Param("id"))
-	if err != nil || id <= 0 {
-		resp.InvalidParam(c)
+	id, ok := parseIDParam(c, "id")
+	if !ok {
 		return
 	}
 	item, err := op.ClashControllerState(c.Request.Context(), id)
@@ -119,9 +117,8 @@ func getClashControllerState(c *gin.Context) {
 }
 
 func switchClashControllerNode(c *gin.Context) {
-	id, err := strconv.Atoi(c.Param("id"))
-	if err != nil || id <= 0 {
-		resp.InvalidParam(c)
+	id, ok := parseIDParam(c, "id")
+	if !ok {
 		return
 	}
 	var request struct {
@@ -139,9 +136,8 @@ func switchClashControllerNode(c *gin.Context) {
 }
 
 func listSiteOperationAttempts(c *gin.Context) {
-	accountID, err := strconv.Atoi(c.Param("account_id"))
-	if err != nil || accountID <= 0 {
-		resp.InvalidParam(c)
+	accountID, ok := parseIDParam(c, "account_id")
+	if !ok {
 		return
 	}
 	limit, _ := strconv.Atoi(c.Query("limit"))
@@ -155,9 +151,8 @@ func listSiteOperationAttempts(c *gin.Context) {
 }
 
 func listSiteProxyPreferences(c *gin.Context) {
-	accountID, err := strconv.Atoi(c.Param("account_id"))
-	if err != nil || accountID <= 0 {
-		resp.InvalidParam(c)
+	accountID, ok := parseIDParam(c, "account_id")
+	if !ok {
 		return
 	}
 	account, err := op.SiteAccountGet(accountID, c.Request.Context())
@@ -175,9 +170,8 @@ func listSiteProxyPreferences(c *gin.Context) {
 }
 
 func clearAccountProxyPreference(c *gin.Context) {
-	accountID, err := strconv.Atoi(c.Param("id"))
-	if err != nil || accountID <= 0 {
-		resp.InvalidParam(c)
+	accountID, ok := parseIDParam(c, "id")
+	if !ok {
 		return
 	}
 	if err := op.SiteProxyPreferenceClearAccount(c.Request.Context(), accountID); err != nil {
@@ -188,9 +182,8 @@ func clearAccountProxyPreference(c *gin.Context) {
 }
 
 func clearSiteProxyPreference(c *gin.Context) {
-	siteID, err := strconv.Atoi(c.Param("id"))
-	if err != nil || siteID <= 0 {
-		resp.InvalidParam(c)
+	siteID, ok := parseIDParam(c, "id")
+	if !ok {
 		return
 	}
 	if err := op.SiteProxyPreferenceClearSite(c.Request.Context(), siteID); err != nil {
@@ -547,9 +540,8 @@ func revokeVerificationSession(c *gin.Context) {
 }
 
 func clearVerificationAccount(c *gin.Context) {
-	accountID, err := strconv.Atoi(c.Param("id"))
-	if err != nil || accountID <= 0 {
-		resp.InvalidParam(c)
+	accountID, ok := parseIDParam(c, "id")
+	if !ok {
 		return
 	}
 	if err := op.VerificationSessionClearAccount(c.Request.Context(), accountID); err != nil {

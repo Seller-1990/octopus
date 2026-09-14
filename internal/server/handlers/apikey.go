@@ -99,9 +99,8 @@ func listAPIKey(c *gin.Context) {
 // 前端复制按钮按需调用本端点获取明文（本组路由受 JWT 保护）。
 // 明文出库属于敏感动作，与备份导出同标准留痕。
 func revealAPIKey(c *gin.Context) {
-	idNum, err := strconv.Atoi(c.Param("id"))
-	if err != nil {
-		resp.InvalidParam(c)
+	idNum, ok := parseIDParam(c, "id")
+	if !ok {
 		return
 	}
 	apiKey, err := op.APIKeyGet(idNum, c.Request.Context())

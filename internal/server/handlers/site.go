@@ -326,9 +326,8 @@ func enableSite(c *gin.Context) {
 }
 
 func deleteSite(c *gin.Context) {
-	idNum, err := strconv.Atoi(c.Param("id"))
-	if err != nil {
-		resp.InvalidParam(c)
+	idNum, ok := parseIDParam(c, "id")
+	if !ok {
 		return
 	}
 	if err := sitesvc.DeleteSite(c.Request.Context(), idNum); err != nil {
@@ -340,9 +339,8 @@ func deleteSite(c *gin.Context) {
 }
 
 func archiveSite(c *gin.Context) {
-	idNum, err := strconv.Atoi(c.Param("id"))
-	if err != nil {
-		resp.InvalidParam(c)
+	idNum, ok := parseIDParam(c, "id")
+	if !ok {
 		return
 	}
 	if err := sitesvc.ArchiveSite(c.Request.Context(), idNum); err != nil {
@@ -354,9 +352,8 @@ func archiveSite(c *gin.Context) {
 }
 
 func restoreSite(c *gin.Context) {
-	idNum, err := strconv.Atoi(c.Param("id"))
-	if err != nil {
-		resp.InvalidParam(c)
+	idNum, ok := parseIDParam(c, "id")
+	if !ok {
 		return
 	}
 	if err := sitesvc.RestoreSite(c.Request.Context(), idNum); err != nil {
@@ -488,9 +485,8 @@ func enableSiteAccount(c *gin.Context) {
 }
 
 func deleteSiteAccount(c *gin.Context) {
-	idNum, err := strconv.Atoi(c.Param("id"))
-	if err != nil {
-		resp.InvalidParam(c)
+	idNum, ok := parseIDParam(c, "id")
+	if !ok {
 		return
 	}
 	if err := sitesvc.DeleteSiteAccount(c.Request.Context(), idNum); err != nil {
@@ -502,9 +498,8 @@ func deleteSiteAccount(c *gin.Context) {
 }
 
 func syncSiteAccount(c *gin.Context) {
-	idNum, err := strconv.Atoi(c.Param("id"))
-	if err != nil {
-		resp.InvalidParam(c)
+	idNum, ok := parseIDParam(c, "id")
+	if !ok {
 		return
 	}
 	result, err := sitesvc.SyncAccount(c.Request.Context(), idNum)
@@ -520,9 +515,8 @@ func syncSiteAccount(c *gin.Context) {
 }
 
 func checkinSiteAccount(c *gin.Context) {
-	idNum, err := strconv.Atoi(c.Param("id"))
-	if err != nil {
-		resp.InvalidParam(c)
+	idNum, ok := parseIDParam(c, "id")
+	if !ok {
 		return
 	}
 	result, err := sitesvc.CheckinAccount(c.Request.Context(), idNum)
@@ -682,9 +676,8 @@ func batchEditSite(c *gin.Context) {
 }
 
 func getSiteAvailableModels(c *gin.Context) {
-	idNum, err := strconv.Atoi(c.Param("id"))
-	if err != nil {
-		resp.InvalidParam(c)
+	idNum, ok := parseIDParam(c, "id")
+	if !ok {
 		return
 	}
 	models, err := op.SiteAvailableModels(idNum, c.Request.Context())

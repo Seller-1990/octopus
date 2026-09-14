@@ -58,9 +58,8 @@ func upsertHeaderPolicy(c *gin.Context) {
 }
 
 func deleteHeaderPolicy(c *gin.Context) {
-	id, err := strconv.Atoi(c.Param("id"))
-	if err != nil || id <= 0 {
-		resp.InvalidParam(c)
+	id, ok := parseIDParam(c, "id")
+	if !ok {
 		return
 	}
 	if err := op.HeaderPolicyDelete(c.Request.Context(), id); err != nil {

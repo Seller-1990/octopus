@@ -5,7 +5,6 @@ import (
 	"errors"
 	"io"
 	"net/http"
-	"strconv"
 
 	"github.com/bestruirui/octopus/internal/grouphealth"
 	"github.com/bestruirui/octopus/internal/model"
@@ -77,9 +76,8 @@ func getGroupHealth(c *gin.Context) {
 	if !ensureGroupHealthEnabled(c) {
 		return
 	}
-	groupID, err := strconv.Atoi(c.Param("id"))
-	if err != nil {
-		resp.InvalidParam(c)
+	groupID, ok := parseIDParam(c, "id")
+	if !ok {
 		return
 	}
 	view, err := defaultGroupHealthService.GetGroupHealthViewByID(c.Request.Context(), groupID)
@@ -118,9 +116,8 @@ func runGroupHealth(c *gin.Context) {
 	if !ensureGroupHealthEnabled(c) {
 		return
 	}
-	groupID, err := strconv.Atoi(c.Param("id"))
-	if err != nil {
-		resp.InvalidParam(c)
+	groupID, ok := parseIDParam(c, "id")
+	if !ok {
 		return
 	}
 	running, err := defaultGroupHealthService.GetRunningSnapshotByGroupID(c.Request.Context(), groupID)

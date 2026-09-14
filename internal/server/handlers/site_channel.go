@@ -57,9 +57,8 @@ func listSiteChannel(c *gin.Context) {
 }
 
 func getSiteChannel(c *gin.Context) {
-	siteID, err := strconv.Atoi(c.Param("siteId"))
-	if err != nil {
-		resp.InvalidParam(c)
+	siteID, ok := parseIDParam(c, "siteId")
+	if !ok {
 		return
 	}
 	data, err := op.SiteChannelGet(siteID, c.Request.Context())

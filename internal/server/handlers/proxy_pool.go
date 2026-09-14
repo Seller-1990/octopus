@@ -2,7 +2,6 @@ package handlers
 
 import (
 	"net/http"
-	"strconv"
 
 	"github.com/bestruirui/octopus/internal/model"
 	"github.com/bestruirui/octopus/internal/op"
@@ -39,9 +38,8 @@ func listProxyConfigurations(c *gin.Context) {
 }
 
 func listProxyConfigurationReferences(c *gin.Context) {
-	idNum, err := strconv.Atoi(c.Param("id"))
-	if err != nil {
-		resp.InvalidParam(c)
+	idNum, ok := parseIDParam(c, "id")
+	if !ok {
 		return
 	}
 	items, err := op.ProxyConfigurationReferences(idNum, c.Request.Context())
@@ -99,9 +97,8 @@ func updateProxyConfiguration(c *gin.Context) {
 }
 
 func deleteProxyConfiguration(c *gin.Context) {
-	idNum, err := strconv.Atoi(c.Param("id"))
-	if err != nil {
-		resp.InvalidParam(c)
+	idNum, ok := parseIDParam(c, "id")
+	if !ok {
 		return
 	}
 	if err := op.ProxyConfigurationDelete(idNum, c.Request.Context()); err != nil {

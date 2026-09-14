@@ -2,7 +2,6 @@ package handlers
 
 import (
 	"net/http"
-	"strconv"
 
 	"github.com/bestruirui/octopus/internal/apperror"
 	"github.com/bestruirui/octopus/internal/model"
@@ -50,16 +49,6 @@ func init() {
 			router.NewRoute("/pin/:id", http.MethodPost).
 				Handle(setGroupPin),
 		)
-}
-
-func parseIDParam(c *gin.Context, name string) (int, bool) {
-	idStr := c.Param(name)
-	id, err := strconv.Atoi(idStr)
-	if err != nil || id <= 0 {
-		resp.InvalidParam(c)
-		return 0, false
-	}
-	return id, true
 }
 
 func listGroupPresets(c *gin.Context) {

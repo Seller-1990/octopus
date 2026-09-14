@@ -124,9 +124,8 @@ func upsertSiteModelPrice(c *gin.Context) {
 }
 
 func deleteSiteModelPrice(c *gin.Context) {
-	id, err := strconv.Atoi(c.Param("id"))
-	if err != nil || id <= 0 {
-		resp.InvalidParam(c)
+	id, ok := parseIDParam(c, "id")
+	if !ok {
 		return
 	}
 	if err := op.SiteModelPriceManualDelete(c.Request.Context(), id); err != nil {
@@ -261,9 +260,8 @@ func upsertModelAlias(c *gin.Context) {
 }
 
 func deleteModelAlias(c *gin.Context) {
-	id, err := strconv.Atoi(c.Param("id"))
-	if err != nil || id <= 0 {
-		resp.InvalidParam(c)
+	id, ok := parseIDParam(c, "id")
+	if !ok {
 		return
 	}
 	if err := op.CatalogAliasDelete(c.Request.Context(), id); err != nil {
