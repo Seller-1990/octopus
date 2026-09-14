@@ -28,7 +28,9 @@ func static(urlPrefix string, fileSystem http.FileSystem) gin.HandlerFunc {
 		fileserver = http.StripPrefix(urlPrefix, fileserver)
 	}
 	return func(c *gin.Context) {
-		if strings.HasPrefix(c.Request.URL.Path, "/api") {
+		// /api 管理面与 /v1 代理面都不是静态资源：跳过内嵌 FS 的 Open 探测，
+		// 否则代理热路径每请求多一次注定失败的 embed.FS 打开（F15）。
+		if strings.HasPrefix(c.Request.URL.Path, "/api") || strings.HasPrefix(c.Request.URL.Path, "/v1") {
 			c.Next()
 			return
 		}
