@@ -27,12 +27,13 @@ const (
 
 // circuitEntry 单个熔断器条目
 type circuitEntry struct {
-	State               CircuitState
-	ConsecutiveFailures int64
-	LastFailureTime     time.Time
-	TripCount           int // 累计熔断触发次数（用于指数退避）
-	HalfOpenSince       time.Time
-	mu                  sync.Mutex
+	State                   CircuitState
+	ConsecutiveFailures     int64
+	ConsecutiveSoftFailures int64 // 429/503 连软失败单独计数：软失败此前永不熔断，限流渠道在 Failover 下每请求都要白撞一次（P1-5）
+	LastFailureTime         time.Time
+	TripCount               int // 累计熔断触发次数（用于指数退避）
+	HalfOpenSince           time.Time
+	mu                      sync.Mutex
 }
 
 // 全局熔断器存储
@@ -268,6 +269,7 @@ func RecordSuccess(channelID, keyID int, modelName string) {
 	// 重置全部状态
 	entry.State = StateClosed
 	entry.ConsecutiveFailures = 0
+	entry.ConsecutiveSoftFailures = 0
 	entry.TripCount = 0
 	entry.HalfOpenSince = time.Time{}
 }
@@ -287,6 +289,17 @@ func RecordFailure(channelID, keyID int, modelName string, kind FailureKind) {
 	switch entry.State {
 	case StateClosed:
 		if kind == FailureSoftRateLimit {
+			// 软失败连续达到阈值同样熔断：429/503 是最高频的上游故障形态，
+			// 永不熔断意味着 Failover 定序下每个请求都先白撞一次限流渠道。
+			entry.ConsecutiveSoftFailures++
+			if entry.ConsecutiveSoftFailures >= getThreshold() {
+				entry.State = StateOpen
+				entry.TripCount++
+				entry.LastFailureTime = now
+				entry.ConsecutiveSoftFailures = 0
+				log.Warnf("circuit breaker [%s] Closed -> Open (soft rate limit streak, tripCount=%d, cooldown=%v)",
+					key, entry.TripCount, GetCooldown(entry.TripCount))
+			}
 			return
 		}
 		entry.ConsecutiveFailures++

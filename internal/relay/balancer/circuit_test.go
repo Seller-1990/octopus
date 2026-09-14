@@ -284,6 +284,44 @@ func TestRecordFailureInOpenDoesNotExtendCooldown(t *testing.T) {
 	t.Fatal("expected snapshot to contain the open circuit entry")
 }
 
+// TestSoftRateLimitTripsCircuitAfterStreak P1-5 回归：429/503 软失败连续达到
+// 阈值必须熔断——软失败此前永不计数，限流渠道在 Failover 定序下每个请求都
+// 要白撞一次，熔断器形同虚设。
+func TestSoftRateLimitTripsCircuitAfterStreak(t *testing.T) {
+	Reset()
+	const (
+		channelID = 41
+		keyID     = 42
+		modelName = "gpt-4o-mini"
+	)
+	// 阈值以下保持 Closed
+	for i := 0; i < 4; i++ {
+		RecordFailure(channelID, keyID, modelName, FailureSoftRateLimit)
+	}
+	if tripped, _ := IsTripped(channelID, keyID, modelName); tripped {
+		t.Fatal("expected circuit to stay closed below soft threshold")
+	}
+	// 达到默认阈值（5）后熔断
+	RecordFailure(channelID, keyID, modelName, FailureSoftRateLimit)
+	if tripped, _ := IsTripped(channelID, keyID, modelName); !tripped {
+		t.Fatal("expected circuit to trip after soft-failure streak")
+	}
+	// 成功后软失败计数随全量重置清零
+	RecordSuccess(channelID, keyID, modelName)
+	entryV, ok := globalBreaker.Load(circuitKey(channelID, keyID, modelName))
+	if !ok {
+		t.Fatal("expected entry to survive RecordSuccess")
+	}
+	entry := entryV.(*circuitEntry)
+	entry.mu.Lock()
+	soft := entry.ConsecutiveSoftFailures
+	state := entry.State
+	entry.mu.Unlock()
+	if soft != 0 || state != StateClosed {
+		t.Fatalf("expected clean reset on success, got soft=%d state=%v", soft, state)
+	}
+}
+
 // TestRecordFailureStillOpensFromClosed 达到阈值仍正常转 Open、试探失败仍
 // 刷新冷却起点（防修复矫枉过正）。
 func TestRecordFailureStillOpensFromClosed(t *testing.T) {
