@@ -134,10 +134,18 @@ func UpdateCore() error {
 				log.Warnf("unzip failed: %v", err)
 				return err
 			}
+			// B250913-15：unzip 成功不代表包内二进制真实解出（空 zip/路径不符），
+			// 且 zip 内条目不保证可执行位——验证+chmod 后才算写入成功。
+			if err := verifyUpdatedBinary(updatedBinPath); err != nil {
+				return err
+			}
 		} else {
 			if err := os.WriteFile(updatedBinPath, data, 0755); err != nil {
 				log.Warnf("write binary failed: %v", err)
 				return fmt.Errorf("write binary: %w", err)
+			}
+			if err := verifyUpdatedBinary(updatedBinPath); err != nil {
+				return err
 			}
 		}
 		writeSuccess = true
@@ -152,6 +160,9 @@ func UpdateCore() error {
 	if isZip {
 		if err := unzip(data, targetDir); err != nil {
 			log.Warnf("unzip failed: %v", err)
+			return err
+		}
+		if err := verifyUpdatedBinary(updatedBinPath); err != nil {
 			return err
 		}
 		unzippedPath := filepath.Join(targetDir, "octopus")
@@ -276,12 +287,53 @@ func restartExecutable(execPath string) {
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
 		if err := cmd.Start(); err != nil {
-			log.Errorf("restarting failed: %v", err)
+			// B250913-15：启动失败若只打日志，旧进程继续跑新标志位
+			// （restarting=true 永久拒绝后续更新）且无进程接管。回滚备份后
+			// 退出，交给进程管理器用旧版本拉起。
+			log.Errorf("restarting failed: %v (rolling back and exiting)", err)
+			rollbackUpdatedBinary(execPath)
+			os.Exit(1)
 		}
 		os.Exit(0)
 	}
 
 	if err := syscall.Exec(execPath, os.Args, os.Environ()); err != nil {
-		log.Errorf("restarting failed: %v", err)
+		log.Errorf("restarting failed: %v (rolling back and exiting)", err)
+		rollbackUpdatedBinary(execPath)
+		os.Exit(1)
 	}
+}
+
+// verifyUpdatedBinary 确认目标二进制存在、是常规文件且非空，并补可执行位。
+func verifyUpdatedBinary(path string) error {
+	info, err := os.Stat(path)
+	if err != nil {
+		return fmt.Errorf("updated binary missing at %s: %w", path, err)
+	}
+	if info.IsDir() {
+		return fmt.Errorf("updated binary path is a directory: %s", path)
+	}
+	if info.Size() == 0 {
+		return fmt.Errorf("updated binary is empty: %s", path)
+	}
+	if runtime.GOOS != "windows" {
+		if err := os.Chmod(path, 0755); err != nil {
+			return fmt.Errorf("chmod updated binary: %w", err)
+		}
+	}
+	return nil
+}
+
+// rollbackUpdatedBinary 用 .backup 恢复旧二进制（尽力而为；容器路径无备份）。
+func rollbackUpdatedBinary(execPath string) {
+	backupPath := execPath + ".backup"
+	if _, err := os.Stat(backupPath); err != nil {
+		log.Warnf("no backup to roll back at %s", backupPath)
+		return
+	}
+	if err := os.Rename(backupPath, execPath); err != nil {
+		log.Errorf("rollback failed: %v (backup at %s)", err, backupPath)
+		return
+	}
+	log.Warnf("rolled back updated binary from %s", backupPath)
 }
