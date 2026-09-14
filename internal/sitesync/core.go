@@ -39,6 +39,14 @@ type siteBatchAccount struct {
 }
 
 func SyncAccount(ctx context.Context, accountID int) (*model.SiteSyncResult, error) {
+	return syncAccountInternal(ctx, accountID, true)
+}
+
+// syncAccountInternal：批量同步路径（fullCatalogSync=false）跳过每账号一次的
+// 全局 CatalogSync，由 syncBatchAccounts 末尾统一执行一次（B#11）。
+// EnforceMultiplierCap 与 ProjectAccount 保留在账号级：cap 语义依赖 persist 后
+// 立即 enforce（两态化配套的用户拍板决策），投影必须消费 enforce 后的倍率。
+func syncAccountInternal(ctx context.Context, accountID int, fullCatalogSync bool) (*model.SiteSyncResult, error) {
 	siteRecord, account, err := loadSiteAccount(ctx, accountID)
 	if err != nil {
 		return nil, sanitizeSiteError(err)
@@ -90,7 +98,10 @@ func SyncAccount(ctx context.Context, accountID int) (*model.SiteSyncResult, err
 		reconcileCheckinAfterSync(ctx, account.ID)
 	}
 
-	_, catalogErr := op.CatalogSync(ctx)
+	var catalogErr error
+	if fullCatalogSync {
+		_, catalogErr = op.CatalogSync(ctx)
+	}
 
 	if catalogErr == nil {
 		pricingAccount := *account
@@ -265,6 +276,7 @@ func syncBatchAccounts(ctx context.Context, items []siteBatchAccount, opts SiteB
 	// stay aggregated to avoid leaking upstream HTML and overwhelming operators.
 	summary := newSiteBatchSummary(SiteBatchPhaseSync, opts, len(items))
 	defer summary.emitLog()
+	sawSyncedAccount := false
 	for i := 0; i < len(items); i++ {
 		item := items[i]
 		if !waitSiteBatchInterval(ctx, 500*time.Millisecond) {
@@ -272,7 +284,7 @@ func syncBatchAccounts(ctx context.Context, items []siteBatchAccount, opts SiteB
 			recordBatchCanceledSkips(summary, items[i:])
 			return *summary
 		}
-		result, err := SyncAccount(ctx, item.account.ID)
+		result, err := syncAccountInternal(ctx, item.account.ID, false)
 		if err != nil {
 			summary.recordFailure(item.site.ID, item.site.Platform, item.account.ID, err)
 			if IsCloudflareProtectionError(err) || siteBatchReason(err) == SiteBatchReasonCloudflareProtection {
@@ -280,7 +292,15 @@ func syncBatchAccounts(ctx context.Context, items []siteBatchAccount, opts SiteB
 			}
 			continue
 		}
+		sawSyncedAccount = true
 		summary.recordResult(item.site.ID, item.site.Platform, item.account.ID, result.Status, result.Message)
+	}
+	// B#11：全局 CatalogSync 从每账号一次收敛为批量末尾一次。任一账号完整
+	// 走完同步+投影才需要重建目录；全部失败时无需空跑。
+	if sawSyncedAccount {
+		if _, err := op.CatalogSync(ctx); err != nil {
+			log.Warnf("batch catalog sync after site sync failed: %v", err)
+		}
 	}
 	return *summary
 }
