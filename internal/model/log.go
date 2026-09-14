@@ -40,6 +40,7 @@ const (
 	TransportTerminationWriteError                    TransportTermination = "write_error"
 	TransportTerminationTransformError                TransportTermination = "transform_error"
 	TransportTerminationUpstreamError                 TransportTermination = "upstream_error"
+	TransportTerminationUpstreamStalled               TransportTermination = "upstream_stalled"
 )
 
 type CompletionEvidence string

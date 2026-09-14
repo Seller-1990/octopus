@@ -25,10 +25,10 @@ type failingStreamWriter struct {
 func (f *failingStreamWriter) Write([]byte) (int, error) {
 	return 0, errors.New("downstream write failed")
 }
-func (f *failingStreamWriter) Flush()                  {}
-func (f *failingStreamWriter) Written() bool           { return false }
-func (f *failingStreamWriter) Header() http.Header     { return f.headers }
-func (f *failingStreamWriter) WriteHeader(int)         {}
+func (f *failingStreamWriter) Flush()              {}
+func (f *failingStreamWriter) Written() bool       { return false }
+func (f *failingStreamWriter) Header() http.Header { return f.headers }
+func (f *failingStreamWriter) WriteHeader(int)     {}
 
 func newMockStreamWriter() *mockStreamWriter {
 	return &mockStreamWriter{
@@ -465,4 +465,61 @@ data: event3
 			t.Errorf("event[%d] mismatch: got %q, want %q", i, ev, expected[i])
 		}
 	}
+}
+
+// TestStreamProcessor_InactivityTimeout C250913-02 回归：上游 200+SSE 头后
+// 静默挂死时，流内不活跃上限必须在预算内判停，而不是让请求无界堆积。
+func TestStreamProcessor_InactivityTimeout(t *testing.T) {
+	source := newMockStreamSource([][]byte{[]byte(`{"data":"chunk1"}`)})
+	// mock 读完即 EOF——为模拟「挂死」，包一层永不返回的 source
+	hanging := &hangingSource{sent: source}
+	writer := newMockStreamWriter()
+
+	processor := NewStreamProcessor(StreamConfig{
+		Source:            hanging,
+		Writer:            writer,
+		Context:           context.Background(),
+		InactivityTimeout: 50 * time.Millisecond,
+	})
+
+	start := time.Now()
+	err := processor.Run()
+	elapsed := time.Since(start)
+	if !errors.Is(err, ErrUpstreamStalled) {
+		t.Fatalf("expected ErrUpstreamStalled, got %v", err)
+	}
+	if elapsed > 2*time.Second {
+		t.Fatalf("stall detection took too long: %v", elapsed)
+	}
+	if processor.Result().Termination != TerminationUpstreamStalled {
+		t.Fatalf("unexpected termination: %v", processor.Result().Termination)
+	}
+	if !hanging.closed {
+		t.Error("source not closed")
+	}
+}
+
+// hangingSource 先转发预置事件，之后永远阻塞直到 ctx 取消。
+type hangingSource struct {
+	sent          StreamSource
+	sentExhausted bool
+	closed        bool
+}
+
+func (h *hangingSource) ReadEvent(ctx context.Context) ([]byte, error) {
+	if !h.sentExhausted {
+		data, err := h.sent.ReadEvent(ctx)
+		if err == io.EOF {
+			h.sentExhausted = true
+		} else {
+			return data, err
+		}
+	}
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
+func (h *hangingSource) Close() error {
+	h.closed = true
+	return nil
 }

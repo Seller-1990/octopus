@@ -37,6 +37,16 @@ type streamHeartbeatWriter interface {
 	Flush()
 }
 
+// streamInactivityTimeout 流内不活跃上限（C250913-02）：上游整条流停摆时
+// 兜底判停，防止请求无界堆积。0 表示显式禁用。
+func streamInactivityTimeout() time.Duration {
+	v, err := op.SettingGetInt(dbmodel.SettingKeyStreamInactivityTimeout)
+	if err != nil || v < 0 {
+		return 0
+	}
+	return time.Duration(v) * time.Second
+}
+
 func streamHeartbeatInterval() time.Duration {
 	interval, err := op.SettingGetInt(dbmodel.SettingKeySSEHeartbeatInterval)
 	if err != nil || interval <= 0 {
@@ -885,6 +895,8 @@ func mapStreamTermination(value stream.Termination) dbmodel.TransportTermination
 		return dbmodel.TransportTerminationClientDisconnectedAfterFinish
 	case stream.TerminationFirstTokenTimeout:
 		return dbmodel.TransportTerminationFirstTokenTimeout
+	case stream.TerminationUpstreamStalled:
+		return dbmodel.TransportTerminationUpstreamStalled
 	case stream.TerminationReadError:
 		return dbmodel.TransportTerminationReadError
 	case stream.TerminationWriteError:
@@ -1178,6 +1190,7 @@ func (ra *relayAttempt) handleWSStreamResponseV2(ctx context.Context, reader *ws
 		Writer:            ra.getStreamWriter(),
 		Context:           ctx,
 		FirstTokenTimeout: firstTokenTimeout,
+		InactivityTimeout: streamInactivityTimeout(),
 		HeartbeatInterval: streamHeartbeatInterval(),
 		TerminalEvents:    clientSuccessTerminalEvents(ra.internalRequest.RawAPIFormat),
 		MaxEventSize:      maxSSEEventSize,
@@ -1656,6 +1669,7 @@ func (ra *relayAttempt) handleStreamResponseV2(ctx context.Context, response *ht
 		Writer:            ra.getStreamWriter(),
 		Context:           ctx,
 		FirstTokenTimeout: firstTokenTimeout,
+		InactivityTimeout: streamInactivityTimeout(),
 		HeartbeatInterval: streamHeartbeatInterval(),
 		TerminalEvents:    clientSuccessTerminalEvents(ra.internalRequest.RawAPIFormat),
 		MaxEventSize:      maxSSEEventSize,
@@ -1720,6 +1734,7 @@ func (ra *relayAttempt) handleStreamResponsePassthroughV2(ctx context.Context, r
 		Writer:            ra.getStreamWriter(),
 		Context:           ctx,
 		FirstTokenTimeout: firstTokenTimeout,
+		InactivityTimeout: streamInactivityTimeout(),
 		HeartbeatInterval: streamHeartbeatInterval(),
 		BufferRawStream:   true,
 		TerminalEvents:    cfg.TerminalEvents,

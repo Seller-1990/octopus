@@ -24,6 +24,11 @@ var ErrEmptyUpstreamStream = errors.New("upstream stream ended without forwardin
 // errors.Is and converts it into a channel-switch decision.
 var ErrFirstTokenTimeout = errors.New("first token timeout")
 
+// ErrUpstreamStalled marks a mid-stream stall: the upstream stopped sending
+// data entirely. Output may already be partially written, so failover is not
+// possible — the stream is aborted and the attempt recorded as failed.
+var ErrUpstreamStalled = errors.New("upstream stream stalled")
+
 // StreamSource abstracts different event sources (SSE, WebSocket, raw bytes).
 type StreamSource interface {
 	// ReadEvent blocks until the next event is available or returns an error.
@@ -60,6 +65,12 @@ type StreamConfig struct {
 	FirstTokenTimeout time.Duration // 0 to disable
 	HeartbeatInterval time.Duration // 0 to disable
 
+	// InactivityTimeout 流内不活跃上限：任意上游数据都会重置计时，超过上限
+	// 无数据即判停（0 禁用）。上游「200+SSE 头后静默挂死」是最常见的慢失败
+	// 形态，首 token 超时只覆盖首 token，此值兜住流中途的停摆。心跳是我们
+	// 发给客户端的，不重置计时——否则死上游会被自己的心跳续命。
+	InactivityTimeout time.Duration
+
 	// Callbacks
 	OnFirstToken func()                                            // Called when first payload written
 	OnFinish     func(ctx context.Context, rawStream []byte) error // Called on stream end
@@ -85,6 +96,7 @@ const (
 	TerminationClientCanceled                Termination = "client_canceled"
 	TerminationClientDisconnectedAfterFinish Termination = "client_disconnected_after_finish"
 	TerminationFirstTokenTimeout             Termination = "first_token_timeout"
+	TerminationUpstreamStalled               Termination = "upstream_stalled"
 	TerminationReadError                     Termination = "read_error"
 	TerminationWriteError                    Termination = "write_error"
 	TerminationTransformError                Termination = "transform_error"
@@ -150,6 +162,15 @@ func (p *StreamProcessor) Run() error {
 		}()
 	}
 
+	// Setup inactivity timeout (mid-stream stall detection)
+	var inactivityTimer *time.Timer
+	var inactivityC <-chan time.Time
+	if p.config.InactivityTimeout > 0 {
+		inactivityTimer = time.NewTimer(p.config.InactivityTimeout)
+		inactivityC = inactivityTimer.C
+		defer inactivityTimer.Stop()
+	}
+
 	// Async read from source — use a derived context so we can unblock on any exit.
 	readCtx, readCancel := context.WithCancel(p.config.Context)
 	// 退出顺序（defer LIFO）：先取消读 ctx，再 Close。WS Source 的 Close 会把
@@ -188,12 +209,26 @@ func (p *StreamProcessor) Run() error {
 			p.termination = TerminationFirstTokenTimeout
 			return p.handleFirstTokenTimeout()
 
+		case <-inactivityC:
+			p.termination = TerminationUpstreamStalled
+			return p.handleUpstreamStalled()
+
 		case <-heartbeatC:
 			if err := p.writeHeartbeat(); err != nil {
 				return err
 			}
 
 		case r, ok := <-results:
+			if inactivityTimer != nil {
+				// 任何上游事件（含错误事件）都是活动；用 drain+Reset 防丢信号
+				if !inactivityTimer.Stop() {
+					select {
+					case <-inactivityC:
+					default:
+					}
+				}
+				inactivityTimer.Reset(p.config.InactivityTimeout)
+			}
 			if !ok {
 				// The reader can exit through readCtx.Done without publishing its
 				// final context error. Do not reinterpret that close as upstream EOF.
@@ -329,6 +364,11 @@ func (p *StreamProcessor) handleDisconnect() error {
 	}
 
 	return err
+}
+
+// handleUpstreamStalled returns mid-stream stall error.
+func (p *StreamProcessor) handleUpstreamStalled() error {
+	return fmt.Errorf("no upstream data for %v: %w", p.config.InactivityTimeout, ErrUpstreamStalled)
 }
 
 // handleFirstTokenTimeout returns first token timeout error.

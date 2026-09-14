@@ -21,6 +21,7 @@ const (
 	SettingKeyUsageHourlyRetentionDays         SettingKey = "usage_hourly_retention_days"          // 使用分析小时聚合保留天数
 	SettingKeyVerificationSessionRetentionDays SettingKey = "verification_session_retention_days"  // 验证会话/任务行保留天数（终态行定期删除，防无限累积，N3）
 	SettingKeyCORSAllowOrigins                 SettingKey = "cors_allow_origins"                   // 跨域白名单(逗号分隔, 如 "example.com,example2.com"). 为空不允许跨域, "*"允许所有
+	SettingKeyStreamInactivityTimeout          SettingKey = "stream_inactivity_timeout"            // 流式无数据不活跃上限（秒），0=禁用
 	SettingKeyCircuitBreakerThreshold          SettingKey = "circuit_breaker_threshold"            // 熔断触发阈值（连续失败次数）
 	SettingKeyCircuitBreakerCooldown           SettingKey = "circuit_breaker_cooldown"             // 熔断基础冷却时间（秒）
 	SettingKeyCircuitBreakerMaxCooldown        SettingKey = "circuit_breaker_max_cooldown"         // 熔断最大冷却时间（秒），指数退避上限
@@ -86,6 +87,7 @@ func DefaultSettings() []Setting {
 		{Key: SettingKeyRelayLogKeepEnabled, Value: "true"},                                      // 默认保留历史日志
 		{Key: SettingKeyUsageHourlyRetentionDays, Value: "90"},                                   // 默认保留90天小时聚合
 		{Key: SettingKeyVerificationSessionRetentionDays, Value: "7"},                            // 默认验证会话/任务保留7天
+		{Key: SettingKeyStreamInactivityTimeout, Value: "300"},                                   // 默认流内 300s 无上游数据判停（C250913-02）
 		{Key: SettingKeyCircuitBreakerThreshold, Value: "5"},                                     // 默认连续失败5次触发熔断
 		{Key: SettingKeyCircuitBreakerCooldown, Value: "60"},                                     // 默认基础冷却60秒
 		{Key: SettingKeyCircuitBreakerMaxCooldown, Value: "600"},                                 // 默认最大冷却600秒（10分钟）
@@ -144,7 +146,7 @@ func (s *Setting) Validate() error {
 			return fmt.Errorf("setting value must be a finite non-negative number")
 		}
 		return nil
-	case SettingKeyCircuitBreakerThreshold, SettingKeyCircuitBreakerCooldown, SettingKeyCircuitBreakerMaxCooldown:
+	case SettingKeyStreamInactivityTimeout, SettingKeyCircuitBreakerThreshold, SettingKeyCircuitBreakerCooldown, SettingKeyCircuitBreakerMaxCooldown:
 		return validateIntMin(s.Value, 0)
 	case SettingKeyOutlierWindowCapacity:
 		// 评估样本上限受环形缓冲物理容量约束（≤20，见 outlierwindow.physicalCap）。
