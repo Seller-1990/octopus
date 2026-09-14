@@ -18,7 +18,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/animate-ui
 import { Badge } from '@/components/ui/badge';
 import { useTranslations } from 'next-intl';
 
-function formatBalance(value: number): string {
+function formatUSDCompact(value: number): string {
     if (!Number.isFinite(value)) return '-';
     if (Math.abs(value) >= 1000) {
         const scaled = value / 1000;
@@ -258,7 +258,7 @@ function MemberItem({
                             {member.balance != null && (
                                 <Badge variant="secondary" className="shrink-0 gap-1 px-1.5 py-0 text-[9px] bg-emerald-500/15 text-emerald-700 dark:text-emerald-300">
                                     <Wallet className="size-2.5 shrink-0" />
-                                    {formatBalance(member.balance)}
+                                    {formatUSDCompact(member.balance)}
                                 </Badge>
                             )}
                             {member.multiplier_known === true && member.group_multiplier != null && (

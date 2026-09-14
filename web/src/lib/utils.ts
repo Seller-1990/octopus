@@ -34,3 +34,11 @@ export function formatTime(ms: number | undefined): { raw: number, formatted: { 
     formatted: formatNumber(ms, [86400000, 3600000, 60000, 1000], ['', 'd', 'h', 'm', 's', 'ms']),
   };
 }
+// formatBalance 余额格式化唯一权威（C250913-08）：0→"0"，≥1M→"1.50M"，
+// ≥1K→"1.25K"，其余两位小数。站点余额展示（site 模块）统一走这里。
+export function formatBalance(value: number) {
+  if (value === 0) return "0";
+  if (value >= 1000000) return `${(value / 1000000).toFixed(2)}M`;
+  if (value >= 1000) return `${(value / 1000).toFixed(2)}K`;
+  return value.toFixed(2);
+}

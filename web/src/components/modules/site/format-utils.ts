@@ -51,12 +51,9 @@ export function getSiteErrorMessage(
   return translateSiteMessage(locale, getErrorMessage(error), t);
 }
 
-export function formatBalance(value: number) {
-  if (value === 0) return "0";
-  if (value >= 1000000) return `${(value / 1000000).toFixed(2)}M`;
-  if (value >= 1000) return `${(value / 1000).toFixed(2)}K`;
-  return value.toFixed(2);
-}
+// 余额格式化唯一权威在 lib/utils（C250913-08），此处重导出保持站点模块
+// 既有导入路径稳定。
+export { formatBalance } from "@/lib/utils";
 
 export function normalizeSearchTerm(value: string) {
   return value.trim().toLowerCase();
