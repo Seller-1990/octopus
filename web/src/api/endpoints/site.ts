@@ -570,7 +570,9 @@ export function useSiteCheckinLogs(accountId: number, enabled = true) {
         limit: 10,
       }),
     enabled: enabled && accountId > 0,
-    refetchInterval: 30_000,
+    // C250913-12：签到历史非实时数据，30s 轮询 × 每个展开账号在大列表下
+    // 产生恒定请求流与列表轮询争带宽；降为 5 分钟。
+    refetchInterval: 300_000,
   });
 }
 
