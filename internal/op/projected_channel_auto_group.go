@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/bestruirui/octopus/internal/utils/xstrings"
 	"strings"
 	"time"
 
@@ -145,22 +146,8 @@ func AutoGroupAllProjectedChannels(ctx context.Context) error {
 }
 
 func splitChannelModelNames(values ...string) []string {
-	seen := make(map[string]struct{})
-	result := make([]string, 0)
-	for _, value := range values {
-		for _, part := range strings.Split(value, ",") {
-			name := strings.TrimSpace(part)
-			if name == "" {
-				continue
-			}
-			if _, ok := seen[name]; ok {
-				continue
-			}
-			seen[name] = struct{}{}
-			result = append(result, name)
-		}
-	}
-	return result
+	// C250913-08：与 xstrings 的三套拆分实现收敛为单一权威
+	return xstrings.SplitTrimCompactUnique(",", values...)
 }
 
 func ValidateJSONOverrideObject(value string) error {

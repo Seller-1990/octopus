@@ -428,7 +428,7 @@ func createLLM(c *gin.Context) {
 		return
 	}
 	if err := op.LLMCreate(model, c.Request.Context()); err != nil {
-		resp.ErrorWithAppError(c, http.StatusInternalServerError, modelError(codeModelCreateFailed, "model create failed", err))
+		resp.ErrorWithAppError(c, http.StatusInternalServerError, crudError(codeModelCreateFailed, "model create failed", err))
 		return
 	}
 	resp.Success(c, model)
@@ -441,7 +441,7 @@ func updateLLM(c *gin.Context) {
 		return
 	}
 	if err := op.LLMUpdate(model, c.Request.Context()); err != nil {
-		resp.ErrorWithAppError(c, http.StatusInternalServerError, modelError(codeModelUpdateFailed, "model update failed", err))
+		resp.ErrorWithAppError(c, http.StatusInternalServerError, crudError(codeModelUpdateFailed, "model update failed", err))
 		return
 	}
 	resp.Success(c, model)
@@ -456,7 +456,7 @@ func deleteLLM(c *gin.Context) {
 		return
 	}
 	if err := op.LLMDelete(req.Name, c.Request.Context()); err != nil {
-		resp.ErrorWithAppError(c, http.StatusInternalServerError, modelError(codeModelPriceDeleteFailed, "model price delete failed", err))
+		resp.ErrorWithAppError(c, http.StatusInternalServerError, crudError(codeModelPriceDeleteFailed, "model price delete failed", err))
 		return
 	}
 	resp.Success(c, nil)
@@ -465,7 +465,7 @@ func deleteLLM(c *gin.Context) {
 func updateLLMPrice(c *gin.Context) {
 	err := price.UpdateLLMPrice(c.Request.Context())
 	if err != nil {
-		resp.ErrorWithAppError(c, http.StatusInternalServerError, modelError(codeModelPriceUpdateFailed, "model price update failed", err))
+		resp.ErrorWithAppError(c, http.StatusInternalServerError, crudError(codeModelPriceUpdateFailed, "model price update failed", err))
 		return
 	}
 	resp.Success(c, nil)

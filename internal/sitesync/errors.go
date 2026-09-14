@@ -4,11 +4,10 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"strconv"
-	"strings"
 	"time"
 
 	"github.com/bestruirui/octopus/internal/apperror"
+	"github.com/bestruirui/octopus/internal/utils/httputil"
 )
 
 type CloudflareProtectionError struct {
@@ -49,31 +48,10 @@ func newCloudflareProtectionError(statusCode int, header http.Header) *Cloudflar
 }
 
 func parseSiteRetryAfter(header string) time.Duration {
-	header = strings.TrimSpace(header)
-	if header == "" {
-		return 0
-	}
-	if secs, err := strconv.Atoi(header); err == nil {
-		return boundSiteRetryAfter(time.Duration(secs) * time.Second)
-	}
-	parsed, err := http.ParseTime(header)
-	if err != nil {
-		return 0
-	}
-	return boundSiteRetryAfter(time.Until(parsed))
-}
-
-func boundSiteRetryAfter(delay time.Duration) time.Duration {
-	if delay <= 0 {
-		return 0
-	}
-	if delay > 60*time.Second {
-		return 60 * time.Second
-	}
-	return delay
+	return httputil.ParseRetryAfter(header, time.Now(), 60*time.Second)
 }
 
 func siteErrorRetryAfter(err error) time.Duration {
 	millis := anyToInt64(apperror.Params(err)["retryAfterMillis"])
-	return boundSiteRetryAfter(time.Duration(millis) * time.Millisecond)
+	return httputil.BoundRetryAfter(time.Duration(millis)*time.Millisecond, 60*time.Second)
 }

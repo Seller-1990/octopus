@@ -3,6 +3,7 @@ package client
 import (
 	"context"
 	"fmt"
+	"github.com/bestruirui/octopus/internal/model"
 	"io"
 	"net/http"
 	"sort"
@@ -12,14 +13,9 @@ import (
 	"github.com/bogdanfinn/tls-client/profiles"
 )
 
-const (
-	TLSFingerprintChrome  = "chrome"
-	TLSFingerprintFirefox = "firefox"
-)
-
 func resolveTLSProfile(fingerprint string) profiles.ClientProfile {
 	switch fingerprint {
-	case TLSFingerprintFirefox:
+	case model.TLSFingerprintFirefox:
 		return profiles.Firefox_148
 	default:
 		return profiles.Chrome_146

@@ -5,6 +5,7 @@ import (
 	"crypto/x509"
 	"encoding/pem"
 	"errors"
+	"github.com/bestruirui/octopus/internal/model"
 	"io"
 	"log"
 	"net/http"
@@ -28,7 +29,7 @@ func TestFingerprintedClientsRejectUntrustedTLS(t *testing.T) {
 	upstream.StartTLS()
 	defer upstream.Close()
 
-	for _, fingerprint := range []string{TLSFingerprintChrome, TLSFingerprintFirefox} {
+	for _, fingerprint := range []string{model.TLSFingerprintChrome, model.TLSFingerprintFirefox} {
 		t.Run(fingerprint, func(t *testing.T) {
 			fingerprinted, err := NewFingerprintedClient(fingerprint, "")
 			if err != nil {
@@ -75,7 +76,7 @@ func TestFingerprintedClientsVerifyTrustedTLS(t *testing.T) {
 		}
 		x509.SetFallbackRoots(roots)
 		upstreamURL := os.Getenv("OCTOPUS_TLS_TEST_URL")
-		for _, fingerprint := range []string{TLSFingerprintChrome, TLSFingerprintFirefox} {
+		for _, fingerprint := range []string{model.TLSFingerprintChrome, model.TLSFingerprintFirefox} {
 			fingerprinted, err := NewFingerprintedClient(fingerprint, "")
 			if err != nil {
 				t.Fatal(err)

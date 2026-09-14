@@ -950,7 +950,7 @@ func (s *Site) Normalize() {
 			s.ExternalCheckinURL = &trimmed
 		}
 	}
-	s.TLSFingerprint = normalizeSiteTLSFingerprint(s.TLSFingerprint)
+	s.TLSFingerprint = NormalizeTLSFingerprint(s.TLSFingerprint)
 	if strings.TrimSpace(string(s.ProxyMode)) == "" {
 		s.ProxyMode = ProxyUsageModeDirect
 	}
@@ -1059,7 +1059,7 @@ func (a *SiteAccount) Normalize() {
 	if a.PlatformUserID != nil && *a.PlatformUserID <= 0 {
 		a.PlatformUserID = nil
 	}
-	a.TLSFingerprint = normalizeSiteTLSFingerprint(a.TLSFingerprint)
+	a.TLSFingerprint = NormalizeTLSFingerprint(a.TLSFingerprint)
 	a.UserAgent = strings.TrimSpace(a.UserAgent)
 	if a.AccountProxy != nil {
 		trimmed := strings.TrimSpace(*a.AccountProxy)
@@ -1140,13 +1140,4 @@ func (a *SiteAccount) Validate() error {
 		}
 	}
 	return nil
-}
-
-func normalizeSiteTLSFingerprint(value string) string {
-	switch value {
-	case "chrome", "firefox":
-		return value
-	default:
-		return ""
-	}
 }

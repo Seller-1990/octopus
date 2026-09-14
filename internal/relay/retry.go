@@ -1,10 +1,8 @@
 package relay
 
 import (
+	"github.com/bestruirui/octopus/internal/utils/httputil"
 	"math/rand/v2"
-	"net/http"
-	"strconv"
-	"strings"
 	"time"
 )
 
@@ -29,27 +27,7 @@ func parseRetryAfter(header string) time.Duration {
 }
 
 func parseRetryAfterAt(header string, now time.Time) time.Duration {
-	header = strings.TrimSpace(header)
-	if header == "" {
-		return 0
-	}
-	secs, err := strconv.Atoi(header)
-	if err == nil {
-		if secs <= 0 {
-			return 0
-		}
-		return min(time.Duration(secs)*time.Second, maxRetryAfter)
-	}
-
-	retryAt, err := http.ParseTime(header)
-	if err != nil {
-		return 0
-	}
-	delay := retryAt.Sub(now)
-	if delay <= 0 {
-		return 0
-	}
-	return min(delay, maxRetryAfter)
+	return httputil.ParseRetryAfter(header, now, maxRetryAfter)
 }
 
 // computeBackoff 计算退避时间

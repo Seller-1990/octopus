@@ -65,7 +65,7 @@ func createGroup(c *gin.Context) {
 		}
 	}
 	if err := op.GroupCreate(&group, c.Request.Context()); err != nil {
-		resp.ErrorWithAppError(c, http.StatusInternalServerError, groupError(codeGroupCreateFailed, "group create failed", err))
+		resp.ErrorWithAppError(c, http.StatusInternalServerError, crudError(codeGroupCreateFailed, "group create failed", err))
 		return
 	}
 	resp.Success(c, group)
@@ -86,7 +86,7 @@ func updateGroup(c *gin.Context) {
 	}
 	group, err := op.GroupUpdate(&req, c.Request.Context())
 	if err != nil {
-		resp.ErrorWithAppError(c, http.StatusInternalServerError, groupError(codeGroupUpdateFailed, "group update failed", err))
+		resp.ErrorWithAppError(c, http.StatusInternalServerError, crudError(codeGroupUpdateFailed, "group update failed", err))
 		return
 	}
 	resp.Success(c, group)
@@ -100,7 +100,7 @@ func deleteGroup(c *gin.Context) {
 		return
 	}
 	if err := op.GroupDel(idNum, c.Request.Context()); err != nil {
-		resp.ErrorWithAppError(c, http.StatusInternalServerError, groupError(codeGroupDeleteFailed, "group delete failed", err))
+		resp.ErrorWithAppError(c, http.StatusInternalServerError, crudError(codeGroupDeleteFailed, "group delete failed", err))
 		return
 	}
 	resp.Success(c, "group deleted successfully")
@@ -109,7 +109,7 @@ func deleteGroup(c *gin.Context) {
 func applyGroupDefaults(c *gin.Context) {
 	result, err := op.ApplyGroupDefaults(c.Request.Context())
 	if err != nil {
-		resp.ErrorWithAppError(c, http.StatusInternalServerError, groupError(codeGroupApplyDefaultsFailed, "apply group defaults failed", err))
+		resp.ErrorWithAppError(c, http.StatusInternalServerError, crudError(codeGroupApplyDefaultsFailed, "apply group defaults failed", err))
 		return
 	}
 	resp.Success(c, result)

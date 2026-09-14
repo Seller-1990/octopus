@@ -6,15 +6,9 @@ import (
 	"github.com/bestruirui/octopus/internal/apperror"
 )
 
-func channelError(code string, message string, err error) *apperror.Error {
-	return apperror.Wrap(code, message, err).WithStatus(http.StatusInternalServerError)
-}
-
-func groupError(code string, message string, err error) *apperror.Error {
-	return apperror.Wrap(code, message, err).WithStatus(http.StatusInternalServerError)
-}
-
-func modelError(code string, message string, err error) *apperror.Error {
+// crudError 是 handlers 包统一的 CRUD 失败包装（C250913-08：三个一字不差
+// 的函数合并；错误码常量仍按资源域命名，见下方常量表）。
+func crudError(code string, message string, err error) *apperror.Error {
 	return apperror.Wrap(code, message, err).WithStatus(http.StatusInternalServerError)
 }
 
