@@ -16,5 +16,7 @@ docs/adr/*
 !docs/reviews/
 docs/reviews/*
 !docs/reviews/*.md
+# 缺陷台账是唯一事实源，必须版本化（见 docs/BACKLOG.md）
+!docs/BACKLOG.md
 .impeccable.md
 .DS_Store
