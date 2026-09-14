@@ -120,19 +120,21 @@ func startTaskLoop(entry *taskEntry) {
 func runTask(entry *taskEntry) {
 	defer close(entry.doneCh)
 
-	// 根据配置决定是否在启动时立即执行
-	if entry.runOnStart && time.Duration(entry.interval.Load()) > 0 {
-		triggerTask(entry, "startup")
-	}
-
-	// 相位偏移：先等 phase 再启动 ticker，使同周期任务彼此错开
+	// 相位偏移：先等 phase 再执行启动触发与 ticker，使同周期任务彼此错开
 	// （仅启动时生效；Update 重置 ticker 沿用既有相位语义）。
+	// F16：runOnStart 触发此前发生在相位等待之前，全部启动任务在 t=0 齐发，
+	// 相位错峰对启动批失效——SQLite 单写者下恰是写竞争最重的时刻。
 	if entry.phase > 0 {
 		select {
 		case <-time.After(entry.phase):
 		case <-entry.stopCh:
 			return
 		}
+	}
+
+	// 根据配置决定是否在启动时立即执行
+	if entry.runOnStart && time.Duration(entry.interval.Load()) > 0 {
+		triggerTask(entry, "startup")
 	}
 
 	var tickerC <-chan time.Time
