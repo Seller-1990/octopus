@@ -1054,8 +1054,10 @@ func TestRelayMetricsCapturesOpenAICompatibleInputBreakdown(t *testing.T) {
 		},
 	}, "gpt-4o-mini")
 
-	if metrics.TransportInputTokens == nil || *metrics.TransportInputTokens != tokenizer.CountTokens(string(payload), "gpt-4o-mini") {
-		t.Fatalf("expected transport input tokens to be estimated from payload, got %#v", metrics.TransportInputTokens)
+	// C250913-01 惰性契约：上游已回报 usage 时不再支付出站体 BPE 计数，
+	// TransportInputTokens 保持 nil（日志列仅在兜底路径填充）。
+	if metrics.TransportInputTokens != nil {
+		t.Fatalf("transport input tokens must stay nil when usage is reported, got %#v", metrics.TransportInputTokens)
 	}
 	if metrics.BillInputTokens == nil || *metrics.BillInputTokens != 300 {
 		t.Fatalf("expected billed input tokens to exclude cache read tokens, got %#v", metrics.BillInputTokens)
@@ -1065,6 +1067,19 @@ func TestRelayMetricsCapturesOpenAICompatibleInputBreakdown(t *testing.T) {
 	}
 	if metrics.CacheWriteTokens == nil || *metrics.CacheWriteTokens != 0 {
 		t.Fatalf("expected cache write tokens to default to zero, got %#v", metrics.CacheWriteTokens)
+	}
+}
+
+// TestRelayMetricsTransportTokensLazyFallback C250913-01：usage 缺失时才
+// 惰性计算出站体 token 估算，值与直接 BPE 计数一致。
+func TestRelayMetricsTransportTokensLazyFallback(t *testing.T) {
+	metrics := NewRelayMetrics(0, "alias-model", nil, &transformerModel.InternalLLMRequest{Model: "alias-model"})
+	payload := []byte(`{"model":"gpt-4o-mini","input":"hello world"}`)
+	metrics.SetTransportRequestPayload(payload, "gpt-4o-mini")
+	metrics.SetInternalResponse(&transformerModel.InternalLLMResponse{Model: "gpt-4o-mini"}, "gpt-4o-mini")
+
+	if metrics.TransportInputTokens == nil || *metrics.TransportInputTokens != tokenizer.CountTokens(string(payload), "gpt-4o-mini") {
+		t.Fatalf("expected lazy transport token estimate on missing usage, got %#v", metrics.TransportInputTokens)
 	}
 }
 

@@ -52,10 +52,13 @@ func redactBase64PayloadsForLog(content string) string {
 
 // RelayMetrics 负责最终的日志收集与持久化
 type RelayMetrics struct {
-	APIKeyID      int
-	LiveRequestID int64
-	RequestModel  string
-	StartTime     time.Time
+	// transportPayload/transportModel 保存出站请求体供惰性 token 计数（C250913-01）
+	transportPayload []byte
+	transportModel   string
+	APIKeyID         int
+	LiveRequestID    int64
+	RequestModel     string
+	StartTime        time.Time
 
 	// 首 Token 时间
 	FirstTokenTime time.Time
@@ -115,7 +118,20 @@ func (m *RelayMetrics) SetTransportRequestPayload(payload []byte, modelName stri
 	if len(payload) == 0 {
 		return
 	}
-	count := tokenizer.CountTokensBytes(payload, modelName)
+	// 惰性计数（C250913-01）：BPE 结果仅在上游未回报 usage 时兜底消费，却曾
+	// 对每个 attempt 的完整出站体提前全量分词——50KB 对话 ≈ 1-2.5ms/遍直接
+	// 加在 TTFT 上，且结果通常被丢弃。此处只存载荷，计数推迟到
+	// SetInternalResponse 确认 usage 缺失时（ensureTransportInputTokens）。
+	m.transportPayload = payload
+	m.transportModel = modelName
+}
+
+// ensureTransportInputTokens 在需要兜底时才计算出站体 token 估算并缓存。
+func (m *RelayMetrics) ensureTransportInputTokens() {
+	if m.TransportInputTokens != nil || len(m.transportPayload) == 0 {
+		return
+	}
+	count := tokenizer.CountTokensBytes(m.transportPayload, m.transportModel)
 	m.TransportInputTokens = intPtr(count)
 }
 
@@ -274,6 +290,9 @@ func (m *RelayMetrics) SetInternalResponse(resp *transformerModel.InternalLLMRes
 	// 降级：上游未上报 input（usage 缺失，或 usage 中输入侧全为 0）时，用请求侧
 	// 估算的 TransportInputTokens 兜底，使 input token/费用不为 0；output 无法从
 	// 请求侧估算，保持 0。tiktoken 统一用 o200k_base，对 Claude/Gemini 为近似值。
+	if !inputReported {
+		m.ensureTransportInputTokens()
+	}
 	if !inputReported && m.TransportInputTokens != nil && *m.TransportInputTokens > 0 {
 		estimated := int64(*m.TransportInputTokens)
 		m.Stats.InputToken = estimated
