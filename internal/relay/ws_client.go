@@ -642,7 +642,9 @@ func runWSRelay(ctx context.Context, req *relayRequest, group *dbmodel.Group) ws
 			}
 
 			result = ra.attempt()
-			if result.Success || result.Written || result.Canceled || result.ResetConversation || !isRetryableStatus(result.StatusCode) {
+			// FirstTokenTimeout 与 HTTP 主链路 relay.go 对齐：首 token 超时后
+			// 不再对刚超时的通道做同通道退避重试，白耗 exact-replay 预算。
+			if result.Success || result.Written || result.Canceled || result.ResetConversation || result.FirstTokenTimeout || !isRetryableStatus(result.StatusCode) {
 				break
 			}
 		}

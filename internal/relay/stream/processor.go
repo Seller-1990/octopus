@@ -152,8 +152,11 @@ func (p *StreamProcessor) Run() error {
 
 	// Async read from source — use a derived context so we can unblock on any exit.
 	readCtx, readCancel := context.WithCancel(p.config.Context)
-	defer readCancel()
+	// 退出顺序（defer LIFO）：先取消读 ctx，再 Close。WS Source 的 Close 会把
+	// 连接归还连接池，必须先取消让在途的 conn.Read(ctx) 尽快醒来；取消传播
+	// 窗口内的连接安全由 wsUpstreamReader.Close 的在途读标记兜底（弃用不回池）。
 	defer p.config.Source.Close()
+	defer readCancel()
 
 	type readResult struct {
 		data []byte

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/bestruirui/octopus/internal/relay/balancer"
@@ -15,6 +16,13 @@ type wsConversationStateEntry struct {
 }
 
 var wsConversationStore sync.Map // key: apiKeyID:requestModel:downstreamSessionID -> *wsConversationStateEntry
+
+// 惰性清理若每次写入都做，就是对全表的 Range 扫描（与 F04 修复的
+// ws_runtime_state 同类问题）。按时间节流后均摊为常数；过期条目最晚在
+// 下一个节流窗口被清掉，不影响 TTL 语义（单键读取路径本就有过期检查）。
+const wsConversationPruneInterval = time.Minute
+
+var wsConversationLastPrune atomic.Int64
 
 func wsConversationStateKey(apiKeyID int, requestModel, downstreamSessionID string) string {
 	return fmt.Sprintf("%d:%s:%s", apiKeyID, strings.TrimSpace(requestModel), strings.TrimSpace(downstreamSessionID))
@@ -64,7 +72,11 @@ func storeWSConversationState(apiKeyID int, requestModel string, state *wsConver
 	}
 	cloned.RequestModel = requestModel
 
-	pruneExpiredWSConversationStates(time.Now())
+	if nowUnix := time.Now().Unix(); nowUnix-wsConversationLastPrune.Load() >= int64(wsConversationPruneInterval/time.Second) {
+		// 先占位再清理：并发下至多出现少量重复清理，无害；Range 删除幂等。
+		wsConversationLastPrune.Store(nowUnix)
+		pruneExpiredWSConversationStates(time.Now())
+	}
 	wsConversationStore.Store(wsConversationStateKey(apiKeyID, requestModel, downstreamSessionID), &wsConversationStateEntry{
 		state:     cloned,
 		expiresAt: time.Now().Add(ttl),

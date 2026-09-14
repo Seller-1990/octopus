@@ -6,36 +6,45 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"sync/atomic"
 
 	"github.com/bestruirui/octopus/internal/utils/log"
 	"github.com/coder/websocket"
 )
 
 // wsUpstreamReader reads events from an upstream WebSocket connection.
+// closed/reading/statusCode 会被读 goroutine（ReadEvent）与主 goroutine
+// （Close/CloseWithError/StatusCode）交叉访问，必须走 atomic。
 type wsUpstreamReader struct {
 	conn       *websocket.Conn
 	pc         *pooledConn
 	channelID  int
 	keyID      int
-	closed     bool
-	done       bool // true after a terminal event has been returned
-	statusCode int
+	closed     atomic.Bool
+	reading    atomic.Bool // ReadEvent 在途标记，Close 据此决定回池还是弃用
+	done       bool        // 仅读 goroutine 访问：true after a terminal event has been returned
+	statusCode atomic.Int32
 }
 
 func newWSUpstreamReader(pc *pooledConn, channelID, keyID int) *wsUpstreamReader {
-	return &wsUpstreamReader{
-		conn:       pc.conn,
-		pc:         pc,
-		channelID:  channelID,
-		keyID:      keyID,
-		statusCode: 200,
+	r := &wsUpstreamReader{
+		conn:      pc.conn,
+		pc:        pc,
+		channelID: channelID,
+		keyID:     keyID,
 	}
+	r.statusCode.Store(200)
+	return r
 }
 
 func (r *wsUpstreamReader) ReadEvent(ctx context.Context) ([]byte, error) {
-	if r.closed || r.done {
+	if r.closed.Load() || r.done {
 		return nil, io.EOF
 	}
+	// 先置在途标记再继续：与 Close 的交错顺序保证——若 Close 在读进入前完成，
+	// 这里的 closed 复查会退出；若读已在途，Close 会弃用连接而非回池。
+	r.reading.Store(true)
+	defer r.reading.Store(false)
 
 	msgType, data, err := r.conn.Read(ctx)
 	if err != nil {
@@ -46,12 +55,12 @@ func (r *wsUpstreamReader) ReadEvent(ctx context.Context) ([]byte, error) {
 		}
 		switch closeStatus {
 		case websocket.StatusPolicyViolation:
-			r.statusCode = http.StatusConflict
+			r.statusCode.Store(http.StatusConflict)
 		case websocket.StatusTryAgainLater:
-			r.statusCode = http.StatusServiceUnavailable
+			r.statusCode.Store(http.StatusServiceUnavailable)
 		default:
-			if r.statusCode < 400 {
-				r.statusCode = http.StatusBadGateway
+			if r.statusCode.Load() < 400 {
+				r.statusCode.Store(http.StatusBadGateway)
 			}
 		}
 		return nil, fmt.Errorf("ws read error: %w", err)
@@ -89,9 +98,9 @@ func (r *wsUpstreamReader) ReadEvent(ctx context.Context) ([]byte, error) {
 		if isWSStreamErrorEvent(event.Type) || event.Error != nil || (event.Response != nil && event.Response.Error != nil) {
 			r.done = true
 			if event.Status > 0 {
-				r.statusCode = event.Status
-			} else if r.statusCode < 400 {
-				r.statusCode = http.StatusBadGateway
+				r.statusCode.Store(int32(event.Status))
+			} else if r.statusCode.Load() < 400 {
+				r.statusCode.Store(http.StatusBadGateway)
 			}
 			// Semantic error/terminal frames must reach the transformer and
 			// downstream client. Returning an error here used to swallow
@@ -103,7 +112,7 @@ func (r *wsUpstreamReader) ReadEvent(ctx context.Context) ([]byte, error) {
 }
 
 func (r *wsUpstreamReader) StatusCode() int {
-	return r.statusCode
+	return int(r.statusCode.Load())
 }
 
 func (r *wsUpstreamReader) Headers() http.Header {
@@ -117,10 +126,16 @@ func (r *wsUpstreamReader) Body() io.ReadCloser {
 }
 
 func (r *wsUpstreamReader) Close() error {
-	if r.closed {
+	if r.closed.Swap(true) {
 		return nil
 	}
-	r.closed = true
+	// 读仍在途（ctx 取消尚未传播完）：连接可能停在消息中间，被取消打断的
+	// 帧不可恢复，复用会让下一个请求读到错乱的帧——弃用而非回池。
+	if r.reading.Load() {
+		wsUpstreamPool.RemoveConn(r.pc)
+		log.Debugf("upstream WS connection dropped (read still in flight, channel=%d, key=%d)", r.channelID, r.keyID)
+		return nil
+	}
 	// Return connection to pool (don't close it)
 	wsUpstreamPool.Put(r.pc)
 	log.Debugf("upstream WS connection returned to pool (channel=%d, key=%d)", r.channelID, r.keyID)
@@ -132,6 +147,6 @@ func (r *wsUpstreamReader) CloseWithError() {
 	if r.pc == nil {
 		return
 	}
-	r.closed = true
+	r.closed.Store(true)
 	wsUpstreamPool.RemoveConn(r.pc)
 }
