@@ -987,8 +987,11 @@ func TestSyncManagementPlatformCachesFallbackUserModelsAcrossFailedGroups(t *tes
 	if userModelCalls != 1 {
 		t.Fatalf("expected fallback user models to be fetched once, got %d calls", userModelCalls)
 	}
-	if pricingCalls != 2 || availableModelCalls != 2 {
-		t.Fatalf("expected cached fallback route metadata probes to hit each endpoint twice (managed auth + unauthenticated), got pricing=%d available_model=%d", pricingCalls, availableModelCalls)
+	// F11 短路后：pricing 在 managed 鉴权命中产物时即返回（1 次）；
+	// available_model 无检测产物，走完整回退链（managed + 匿名 = 2 次）。
+	// 两种计数都不随失败分组数放大——这正是本测试要钉住的缓存语义。
+	if pricingCalls != 1 || availableModelCalls != 2 {
+		t.Fatalf("expected pricing short-circuited to 1 call and available_model fallback chain to 2 calls, got pricing=%d available_model=%d", pricingCalls, availableModelCalls)
 	}
 	if len(snapshot.models) != 2 {
 		t.Fatalf("expected both failed groups to share cached fallback models, got %+v", snapshot.models)

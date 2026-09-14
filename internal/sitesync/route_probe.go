@@ -177,6 +177,9 @@ func detectManagedRoutesFromPath(
 		detections = mergeSiteModelRouteDetections(detections, collector(payload, source, modelFilter))
 	}
 
+	// 三种凭据（managed token → 分组 token → 匿名）打同一个站点级 path。
+	// 首个成功返回即短路：已鉴权视图是匿名视图的超集，后续请求纯属冗余——
+	// 每分组 token 都三连发时站点级请求量放大 N×3，极易触发站点风控（F11）。
 	if managedSessionRequestAvailable(ctx, accessToken) {
 		if payload, err := requestJSONWithManagedAccessToken(
 			ctx,
@@ -188,6 +191,9 @@ func detectManagedRoutesFromPath(
 			account,
 		); err == nil {
 			tryCollect(payload, path)
+			if len(detections) > 0 {
+				return detections
+			}
 		}
 	}
 
@@ -203,6 +209,9 @@ func detectManagedRoutesFromPath(
 			account,
 		); err == nil {
 			tryCollect(payload, path)
+			if len(detections) > 0 {
+				return detections
+			}
 		}
 	}
 
