@@ -1235,16 +1235,16 @@ func CatalogPlanGroup(
 		catalogCacheMu.RUnlock()
 	}
 	candidateByKey := make(map[string]model.RouteCandidate, len(candidates))
-	candidateIDs := make([]int, 0, len(candidates))
 	for _, candidate := range candidates {
 		candidateByKey[routeCandidateKey(candidate.ChannelID, candidate.UpstreamModelName)] = candidate
-		candidateIDs = append(candidateIDs, candidate.ID)
 	}
 	// Manual 策略的排序只比较 candidatePriority（不消费 score），24h 表现
 	// 聚合与其支撑索引扫描属纯死工作，整块跳过（F01）。其余策略照常。
+	// 表现聚合读带 TTL 的进程内快照：该聚合随历史流量线性变重，不能留在
+	// 每请求的同步路径上（见 catalog_health.go）。
 	var candidatePerformance map[int]routeCandidatePerformance
 	if strategy != model.RoutingStrategyManual {
-		perf, perfErr := routeCandidatePerformanceMap(ctx, candidateIDs, time.Now())
+		perf, perfErr := routeCandidatePerformanceForPlan(ctx)
 		if perfErr != nil {
 			return group, preview, canonical, perfErr
 		}

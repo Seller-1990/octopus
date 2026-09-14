@@ -2,10 +2,12 @@ package op
 
 import (
 	"context"
+	"sync"
 	"time"
 
 	"github.com/bestruirui/octopus/internal/db"
 	"github.com/bestruirui/octopus/internal/model"
+	"github.com/bestruirui/octopus/internal/utils/log"
 )
 
 const routeCandidateHealthWindow = 24 * time.Hour
@@ -26,8 +28,32 @@ func routeCandidatePerformanceMap(
 	if len(candidateIDs) == 0 {
 		return result, nil
 	}
-	var rows []routeCandidatePerformance
-	err := db.GetDB().WithContext(ctx).
+	rows, err := routeCandidatePerformanceRows(ctx, candidateIDs, now)
+	if err != nil {
+		return nil, err
+	}
+	for _, row := range rows {
+		result[row.RouteCandidateID] = row
+	}
+	return result, nil
+}
+
+// routeCandidatePerformanceMapAll 不按候选过滤，返回 24h 窗口内全部有流量候选
+// 的聚合。无流量候选天然缺席，读取侧零值语义与按 ID 过滤版本一致。
+func routeCandidatePerformanceMapAll(ctx context.Context, now time.Time) (map[int]routeCandidatePerformance, error) {
+	rows, err := routeCandidatePerformanceRows(ctx, nil, now)
+	if err != nil {
+		return nil, err
+	}
+	result := make(map[int]routeCandidatePerformance, len(rows))
+	for _, row := range rows {
+		result[row.RouteCandidateID] = row
+	}
+	return result, nil
+}
+
+func routeCandidatePerformanceRows(ctx context.Context, candidateIDs []int, now time.Time) ([]routeCandidatePerformance, error) {
+	query := db.GetDB().WithContext(ctx).
 		Model(&model.UsageAttemptFact{}).
 		Select(
 			"route_candidate_id, "+
@@ -38,17 +64,75 @@ func routeCandidatePerformanceMap(
 			model.AttemptFailed,
 			model.AttemptAttributionUpstream,
 			model.AttemptSuccess,
-		).
-		Where("route_candidate_id IN ? AND time >= ?", candidateIDs, now.Add(-routeCandidateHealthWindow).Unix()).
+		)
+	if len(candidateIDs) > 0 {
+		query = query.Where("route_candidate_id IN ?", candidateIDs)
+	}
+	var rows []routeCandidatePerformance
+	err := query.Where("time >= ?", now.Add(-routeCandidateHealthWindow).Unix()).
 		Group("route_candidate_id").
 		Scan(&rows).Error
-	if err != nil {
-		return nil, err
+	return rows, err
+}
+
+// 选路评分消费的 24h 表现聚合是分钟级慢变量，但聚合查询随历史流量线性变重：
+// 此前每个代理请求（CatalogPlanGroup）同步执行一次，请求延迟成为系统历史的
+// 函数。热路径改为读带 TTL 的全量快照：过期后由后台单飞刷新、当次请求沿用
+// 旧值，每个 TTL 窗口至多一次聚合；冷启动（无快照）同步加载一次，与旧路径
+// 的每请求同步查询等价，仅发生一次。
+const (
+	routeCandidatePerfTTL           = 30 * time.Second
+	routeCandidatePerfRefreshBudget = 30 * time.Second
+)
+
+var routeCandidatePerfCache struct {
+	mu         sync.Mutex
+	snapshot   map[int]routeCandidatePerformance
+	loadedAt   time.Time
+	refreshing bool
+}
+
+// routeCandidatePerformanceForPlan 供 CatalogPlanGroup 热路径使用。返回的
+// 快照为共享只读数据，调用方不得修改。
+func routeCandidatePerformanceForPlan(ctx context.Context) (map[int]routeCandidatePerformance, error) {
+	c := &routeCandidatePerfCache
+	c.mu.Lock()
+	if c.snapshot == nil {
+		// 冷启动：同步加载，并发请求在锁上排队等待同一份结果。
+		defer c.mu.Unlock()
+		fresh, err := routeCandidatePerformanceMapAll(ctx, time.Now())
+		if err != nil {
+			return nil, err
+		}
+		c.snapshot, c.loadedAt = fresh, time.Now()
+		return fresh, nil
 	}
-	for _, row := range rows {
-		result[row.RouteCandidateID] = row
+	snap := c.snapshot
+	expired := time.Since(c.loadedAt) > routeCandidatePerfTTL
+	if expired && !c.refreshing {
+		c.refreshing = true
+		c.mu.Unlock()
+		go func() {
+			defer func() {
+				c.mu.Lock()
+				c.refreshing = false
+				c.mu.Unlock()
+			}()
+			refreshCtx, cancel := context.WithTimeout(context.Background(), routeCandidatePerfRefreshBudget)
+			defer cancel()
+			fresh, err := routeCandidatePerformanceMapAll(refreshCtx, time.Now())
+			if err != nil {
+				log.Warnf("route candidate performance snapshot refresh failed: %v", err)
+				return
+			}
+			c.mu.Lock()
+			c.snapshot, c.loadedAt = fresh, time.Now()
+			c.mu.Unlock()
+		}()
+		return snap, nil
 	}
-	return result, nil
+	c.mu.Unlock()
+	return snap, nil
 }
 
 func RouteCandidateHealthRefresh(

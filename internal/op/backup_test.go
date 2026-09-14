@@ -24,6 +24,7 @@ func setupBackupTestDB(t *testing.T) context.Context {
 	}
 	clearSiteChannelBindingCache()
 	clearHeaderPolicyCache()
+	resetRouteCandidatePerfCacheForTest()
 	t.Cleanup(func() {
 		_ = dbpkg.Close()
 	})
