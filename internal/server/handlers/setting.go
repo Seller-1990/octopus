@@ -210,7 +210,13 @@ func importDB(c *gin.Context) {
 	// 否则旧队列会在备份覆盖后以新库 ID 回灌备份时点之后的事件。
 	// 注意：丢弃须在「解析/校验成功、确认要写库」之后，解码失败/格式非法不应白丢 pending
 	// （P0 修正：原实现在 handler 顶部无条件丢弃，损坏备份返回 400 时 pending 已丢失）。
+	// 先 flush 再丢弃：key 级计费（ChannelKeyRecordUse 的 TotalCost）只在内存且无周期
+	// 落库任务（SaveCache 仅注册为停机钩子），若不 flush 直接 InitCache 重建缓存，
+	// 自上次停机以来的 key 成本账本会随脏标记一起静默蒸发。
 	discardBeforeImport := func() {
+		if err := op.SaveCache(); err != nil {
+			log.Warnf("flush in-memory caches before import: %v", err)
+		}
 		op.DiscardTransientState()
 	}
 
