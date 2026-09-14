@@ -1,6 +1,9 @@
 package model
 
-import "sort"
+import (
+	"sort"
+	"strings"
+)
 
 type StreamAggregator struct {
 	chunks []*InternalLLMResponse
@@ -17,6 +20,17 @@ func (a *StreamAggregator) Reset() {
 	a.chunks = nil
 }
 
+// choiceAccumulator 在单次 Response() 合并过程中用 strings.Builder 累加增量
+// 字符串字段，最后一次性物化。直接对 Message 字段做 `+=` 是 O(N²) 拷贝——
+// 200KB 文本 / 1000 分片 ≈ 100MB memcpy，音频转写可达秒级停顿。
+type choiceAccumulator struct {
+	choice     *Choice
+	content    strings.Builder
+	reasoning  strings.Builder
+	audioData  strings.Builder
+	audioTrans strings.Builder
+}
+
 func (a *StreamAggregator) Response() *InternalLLMResponse {
 	if a == nil || len(a.chunks) == 0 {
 		return nil
@@ -31,7 +45,7 @@ func (a *StreamAggregator) Response() *InternalLLMResponse {
 		SystemFingerprint: firstChunk.SystemFingerprint,
 		ServiceTier:       firstChunk.ServiceTier,
 	}
-	choicesMap := make(map[int]*Choice)
+	accs := make(map[int]*choiceAccumulator)
 
 	for _, chunk := range a.chunks {
 		if chunk == nil {
@@ -47,23 +61,36 @@ func (a *StreamAggregator) Response() *InternalLLMResponse {
 			result.Usage = chunk.Usage
 		}
 		for _, choice := range chunk.Choices {
-			existingChoice := choicesMap[choice.Index]
-			if existingChoice == nil {
-				existingChoice = &Choice{Index: choice.Index, Message: &Message{}}
-				choicesMap[choice.Index] = existingChoice
+			acc := accs[choice.Index]
+			if acc == nil {
+				acc = &choiceAccumulator{choice: &Choice{Index: choice.Index, Message: &Message{}}}
+				accs[choice.Index] = acc
 			}
-			mergeChoiceDelta(existingChoice, choice)
+			mergeChoiceDelta(acc, choice)
 		}
 	}
 
-	result.Choices = make([]Choice, 0, len(choicesMap))
-	indices := make([]int, 0, len(choicesMap))
-	for idx := range choicesMap {
+	result.Choices = make([]Choice, 0, len(accs))
+	indices := make([]int, 0, len(accs))
+	for idx := range accs {
 		indices = append(indices, idx)
 	}
 	sort.Ints(indices)
 	for _, idx := range indices {
-		result.Choices = append(result.Choices, *choicesMap[idx])
+		acc := accs[idx]
+		if acc.content.Len() > 0 {
+			content := acc.content.String()
+			acc.choice.Message.Content.Content = &content
+		}
+		if acc.reasoning.Len() > 0 {
+			reasoning := acc.reasoning.String()
+			acc.choice.Message.ReasoningContent = &reasoning
+		}
+		if acc.choice.Message.Audio != nil {
+			acc.choice.Message.Audio.Data = acc.audioData.String()
+			acc.choice.Message.Audio.Transcript = acc.audioTrans.String()
+		}
+		result.Choices = append(result.Choices, *acc.choice)
 	}
 	return result
 }
@@ -74,17 +101,15 @@ func (a *StreamAggregator) BuildAndReset() *InternalLLMResponse {
 	return response
 }
 
-func mergeChoiceDelta(existingChoice *Choice, choice Choice) {
+func mergeChoiceDelta(acc *choiceAccumulator, choice Choice) {
+	existingChoice := acc.choice
 	if choice.Delta != nil {
 		delta := choice.Delta
 		if delta.Role != "" {
 			existingChoice.Message.Role = delta.Role
 		}
 		if delta.Content.Content != nil {
-			if existingChoice.Message.Content.Content == nil {
-				existingChoice.Message.Content.Content = new(string)
-			}
-			*existingChoice.Message.Content.Content += *delta.Content.Content
+			acc.content.WriteString(*delta.Content.Content)
 		}
 		if len(delta.Content.MultipleContent) > 0 {
 			existingChoice.Message.Content.MultipleContent = append(existingChoice.Message.Content.MultipleContent, delta.Content.MultipleContent...)
@@ -107,14 +132,11 @@ func mergeChoiceDelta(existingChoice *Choice, choice Choice) {
 			if delta.Audio.ExpiresAt > 0 {
 				existingChoice.Message.Audio.ExpiresAt = delta.Audio.ExpiresAt
 			}
-			existingChoice.Message.Audio.Data += delta.Audio.Data
-			existingChoice.Message.Audio.Transcript += delta.Audio.Transcript
+			acc.audioData.WriteString(delta.Audio.Data)
+			acc.audioTrans.WriteString(delta.Audio.Transcript)
 		}
 		if reasoning := delta.GetReasoningContent(); reasoning != "" {
-			if existingChoice.Message.ReasoningContent == nil {
-				existingChoice.Message.ReasoningContent = new(string)
-			}
-			*existingChoice.Message.ReasoningContent += reasoning
+			acc.reasoning.WriteString(reasoning)
 		}
 		for _, toolCall := range delta.ToolCalls {
 			existingChoice.Message.ToolCalls = MergeToolCallDelta(existingChoice.Message.ToolCalls, toolCall)
