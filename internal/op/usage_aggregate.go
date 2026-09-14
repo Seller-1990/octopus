@@ -195,7 +195,13 @@ func persistUsageAggregateDeltas(tx *gorm.DB, deltas map[string]*model.UsageAggr
 	for _, delta := range deltas {
 		identity := *delta
 		clearUsageAggregateMetrics(&identity)
-		if err := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&identity).Error; err != nil {
+		// C250913-04：identity 行只带创建时点的反规范化名称，实体改名后聚合
+		// 快照永久挂旧名。冲突时刷新名称列（指标零值不在列表内，仍由下方
+		// merge 在 DB 现值上累加）。
+		if err := tx.Clauses(clause.OnConflict{
+			Columns:   []clause.Column{{Name: "aggregate_key"}},
+			DoUpdates: clause.AssignmentColumns([]string{"site_name", "site_account_name", "channel_name", "api_key_name"}),
+		}).Create(&identity).Error; err != nil {
 			return err
 		}
 		var current model.UsageAggregate

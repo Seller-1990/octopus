@@ -729,6 +729,7 @@ func rewriteManagedGroupItemsForAccount(ctx context.Context, siteRecord *model.S
 		itemID     int
 		groupID    int
 		modelName  string
+		sourceChan int
 		targetChan int
 	}
 	var needMove []rewriteTarget
@@ -773,6 +774,7 @@ func rewriteManagedGroupItemsForAccount(ctx context.Context, siteRecord *model.S
 			itemID:     item.ID,
 			groupID:    item.GroupID,
 			modelName:  strings.TrimSpace(item.ModelName),
+			sourceChan: item.ChannelID,
 			targetChan: targetChannelID,
 		})
 		affectedGroupIDs[item.GroupID] = struct{}{}
@@ -787,22 +789,47 @@ func rewriteManagedGroupItemsForAccount(ctx context.Context, siteRecord *model.S
 				return fmt.Errorf("failed to delete stale group items: %w", err)
 			}
 		}
-		// 逐条搬运：目标组合已存在（排除自己）→ 删除当前条目（目标行已代表该组合）；
-		// 否则 UPDATE channel_id。事务内读写一致保证同批互相撞时后者看到前者。
+		// 批量搬运（B250913-13）：一次装载涉及分组的现有条目，内存维护
+		// (group,channel,model) 占用计数，顺序模拟原「逐条 Count」的事务内
+		// 读写一致语义——同批互相撞时后者仍看到前者搬入的组合——把 N 次
+		// Count 往返收敛为 1 次批量读。移动者不可能已在目标位（source==target
+		// 在上游已被跳过），故无需额外的自身排除。
+		targetGroupIDs := make([]int, 0, len(needMove))
+		seenGroup := make(map[int]struct{}, len(needMove))
 		for _, m := range needMove {
-			var count int64
-			if err := tx.Model(&model.GroupItem{}).
-				Where("group_id = ? AND channel_id = ? AND model_name = ? AND id != ?",
-					m.groupID, m.targetChan, m.modelName, m.itemID).
-				Count(&count).Error; err != nil {
-				return fmt.Errorf("failed to check target group item: %w", err)
+			if _, ok := seenGroup[m.groupID]; !ok {
+				seenGroup[m.groupID] = struct{}{}
+				targetGroupIDs = append(targetGroupIDs, m.groupID)
 			}
-			if count > 0 {
+		}
+		type itemKey struct {
+			groupID   int
+			channelID int
+			modelName string
+		}
+		occupied := make(map[itemKey]int, len(needMove))
+		if len(targetGroupIDs) > 0 {
+			var occupants []model.GroupItem
+			if err := tx.Where("group_id IN ?", targetGroupIDs).Find(&occupants).Error; err != nil {
+				return fmt.Errorf("failed to preload group items for rewrite: %w", err)
+			}
+			for _, it := range occupants {
+				occupied[itemKey{it.GroupID, it.ChannelID, it.ModelName}]++
+			}
+		}
+		for _, m := range needMove {
+			sourceKey := itemKey{m.groupID, m.sourceChan, m.modelName}
+			targetKey := itemKey{m.groupID, m.targetChan, m.modelName}
+			if occupied[targetKey] > 0 {
+				// 目标组合已存在（含本批先搬入的）→ 删除当前条目（目标行已代表该组合）
+				occupied[sourceKey]--
 				if err := tx.Delete(&model.GroupItem{}, m.itemID).Error; err != nil {
 					return fmt.Errorf("failed to dedupe group item %d: %w", m.itemID, err)
 				}
 				continue
 			}
+			occupied[sourceKey]--
+			occupied[targetKey]++
 			if err := tx.Model(&model.GroupItem{}).Where("id = ?", m.itemID).
 				Update("channel_id", m.targetChan).Error; err != nil {
 				return fmt.Errorf("failed to rewrite group item %d: %w", m.itemID, err)

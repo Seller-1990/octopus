@@ -309,7 +309,7 @@ func (p *StreamProcessor) processEvent(data []byte) error {
 	// fail immediately after the upstream emitted its terminal frame; losing
 	// the evidence would incorrectly turn a completed response into a generic
 	// transport failure.
-	if p.terminalEvent == "" {
+	if p.terminalEvent == "" && outputMayContainTerminalEvent(output, p.config.TerminalEvents) {
 		p.terminalEvent = terminalEventFromSSE(output, p.config.TerminalEvents, p.config.MaxEventSize)
 	}
 	if _, err := p.config.Writer.Write(output); err != nil {
@@ -429,6 +429,21 @@ func (p *StreamProcessor) streamTerminalEvent() string {
 		return ""
 	}
 	return terminalEventFromSSE(p.rawBuffer.Bytes(), p.config.TerminalEvents, p.config.MaxEventSize)
+}
+
+// outputMayContainTerminalEvent 廉价子串预筛（C250913-14）：每个 chunk 完整
+// 重跑 SSE 解析 + JSON 扫描此前是无条件执行的，而绝大多数 chunk 不含终态帧。
+// 先对候选终态名做 bytes.Contains，未命中直接跳过解析（约省 5-15% 单核）。
+func outputMayContainTerminalEvent(payload []byte, terminalEvents map[string]struct{}) bool {
+	if len(payload) == 0 || len(terminalEvents) == 0 {
+		return false
+	}
+	for name := range terminalEvents {
+		if bytes.Contains(payload, []byte(name)) {
+			return true
+		}
+	}
+	return false
 }
 
 func terminalEventFromSSE(payload []byte, terminalEvents map[string]struct{}, maxEventSize int) string {

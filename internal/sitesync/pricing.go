@@ -37,6 +37,18 @@ func refreshSitePricingQuotes(
 		}
 		return err
 	}
+	// C250913-06（F10 残留）：200 + {"success":false} 错误信封不是成功刷新。
+	// 若不校验，空解析结果一路 no-op 后走到 ClearRefreshError，把真实故障的
+	// last_error 清空——UI 显示「无错误」，报价静默老化 24h 才标 stale。
+	if successVal, hasSuccess := payload["success"]; hasSuccess {
+		if ok, isBool := successVal.(bool); isBool && !ok {
+			envelopeErr := fmt.Errorf("site pricing envelope reports success=false")
+			if markErr := op.SiteModelPriceQuoteMarkRefreshError(ctx, siteRecord.ID, account.ID, envelopeErr); markErr != nil {
+				return fmt.Errorf("%w (record refresh error: %v)", envelopeErr, markErr)
+			}
+			return envelopeErr
+		}
+	}
 	if err := op.SiteUserGroupMultipliersUpdate(ctx, account.ID, parseSitePricingGroupMultipliers(payload)); err != nil {
 		if markErr := op.SiteModelPriceQuoteMarkRefreshError(ctx, siteRecord.ID, account.ID, err); markErr != nil {
 			return fmt.Errorf("%w (record refresh error: %v)", err, markErr)
