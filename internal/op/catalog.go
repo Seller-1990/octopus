@@ -1253,6 +1253,26 @@ func CatalogPlanGroup(
 		candidatePerformance = map[int]routeCandidatePerformance{}
 	}
 
+	// 价格评分报价批量预取：此前 routeCandidateScore 每候选每请求各发
+	// First+Find 两次查询（候选数 × 2 次 DB 往返），改为入口一次批量取回后
+	// 在内存中选价。批量失败时保持原语义让评分回退到单查路径。
+	var effectivePriceByCandidate map[int]*model.EffectivePrice
+	if strategyUsesPriceQuote(strategy) && len(candidates) > 0 {
+		quotesByCandidate, quotesErr := batchPriceQuotesForCandidates(ctx, candidates)
+		if quotesErr != nil {
+			return group, preview, canonical, quotesErr
+		}
+		effectivePriceByCandidate = make(map[int]*model.EffectivePrice, len(candidates))
+		for _, candidate := range candidates {
+			if candidate.ID <= 0 {
+				continue
+			}
+			modelName := strings.TrimSpace(candidate.UpstreamModelName)
+			effective := effectivePriceFromCandidateQuotes(ctx, candidate, modelName, quotesByCandidate[candidate.ID])
+			effectivePriceByCandidate[candidate.ID] = &effective
+		}
+	}
+
 	type scoredItem struct {
 		item              model.GroupItem
 		decision          model.RouteDecisionReason
@@ -1353,6 +1373,7 @@ func CatalogPlanGroup(
 			candidate,
 			candidatePerformance[candidate.ID],
 			candidateWeight,
+			effectivePriceByCandidate[candidate.ID],
 		)
 		rank := protocolPreferenceRank(assessment)
 		decision.Included = true
@@ -1526,6 +1547,7 @@ func routeCandidateScore(
 	candidate model.RouteCandidate,
 	performance routeCandidatePerformance,
 	weight int,
+	preloadedPrice *model.EffectivePrice,
 ) (float64, bool) {
 	total := performance.SuccessCount + performance.FailureCount
 	reliability := 0.5
@@ -1538,11 +1560,14 @@ func routeCandidateScore(
 	}
 	priceValue := math.Inf(1)
 	if candidate.ID > 0 && strategyUsesPriceQuote(strategy) {
-		if effective, err := EffectivePriceForCandidate(
-			ctx,
-			candidate.ID,
-			candidate.UpstreamModelName,
-		); err == nil &&
+		var effective model.EffectivePrice
+		haveEffective := false
+		if preloadedPrice != nil {
+			effective, haveEffective = *preloadedPrice, true
+		} else if fetched, err := EffectivePriceForCandidate(ctx, candidate.ID, candidate.UpstreamModelName); err == nil {
+			effective, haveEffective = fetched, true
+		}
+		if haveEffective &&
 			effective.Source != model.PriceQuoteSourceUnknown &&
 			effective.Unit != model.PriceUnitPerRequest &&
 			effective.PerRequest == 0 &&

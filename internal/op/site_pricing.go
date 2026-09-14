@@ -393,6 +393,14 @@ func EffectivePriceForCandidate(ctx context.Context, candidateID int, fallbackMo
 	if err != nil {
 		return model.EffectivePrice{}, err
 	}
+	return effectivePriceFromCandidateQuotes(ctx, candidate, modelName, quotes), nil
+}
+
+// effectivePriceFromCandidateQuotes 从已匹配到候选的报价中选出最优报价并计算
+// 有效价格，无报价时回退全局价。modelName 须为调用方已解析的上游模型名
+// （candidate.UpstreamModelName 为空时用回退名）。批量预取路径
+// （CatalogPlanGroup）与单查路径共用同一套选价语义，避免两份实现漂移。
+func effectivePriceFromCandidateQuotes(ctx context.Context, candidate model.RouteCandidate, modelName string, quotes []model.SiteModelPriceQuote) model.EffectivePrice {
 	now := time.Now()
 	eligible := quotes[:0]
 	for _, quote := range quotes {
@@ -419,17 +427,17 @@ func EffectivePriceForCandidate(ctx context.Context, candidateID int, fallbackMo
 		selected := quotes[0]
 		fresh := priceQuoteFresh(selected, now)
 		source, reason := effectiveQuoteSource(selected, candidate, fresh)
-		return effectivePriceFromQuote(ctx, selected, candidate.ID, source, !fresh, reason), nil
+		return effectivePriceFromQuote(ctx, selected, candidate.ID, source, !fresh, reason)
 	}
 
 	if global, err := LLMGet(strings.ToLower(modelName)); err == nil {
-		return effectivePriceFromGlobal(candidateID, global), nil
+		return effectivePriceFromGlobal(candidate.ID, global)
 	}
 	if global, ok := globalprice.Get(modelName); ok {
-		return effectivePriceFromGlobal(candidateID, global), nil
+		return effectivePriceFromGlobal(candidate.ID, global)
 	}
 	return model.EffectivePrice{
-		RouteCandidateID:     candidateID,
+		RouteCandidateID:     candidate.ID,
 		Source:               model.PriceQuoteSourceUnknown,
 		Unit:                 model.PriceUnitPerMillionTokens,
 		Currency:             "USD",
@@ -437,7 +445,7 @@ func EffectivePriceForCandidate(ctx context.Context, candidateID int, fallbackMo
 		GroupMultiplierKnown: false,
 		Convertible:          false,
 		MatchReason:          "no matching site or global price",
-	}, nil
+	}
 }
 
 func effectivePriceFromGlobal(candidateID int, price model.LLMPrice) model.EffectivePrice {
