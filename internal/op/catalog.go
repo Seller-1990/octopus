@@ -370,8 +370,8 @@ func CatalogSync(ctx context.Context) (model.CatalogSyncResult, error) {
 					continue
 				}
 				created := model.Group{
-					Name:              canonical.Name,
-					Mode:              model.GroupModeRoundRobin,
+					Name: canonical.Name,
+					Mode: model.GroupModeRoundRobin,
 					// 首token兜底默认120s：自动建组此前为0（禁用），上游静默挂死时流式请求无界堆积（C250913-02）
 					FirstTokenTimeOut: 120,
 					SessionKeepTime:   0,

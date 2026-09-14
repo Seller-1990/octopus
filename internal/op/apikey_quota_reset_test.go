@@ -12,9 +12,9 @@ import (
 func TestAPIKeyResetQuotaIsIdempotentWithinCycle(t *testing.T) {
 	ctx := setupAPIKeyOpTestDB(t)
 	key := model.APIKey{
-		Name:      "reset-idem",
-		APIKey:    "sk-octopus-reset-idem",
-		Enabled:   true,
+		Name:       "reset-idem",
+		APIKey:     "sk-octopus-reset-idem",
+		Enabled:    true,
 		QuotaLimit: 100,
 	}
 	if err := APIKeyCreate(&key, ctx); err != nil {
@@ -63,9 +63,9 @@ func TestAPIKeyResetQuotaIsIdempotentWithinCycle(t *testing.T) {
 func TestAPIKeyResetQuotaDoesNotOverridePeriodChange(t *testing.T) {
 	ctx := setupAPIKeyOpTestDB(t)
 	key := model.APIKey{
-		Name:      "reset-period",
-		APIKey:    "sk-octopus-reset-period",
-		Enabled:   true,
+		Name:       "reset-period",
+		APIKey:     "sk-octopus-reset-period",
+		Enabled:    true,
 		QuotaLimit: 100,
 	}
 	if err := APIKeyCreate(&key, ctx); err != nil {
