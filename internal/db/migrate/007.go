@@ -25,7 +25,7 @@ func migrateSiteTokensAddValueStatus(db *gorm.DB) error {
 	}
 
 	if !db.Migrator().HasColumn("site_tokens", "value_status") {
-		if err := db.Exec("ALTER TABLE site_tokens ADD COLUMN value_status TEXT NOT NULL DEFAULT 'ready'").Error; err != nil {
+		if err := db.Exec("ALTER TABLE site_tokens ADD COLUMN " + textColumnDDL(db, "value_status", "ready")).Error; err != nil {
 			return fmt.Errorf("failed to add site_tokens.value_status: %w", err)
 		}
 	}

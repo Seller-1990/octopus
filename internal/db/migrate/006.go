@@ -25,7 +25,7 @@ func migrateSiteAccountsAddSub2APIRefreshFields(db *gorm.DB) error {
 	}
 
 	if !db.Migrator().HasColumn("site_accounts", "refresh_token") {
-		if err := db.Exec("ALTER TABLE site_accounts ADD COLUMN refresh_token TEXT NOT NULL DEFAULT ''").Error; err != nil {
+		if err := db.Exec("ALTER TABLE site_accounts ADD COLUMN " + textColumnDDL(db, "refresh_token", "")).Error; err != nil {
 			return fmt.Errorf("failed to add site_accounts.refresh_token: %w", err)
 		}
 	}

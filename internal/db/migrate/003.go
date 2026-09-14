@@ -26,7 +26,7 @@ func migrateSiteModelsToGroupScoped(db *gorm.DB) error {
 	}
 
 	if !db.Migrator().HasColumn("site_models", "group_key") {
-		if err := db.Exec("ALTER TABLE site_models ADD COLUMN group_key TEXT NOT NULL DEFAULT 'default'").Error; err != nil {
+		if err := db.Exec("ALTER TABLE site_models ADD COLUMN " + textColumnDDL(db, "group_key", "default")).Error; err != nil {
 			return fmt.Errorf("failed to add site_models.group_key: %w", err)
 		}
 	}

@@ -22,12 +22,12 @@ func migrateSiteModelRoutesAndDropDisabledModels(db *gorm.DB) error {
 
 	if db.Migrator().HasTable("site_models") {
 		if !db.Migrator().HasColumn("site_models", "route_type") {
-			if err := db.Exec("ALTER TABLE site_models ADD COLUMN route_type TEXT NOT NULL DEFAULT 'openai_chat'").Error; err != nil {
+			if err := db.Exec("ALTER TABLE site_models ADD COLUMN " + textColumnDDL(db, "route_type", "openai_chat")).Error; err != nil {
 				return fmt.Errorf("failed to add site_models.route_type: %w", err)
 			}
 		}
 		if !db.Migrator().HasColumn("site_models", "route_source") {
-			if err := db.Exec("ALTER TABLE site_models ADD COLUMN route_source TEXT NOT NULL DEFAULT 'sync_inferred'").Error; err != nil {
+			if err := db.Exec("ALTER TABLE site_models ADD COLUMN " + textColumnDDL(db, "route_source", "sync_inferred")).Error; err != nil {
 				return fmt.Errorf("failed to add site_models.route_source: %w", err)
 			}
 		}
@@ -37,12 +37,12 @@ func migrateSiteModelRoutesAndDropDisabledModels(db *gorm.DB) error {
 			}
 		}
 		if !db.Migrator().HasColumn("site_models", "route_raw_payload") {
-			if err := db.Exec("ALTER TABLE site_models ADD COLUMN route_raw_payload TEXT NOT NULL DEFAULT ''").Error; err != nil {
+			if err := db.Exec("ALTER TABLE site_models ADD COLUMN " + textColumnDDL(db, "route_raw_payload", "")).Error; err != nil {
 				return fmt.Errorf("failed to add site_models.route_raw_payload: %w", err)
 			}
 		}
 		if !db.Migrator().HasColumn("site_models", "route_updated_at") {
-			if err := db.Exec("ALTER TABLE site_models ADD COLUMN route_updated_at DATETIME").Error; err != nil {
+			if err := db.Exec("ALTER TABLE site_models ADD COLUMN " + datetimeColumnDDL(db, "route_updated_at")).Error; err != nil {
 				return fmt.Errorf("failed to add site_models.route_updated_at: %w", err)
 			}
 		}
