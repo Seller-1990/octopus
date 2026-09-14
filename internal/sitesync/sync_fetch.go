@@ -622,27 +622,6 @@ func buildSiteModels(names []string, groupKey string, source string) []model.Sit
 	}
 	return models
 }
-
-func buildGlobalSiteModels(names []string, groups []model.SiteUserGroup, source string) []model.SiteModel {
-	if len(groups) == 0 {
-		return buildSiteModels(names, model.SiteDefaultGroupKey, source)
-	}
-	seen := make(map[string]struct{})
-	models := make([]model.SiteModel, 0, len(names)*len(groups))
-	for _, group := range groups {
-		groupKey := model.NormalizeSiteGroupKey(group.GroupKey)
-		for _, item := range buildSiteModels(names, groupKey, source) {
-			key := groupKey + "\x00" + item.ModelName
-			if _, ok := seen[key]; ok {
-				continue
-			}
-			seen[key] = struct{}{}
-			models = append(models, item)
-		}
-	}
-	return models
-}
-
 func pickModelTokensByGroup(tokens []model.SiteToken) []model.SiteToken {
 	if len(tokens) == 0 {
 		return nil
@@ -929,17 +908,4 @@ func parseOptionalSiteGroupMultiplier(values ...any) *float64 {
 		}
 	}
 	return nil
-}
-func pickModelToken(tokens []model.SiteToken) model.SiteToken {
-	for _, token := range tokens {
-		if token.Enabled && strings.TrimSpace(token.Token) != "" {
-			return token
-		}
-	}
-	for _, token := range tokens {
-		if strings.TrimSpace(token.Token) != "" {
-			return token
-		}
-	}
-	return model.SiteToken{}
 }

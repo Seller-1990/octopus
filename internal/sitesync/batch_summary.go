@@ -178,15 +178,6 @@ func (s *SiteBatchSummary) addFailure(siteID int, platform model.SitePlatform, a
 	s.addSample(siteID, platform, accountID, reason, message)
 }
 
-func (s *SiteBatchSummary) addWarning(siteID int, platform model.SitePlatform, accountID int, reason SiteBatchReason, message string) {
-	if reason == "" {
-		reason = SiteBatchReasonUnknown
-	}
-	s.Warnings++
-	s.addGroup(s.warningGroups, siteID, platform, reason, func(g *SiteBatchOutcomeGroup) { g.Warnings++ })
-	s.addSample(siteID, platform, accountID, reason, sanitizeSiteStatusText(message))
-}
-
 func (s *SiteBatchSummary) addGroup(groups map[siteBatchGroupKey]*SiteBatchOutcomeGroup, siteID int, platform model.SitePlatform, reason SiteBatchReason, update func(*SiteBatchOutcomeGroup)) *SiteBatchOutcomeGroup {
 	return s.addGroupN(groups, siteID, platform, reason, 1, func(g *SiteBatchOutcomeGroup, _ int) { update(g) })
 }

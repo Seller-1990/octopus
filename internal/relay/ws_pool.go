@@ -541,20 +541,6 @@ func buildUpstreamWSHeadersForRoute(
 	return headers, policy
 }
 
-func shouldProxyUpstreamWSHeader(name string) bool {
-	lowerName := strings.ToLower(strings.TrimSpace(name))
-	if lowerName == "" {
-		return false
-	}
-	if hopByHopHeaders[lowerName] {
-		return false
-	}
-	if strings.HasPrefix(lowerName, "sec-websocket-") {
-		return false
-	}
-	return true
-}
-
 func newWSPoolKey(channelID, keyID int, headers http.Header) wsPoolKey {
 	return wsPoolKey{channelID: channelID, keyID: keyID, headerSig: wsHeaderSignature(headers)}
 }

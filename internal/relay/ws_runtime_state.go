@@ -6,7 +6,11 @@ import (
 	"time"
 )
 
-const wsResponseConnAffinityTTL = time.Hour
+const (
+	wsResponseConnAffinityTTL = time.Hour
+	// wsResponseConnPruneInterval 是惰性清理的节流间隔。
+	wsResponseConnPruneInterval = time.Minute
+)
 
 type wsResponseConnBinding struct {
 	connID    string
@@ -14,8 +18,9 @@ type wsResponseConnBinding struct {
 }
 
 var wsResponseConnState = struct {
-	mu       sync.RWMutex
-	bindings map[string]wsResponseConnBinding
+	mu        sync.RWMutex
+	bindings  map[string]wsResponseConnBinding
+	lastPrune time.Time
 }{bindings: make(map[string]wsResponseConnBinding)}
 
 func bindWSResponseConn(responseID, connID string, ttl time.Duration) {
@@ -29,7 +34,13 @@ func bindWSResponseConn(responseID, connID string, ttl time.Duration) {
 	}
 	now := time.Now()
 	wsResponseConnState.mu.Lock()
-	pruneExpiredWSResponseConnBindingsLocked(now)
+	// 惰性清理若每次 bind 都做，就是对全表的扫描：条目数随 TTL 内的响应数
+	// 增长，bind 次数也随之增长，整体退化为 O(n²) 且全程持写锁。按时间节流
+	// 后均摊为常数；过期条目最晚在下一个节流窗口被清掉，不影响 TTL 语义。
+	if now.Sub(wsResponseConnState.lastPrune) >= wsResponseConnPruneInterval {
+		pruneExpiredWSResponseConnBindingsLocked(now)
+		wsResponseConnState.lastPrune = now
+	}
 	wsResponseConnState.bindings[responseID] = wsResponseConnBinding{connID: connID, expiresAt: now.Add(ttl)}
 	wsResponseConnState.mu.Unlock()
 }
@@ -68,18 +79,9 @@ func getWSResponseConn(responseID string) (string, bool) {
 	return binding.connID, true
 }
 
-func deleteWSResponseConn(responseID string) {
-	responseID = strings.TrimSpace(responseID)
-	if responseID == "" {
-		return
-	}
-	wsResponseConnState.mu.Lock()
-	delete(wsResponseConnState.bindings, responseID)
-	wsResponseConnState.mu.Unlock()
-}
-
 func resetWSResponseConnStateForTest() {
 	wsResponseConnState.mu.Lock()
 	wsResponseConnState.bindings = make(map[string]wsResponseConnBinding)
+	wsResponseConnState.lastPrune = time.Time{}
 	wsResponseConnState.mu.Unlock()
 }

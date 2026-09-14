@@ -578,10 +578,6 @@ func classifyModelOutboundType(modelName string) outbound.OutboundType {
 	return outbound.OutboundTypeOpenAIChat
 }
 
-func classifyModelRouteType(modelName string) model.SiteModelRouteType {
-	return model.InferSiteModelRouteType(modelName)
-}
-
 // partitionModelsByOutboundType 将模型列表按端点格式分桶
 func partitionModelsByOutboundType(modelNames []string, split bool, site *model.Site) map[outbound.OutboundType][]string {
 	if !split {

@@ -315,7 +315,14 @@ func SiteModelPriceManualUpsert(ctx context.Context, quote model.SiteModelPriceQ
 	quote.Source = model.PriceQuoteSourceManualOverride
 	quote.ManualOverride = true
 	quote.ObservedAt = time.Now()
-	quote.GroupMultiplierKnown = true // 阶段 6 v2 Z4：管理员显式设价=真值（修 F17）
+	// 阶段 6 v2 Z4：管理员显式设价 = 分组倍率真值（修 F17）。
+	// 但 GroupMultiplier 是 float64：调用方未提供该字段时它就是 Go 零值 0，
+	// 而「0 + known」在下游表示「已确认免费」（见 relay.isFreeGroupItem 与
+	// routeCandidateScore 的 0 成本胜出）。若无条件标真值，一个正常的
+	// 「只设 token 单价、未提倍率」的手动设价会把该渠道成本静默归零。
+	// 故仅在确实给出非零倍率、或调用方已显式声明 known 时才标真值；
+	// 缺省 0 交回 normalizeSiteModelPriceQuote 按 model 的 default:1 归一为 1。
+	quote.GroupMultiplierKnown = quote.GroupMultiplierKnown || quote.GroupMultiplier != 0
 	if err := normalizeSiteModelPriceQuote(ctx, &quote); err != nil {
 		return nil, err
 	}

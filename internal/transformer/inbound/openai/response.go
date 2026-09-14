@@ -230,27 +230,20 @@ func (i *ResponseInbound) processStreamEvents(ctx context.Context, events []mode
 				i.responseCompleted = true
 				i.usage = event.Usage
 				eventType, status := responsesTerminalEvent(i.finalFinishReason)
-				output := i.finalOutputItems()
-				if event.ProviderExtensions != nil && event.ProviderExtensions.OpenAI != nil && len(event.ProviderExtensions.OpenAI.RawResponseItems) > 0 {
-					var items []ResponsesItem
-					if err := json.Unmarshal(event.ProviderExtensions.OpenAI.RawResponseItems, &items); err == nil {
-						output = items
-					}
-				}
-				response := &ResponsesResponse{
-					Object:     "response",
-					ID:         i.responseID,
-					Model:      i.model,
-					CreatedAt:  i.createdAt,
-					Status:     &status,
-					Truncation: i.truncation,
-					Output:     output,
-					Usage:      convertUsageToResponses(i.usage),
-				}
-				out = append(out, i.enqueueEvent(&ResponsesStreamEvent{Type: eventType, Response: response}))
+				out = append(out, i.enqueueEvent(&ResponsesStreamEvent{
+					Type:     eventType,
+					Response: i.buildTerminalResponse(status, rawResponseItemsOf(event)),
+				}))
 			}
 
 		case model.StreamEventKindDone:
+			// 终结事件此前只在 UsageDelta 分支发出，因此上游整条流不带 usage
+			// （部分 Anthropic/Gemini 上游如此）时，客户端永远收不到
+			// response.completed。DONE 是流的确定终点，在此兜底补发；
+			// responseCompleted 保证与 usage/显式终结路径不重复。
+			if terminal := i.finishImplicitTerminal(); len(terminal) > 0 {
+				out = append(out, terminal)
+			}
 			if len(out) == 0 {
 				return []byte("data: [DONE]\n\n"), nil
 			}
@@ -308,25 +301,7 @@ func (i *ResponseInbound) finishExplicitTerminal(event model.StreamEvent) []byte
 	if status == "" || status == "error" {
 		status = "failed"
 	}
-	output := i.finalOutputItems()
-	if event.ProviderExtensions != nil &&
-		event.ProviderExtensions.OpenAI != nil &&
-		len(event.ProviderExtensions.OpenAI.RawResponseItems) > 0 {
-		var items []ResponsesItem
-		if err := json.Unmarshal(event.ProviderExtensions.OpenAI.RawResponseItems, &items); err == nil {
-			output = items
-		}
-	}
-	response := &ResponsesResponse{
-		Object:     "response",
-		ID:         i.responseID,
-		Model:      i.model,
-		CreatedAt:  i.createdAt,
-		Status:     &status,
-		Truncation: i.truncation,
-		Output:     output,
-		Usage:      convertUsageToResponses(i.usage),
-	}
+	response := i.buildTerminalResponse(status, rawResponseItemsOf(event))
 	if event.Error != nil {
 		response.Error = &ResponsesError{
 			Code:    500,
@@ -337,6 +312,50 @@ func (i *ResponseInbound) finishExplicitTerminal(event model.StreamEvent) []byte
 		Type:     event.TerminalEvent,
 		Response: response,
 	})
+}
+
+// finishImplicitTerminal 在没有显式终结事件、也没有 usage 事件时补发终结事件。
+// 仅在已收到 MessageStop 且尚未终结时生效，保证每个流恰好一个终结事件。
+func (i *ResponseInbound) finishImplicitTerminal() []byte {
+	if !i.hasFinished || i.responseCompleted {
+		return nil
+	}
+	i.responseCompleted = true
+	eventType, status := responsesTerminalEvent(i.finalFinishReason)
+	return i.enqueueEvent(&ResponsesStreamEvent{
+		Type:     eventType,
+		Response: i.buildTerminalResponse(status, nil),
+	})
+}
+
+// buildTerminalResponse 组装终结事件的响应体。三条终结路径（显式终结事件、
+// usage 事件、DONE 兜底）共用，避免同一响应结构出现多份副本。
+func (i *ResponseInbound) buildTerminalResponse(status string, rawItems json.RawMessage) *ResponsesResponse {
+	output := i.finalOutputItems()
+	if len(rawItems) > 0 {
+		var items []ResponsesItem
+		if err := json.Unmarshal(rawItems, &items); err == nil {
+			output = items
+		}
+	}
+	return &ResponsesResponse{
+		Object:     "response",
+		ID:         i.responseID,
+		Model:      i.model,
+		CreatedAt:  i.createdAt,
+		Status:     &status,
+		Truncation: i.truncation,
+		Output:     output,
+		Usage:      convertUsageToResponses(i.usage),
+	}
+}
+
+// rawResponseItemsOf 取上游透传的原始 output items。
+func rawResponseItemsOf(event model.StreamEvent) json.RawMessage {
+	if event.ProviderExtensions != nil && event.ProviderExtensions.OpenAI != nil {
+		return event.ProviderExtensions.OpenAI.RawResponseItems
+	}
+	return nil
 }
 
 func (i *ResponseInbound) enqueueEvent(ev *ResponsesStreamEvent) []byte {
@@ -1504,11 +1523,15 @@ func convertItemToMessage(item *ResponsesItem) (*model.Message, error) {
 		}, nil
 
 	case "function_call_output":
-		return &model.Message{
+		msg := &model.Message{
 			Role:       "tool",
 			ToolCallID: lo.ToPtr(item.CallID),
-			Content:    convertInputToMessageContent(*item.Output),
-		}, nil
+		}
+		// 客户端可能发送 function_call_output 但不带 output 字段
+		if item.Output != nil {
+			msg.Content = convertInputToMessageContent(*item.Output)
+		}
+		return msg, nil
 
 	case "reasoning":
 		msg := &model.Message{

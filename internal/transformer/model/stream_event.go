@@ -207,8 +207,14 @@ func InternalResponseFromStreamEvents(events []StreamEvent) *InternalLLMResponse
 		case StreamEventKindThinkingDelta:
 			if event.Delta != nil && (event.Delta.Thinking != "" || event.Delta.Signature != "") {
 				if event.Delta.Thinking != "" {
-					thinking := event.Delta.Thinking
-					choice.Delta.ReasoningContent = &thinking
+					// 与上面的 TextDelta 保持一致：分片必须累加。
+					// 此处曾直接赋值为最后一片，导致多片 thinking 只剩下尾片。
+					if choice.Delta.ReasoningContent == nil {
+						thinking := event.Delta.Thinking
+						choice.Delta.ReasoningContent = &thinking
+					} else {
+						*choice.Delta.ReasoningContent += event.Delta.Thinking
+					}
 				}
 				choice.Delta.AppendReasoningBlock(ReasoningBlock{Kind: ReasoningBlockKindThinking, Index: -1, Text: event.Delta.Thinking, Signature: event.Delta.Signature})
 			}
