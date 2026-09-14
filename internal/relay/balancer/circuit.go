@@ -282,8 +282,7 @@ func RecordFailure(channelID, keyID int, modelName string, kind FailureKind) {
 	entry.mu.Lock()
 	defer entry.mu.Unlock()
 
-	entry.LastFailureTime = time.Now()
-	entry.HalfOpenSince = time.Time{}
+	now := time.Now()
 
 	switch entry.State {
 	case StateClosed:
@@ -291,6 +290,7 @@ func RecordFailure(channelID, keyID int, modelName string, kind FailureKind) {
 			return
 		}
 		entry.ConsecutiveFailures++
+		entry.LastFailureTime = now
 		threshold := getThreshold()
 		if entry.ConsecutiveFailures >= threshold {
 			entry.State = StateOpen
@@ -302,6 +302,8 @@ func RecordFailure(channelID, keyID int, modelName string, kind FailureKind) {
 	case StateHalfOpen:
 		if kind == FailureSoftRateLimit {
 			entry.State = StateOpen
+			entry.LastFailureTime = now
+			entry.HalfOpenSince = time.Time{}
 			log.Warnf("circuit breaker [%s] HalfOpen -> Open (soft rate limit, tripCount=%d, cooldown=%v)",
 				key, entry.TripCount, GetCooldown(entry.TripCount))
 			return
@@ -309,12 +311,15 @@ func RecordFailure(channelID, keyID int, modelName string, kind FailureKind) {
 		// 试探失败，重新进入 Open 状态，TripCount 递增（冷却时间翻倍）
 		entry.State = StateOpen
 		entry.TripCount++
+		entry.LastFailureTime = now
+		entry.HalfOpenSince = time.Time{}
 		entry.ConsecutiveFailures = 0 // 重新开始计数
 		log.Warnf("circuit breaker [%s] HalfOpen -> Open (probe failed, tripCount=%d, cooldown=%v)",
 			key, entry.TripCount, GetCooldown(entry.TripCount))
 
 	case StateOpen:
-		// 理论上不应该在 Open 状态下接收到失败记录（请求应被拒绝），
-		// 但为安全起见仍更新失败时间
+		// 在途请求的迟到失败不触碰任何时间字段。LastFailureTime 是冷却起点，
+		// 若在此处顺延，熔断刚 Open 时发出的慢失败会无限推迟 Open -> HalfOpen
+		// 的恢复探测；HalfOpen 探测超时回 Open 的时间字段由 IsTripped 维护。
 	}
 }

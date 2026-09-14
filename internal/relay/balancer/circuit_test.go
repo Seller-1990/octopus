@@ -217,3 +217,111 @@ func TestSnapshotPrunesOnlyZeroFailures(t *testing.T) {
 		t.Fatal("expected accumulating-failure entry to survive cleanup")
 	}
 }
+
+// TestRecordFailureInOpenDoesNotExtendCooldown F06 回归：熔断 Open 态收到
+// 在途慢失败时不得顺延冷却起点，否则 Open -> HalfOpen 的恢复探测可被
+// 无限推迟（高并发 + 慢失败下这是常态而非例外）。
+func TestRecordFailureInOpenDoesNotExtendCooldown(t *testing.T) {
+	Reset()
+	const (
+		channelID = 21
+		keyID     = 22
+		modelName = "gpt-4o"
+	)
+
+	// 连续失败达到默认阈值（设置缺失时 getThreshold 回落 5）触发熔断
+	for i := 0; i < 5; i++ {
+		RecordFailure(channelID, keyID, modelName, FailureHard)
+	}
+	entryV, ok := globalBreaker.Load(circuitKey(channelID, keyID, modelName))
+	if !ok {
+		t.Fatal("expected circuit entry to exist after threshold failures")
+	}
+	opened := entryV.(*circuitEntry)
+	opened.mu.Lock()
+	if opened.State != StateOpen {
+		t.Fatalf("expected StateOpen, got %v", opened.State)
+	}
+	coolStart := opened.LastFailureTime
+	tripCount := opened.TripCount
+	opened.mu.Unlock()
+
+	if tripped, _ := IsTripped(channelID, keyID, modelName); !tripped {
+		t.Fatal("expected circuit to be tripped while cooling down")
+	}
+
+	// 模拟熔断前已发出、此刻才返回的在途慢失败
+	time.Sleep(5 * time.Millisecond)
+	RecordFailure(channelID, keyID, modelName, FailureHard)
+	RecordFailure(channelID, keyID, modelName, FailureSoftRateLimit)
+
+	// 注意：不可在持有 entry.mu 时调用 Snapshot()（其内部会再锁同一把锁），
+	// 先在锁内取值，释放后再做全表断言。
+	opened.mu.Lock()
+	afterTime := opened.LastFailureTime
+	afterTrips := opened.TripCount
+	cooldownUntil := opened.LastFailureTime.Add(GetCooldown(afterTrips))
+	opened.mu.Unlock()
+
+	if !afterTime.Equal(coolStart) {
+		t.Fatalf("cooldown start must not move on in-flight failure in Open state: before=%v after=%v",
+			coolStart, afterTime)
+	}
+	if afterTrips != tripCount {
+		t.Fatalf("trip count must not change on in-flight failure: before=%d after=%d",
+			tripCount, afterTrips)
+	}
+
+	// Snapshot 的 CooldownUntil 必须仍以原冷却起点推导
+	for _, status := range Snapshot() {
+		if status.ChannelID == channelID && status.ChannelKeyID == keyID && status.ModelName == modelName {
+			if !status.CooldownUntil.Equal(cooldownUntil) {
+				t.Fatalf("CooldownUntil drifted: want %v got %v", cooldownUntil, status.CooldownUntil)
+			}
+			return
+		}
+	}
+	t.Fatal("expected snapshot to contain the open circuit entry")
+}
+
+// TestRecordFailureStillOpensFromClosed 达到阈值仍正常转 Open、试探失败仍
+// 刷新冷却起点（防修复矫枉过正）。
+func TestRecordFailureStillOpensFromClosed(t *testing.T) {
+	Reset()
+	const (
+		channelID = 31
+		keyID     = 32
+		modelName = "claude-3"
+	)
+	for i := 0; i < 5; i++ {
+		RecordFailure(channelID, keyID, modelName, FailureHard)
+	}
+	if tripped, _ := IsTripped(channelID, keyID, modelName); !tripped {
+		t.Fatal("expected circuit to trip after threshold failures from Closed")
+	}
+	entryV, _ := globalBreaker.Load(circuitKey(channelID, keyID, modelName))
+	entry := entryV.(*circuitEntry)
+	entry.mu.Lock()
+	openedAt := entry.LastFailureTime
+	entry.mu.Unlock()
+
+	// 冷却未过，此时再失败仍停在 Open（不走 HalfOpen）；为验证 HalfOpen 探测
+	// 失败路径，直接把冷却起点拨到过去使 IsTripped 放行探测窗口
+	entry.mu.Lock()
+	entry.LastFailureTime = time.Now().Add(-2 * time.Hour)
+	entry.mu.Unlock()
+	if tripped, _ := IsTripped(channelID, keyID, modelName); tripped {
+		t.Fatal("expected Open -> HalfOpen after cooldown elapsed")
+	}
+	time.Sleep(5 * time.Millisecond)
+	RecordFailure(channelID, keyID, modelName, FailureHard) // HalfOpen 探测失败
+	entry.mu.Lock()
+	defer entry.mu.Unlock()
+	if entry.State != StateOpen {
+		t.Fatalf("expected probe failure to return to Open, got %v", entry.State)
+	}
+	if !entry.LastFailureTime.After(openedAt) {
+		t.Fatalf("HalfOpen probe failure must refresh cooldown start: before=%v after=%v",
+			openedAt, entry.LastFailureTime)
+	}
+}
