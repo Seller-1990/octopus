@@ -88,13 +88,32 @@ func GetHTTPClientSystemProxy(useProxy bool) (*http.Client, error) {
 	return systemDirectClient, nil
 }
 
-// GetHTTPClientCustomProxy returns a NEW http.Client every time (no reuse).
+// customProxyClients 按完整 proxyURL（含凭据）缓存自定义代理客户端。
+// 此前每次调用都 Transport.Clone 新建 client——Go 的 Transport.Clone 不复制
+// 连接池，克隆体空池启动，连接完全无法复用：每个请求都完整 TCP+TLS 握手，
+// 高 QPS 下客户端端口 TIME_WAIT 堆积直至 EADDRNOTAVAIL。键为 URL 天然兼容
+// 池轮换与凭据变更（URL 变了就是新条目）。
+var customProxyClients sync.Map // key: proxyURL string -> *http.Client
+
+// GetHTTPClientCustomProxy returns a cached http.Client for the given proxy URL.
 // proxyURL supports: http, https, socks, socks5
 func GetHTTPClientCustomProxy(proxyURL string) (*http.Client, error) {
 	if proxyURL == "" {
 		return nil, fmt.Errorf("proxy url is empty")
 	}
-	return newHTTPClientCustomProxy(proxyURL)
+	if cached, ok := customProxyClients.Load(proxyURL); ok {
+		return cached.(*http.Client), nil
+	}
+	client, err := newHTTPClientCustomProxy(proxyURL)
+	if err != nil {
+		return nil, err
+	}
+	actual, loaded := customProxyClients.LoadOrStore(proxyURL, client)
+	if loaded {
+		// 竞态落败方的 transport 丢弃前归还其空闲连接
+		client.CloseIdleConnections()
+	}
+	return actual.(*http.Client), nil
 }
 
 // ResolveSystemProxyURL returns the effective system proxy URL from app settings or env.
@@ -154,13 +173,24 @@ func newHTTPClientCustomProxy(proxyURLStr string) (*http.Client, error) {
 	case "http", "https":
 		cloned.Proxy = http.ProxyURL(proxyURL)
 	case "socks", "socks5":
-		socksDialer, err := proxy.FromURL(proxyURL, proxy.Direct)
+		// 前置拨号器带拨号超时（与直连路径一致），且用 ContextDialer 传播
+		// ctx——旧实现 proxy.FromURL(_, proxy.Direct) + Dial(network, addr)
+		// 无超时也不响应取消，代理被墙时拨号挂到系统级超时（分钟级），
+		// Failover 被长时间阻塞。
+		socksDialer, err := proxy.FromURL(proxyURL, &net.Dialer{
+			Timeout:   conf.ClientDialTimeout(),
+			KeepAlive: 30 * time.Second,
+		})
 		if err != nil {
 			return nil, fmt.Errorf("invalid socks proxy: %w", err)
 		}
 		cloned.Proxy = nil
-		cloned.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
-			return socksDialer.Dial(network, addr)
+		if ctxDialer, ok := socksDialer.(proxy.ContextDialer); ok {
+			cloned.DialContext = ctxDialer.DialContext
+		} else {
+			cloned.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
+				return socksDialer.Dial(network, addr)
+			}
 		}
 	default:
 		return nil, fmt.Errorf("unsupported proxy scheme: %s", proxyURL.Scheme)
