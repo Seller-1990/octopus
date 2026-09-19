@@ -1,10 +1,19 @@
 name: Gate Guard
 
-# 被审查者不得修改审查器——本 job 把这句话变成红灯。
-# 原理（防篡改）：required status check 绑定的是 job 的**名字**（gate-guard）。
-# 写码的 AI 若删掉本文件或改掉 job 名，`gate-guard` 检查将永远 pending，
-# PR 无法合并——所以"绕过告警"的唯一出路是保留本文件，即接受告警。
-# 本文件出现在 PR diff 里时，job 主动失败一次，强迫主人过目。
+# 被审查者不得静默修改审查器——本 job 把这句话变成红灯。
+#
+# 威胁模型（2026-09-19 本地 ocr advisory 评审指出后修订）：
+# pull_request 事件执行的是 PR head 分支里的 workflow 版本，因此"把本 job 掏空成
+# 永绿"是可行的攻击路径。本防线靠三层叠加：
+# 1. check 名 `gate-guard` 被分支保护 required checks 绑定——删除/改名 = 永远
+#    pending = 无法合并（防"删检查"）。
+# 2. 同一份门禁文件检测在 quality-gate.yml 的 go-quality job 里独立重复实现
+#    （防"掏空单点"：要绕必须同时改两个 workflow，diff 里留下显著痕迹，
+#    且两个文件本身都在 gate 清单内）。
+# 3. 终极加固 = required_approving_review_count=1 + 为 AI 签发独立低权限 token
+#    （AI 开 PR、主人账号批准），见 AGENTS.md 第五节，待主人实施。
+# 已知残余风险：检测逻辑与被检内容同仓同权限，无法密码学级不可绕过；
+# 对"共用 admin 凭据"的单人场景，以上叠加已是免费方案的上限。
 
 on:
   pull_request:
@@ -14,10 +23,15 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: gate-guard-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
 jobs:
   gate-guard:
     name: gate-guard
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       # actions/checkout @ v5.5.1（钉 SHA，理由同 quality-gate.yml）
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
@@ -28,7 +42,7 @@ jobs:
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
-          GATE_FILES='^(\.github/workflows/|\.pre-commit-config\.yaml$|\.golangci\.yml$|AGENTS\.md$|CLAUDE\.md$|Makefile$|\.gitignore$|web/eslint\.config\.mjs$|web/tsconfig\.json$)'
+          GATE_FILES='^(\.github/|\.pre-commit-config\.yaml$|\.golangci\.yml$|AGENTS\.md$|CLAUDE\.md$|Makefile$|\.gitignore$|web/eslint\.config\.mjs$|web/tsconfig\.json$)'
           changed=$(git diff --name-only "$BASE_SHA"...HEAD | grep -E "$GATE_FILES" || true)
           if [ -n "$changed" ]; then
             echo "::error title=⚠️ 门禁文件变更::以下门禁/审查配置被本 PR 修改，主人必须先看懂 AI 的大白话解释并明确同意，才能继续合并："

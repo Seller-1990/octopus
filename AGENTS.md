@@ -27,7 +27,7 @@
 2. 修改下列**门禁文件**。任务确实需要改动时：先用中文大白话向主人解释
    "改哪个文件、为什么、影响是什么"，得到主人明确回复"同意"后方可，
    且必须知晓 CI 的 `gate-guard` 检查会亮红灯（红灯是设计，主人批准才继续合并）：
-   - `.github/workflows/**`
+   - `.github/**`（workflows、CODEOWNERS、dependabot 等全部）
    - `.pre-commit-config.yaml`、`.golangci.yml`
    - `AGENTS.md`、`CLAUDE.md`、`Makefile`、`.gitignore`
    - `web/eslint.config.mjs`、`web/tsconfig.json`
@@ -63,3 +63,28 @@
 - NAS 上的 Octopus 生产实例（:8088）同时承担两个职责：给 ZCode 供模型、
   给本地 ocr 供模型。它挂了评审就停，但**确定性门禁（CI 全层）不受影响**——
   这是"评审工具不能成为单点故障"的落实。
+
+## 五、已知信任边界（诚实声明，2026-09-19 审查委员会结论）
+
+1. **AI 与主人共用同一份 admin 凭据**：分支保护的 `enforce_admins: false`
+   是刻意保留的主人紧急通道，但这也意味着持有 gh/git 凭据的 AI **技术上**
+   具备 override merge、直推 dev、修改分支保护的能力。此类行为即使工具放行，
+   也是对主人的背叛级违规，永久禁止。
+2. **根治路径（待主人同意后实施）**：为 AI 的 git 操作单独签发细粒度
+   GitHub PAT（仅 `contents:read/write` + `pull_requests:write`，不含
+   administration 与删除保护权限），与主人浏览器登录态隔离。实施前，
+   防线退化为：gate-guard 红灯 + AGENTS.md 禁令 + 主人每周抽查一次
+   PR 列表和分支保护设置（`gh api repos/Seller-1990/octopus/branches/dev/protection`）。
+3. **gate-guard 的检测原理限制（2026-09-19 本地 ocr 评审发现后加固）**：
+   `pull_request` 事件执行的是 **PR head 分支里的 workflow 版本**——把某个
+   检查"掏空成永绿"理论可行。对策是双独立检测点：`gate-guard` 与
+   `go-quality` 内各自跑同一判据，绕掉单点无效，必须同时改两个 workflow
+   （diff 留下"AI 在同时改两个门禁文件"的显著痕迹，主人看到即为红线）；
+   防"删检查"靠 required checks 按名字绑定——删掉/改名 = 永久 pending = 无法合并。
+   对"共用 admin 凭据的单人场景"，这是免费方案的上限；再往上加固 = 第 2 条。
+4. **push-to-dev 事件的 lint 只覆盖最新 commit**（`--new-from-rev=HEAD~1`）：
+   正常流程（一律走 PR）无影响；仅当用 admin 权限直推多个 commit 时覆盖面
+   收窄，已知并接受。
+5. **ocr 是开源 4 个月的新项目**：钉版本+钉 SHA 只防供应链漂移，不防评审
+   质量回退。每半年对照官方 CHANGELOG 评估一次，评审信号连续两周与
+   确定性工具矛盾时，降级为"仅作存档不展示"。

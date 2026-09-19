@@ -16,10 +16,15 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: quality-gate-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   go-quality:
     name: go-quality
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       # 第三方 Action 钉死 commit SHA（供应链要求）：
       # actions/checkout @ v5.5.1（2026-09-19 核验）
@@ -36,6 +41,22 @@ jobs:
       # go.mod 构建需要 static/out 目录存在（embed 指令），与 ci.yml 同样先占位
       - name: Prepare embedded static directory
         run: mkdir -p static/out && touch static/out/.keep
+
+      # 门禁文件检测·第二独立点（与 gate-guard.yml 逻辑重复是故意的——
+      # 掏空任何一个单点都无法同时骗过两个检查，且两个文件都在 gate 清单内）。
+      # 威胁模型与残余风险说明见 gate-guard.yml 头部注释。
+      - name: gate integrity check（第二检测点）
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          GATE_FILES='^(\.github/|\.pre-commit-config\.yaml$|\.golangci\.yml$|AGENTS\.md$|CLAUDE\.md$|Makefile$|\.gitignore$|web/eslint\.config\.mjs$|web/tsconfig\.json$)'
+          changed=$(git diff --name-only "$BASE_SHA"...HEAD | grep -E "$GATE_FILES" || true)
+          if [ -n "$changed" ]; then
+            echo "⚠️ 本 PR 修改了门禁文件（与 gate-guard 同一判据的独立检测点）："
+            echo "$changed"
+            exit 1
+          fi
 
       - name: gofmt check
         run: |
