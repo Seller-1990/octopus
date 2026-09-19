@@ -1,0 +1,11 @@
+# golangci-lint v2 配置
+# 锁死 linter 集合：防上游版本升级悄悄改变门禁语义（CI 里 golangci-lint-action 钉 SHA，
+# 本地也按此配置对齐，避免"本地绿/CI 红"漂移）。
+# 阻断策略由 CI workflow 控制：--new-from-rev 只对增量告警阻断，
+# 存量基线（2026-09-19 实测 84 条）登记在 docs/BACKLOG.md，渐进消化。
+version: "2"
+
+linters:
+  # v2 "standard" = errcheck, govet, ineffassign, staticcheck, unused
+  # 固定集合、可复现，不特赦 defer 里未检查的 Close 等。
+  default: standard

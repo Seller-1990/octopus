@@ -95,7 +95,7 @@ func ReplaceVisionIndex(entries map[string]VisionEntry) {
 }
 
 // releaseSuffixPatterns 渠道实际模型名常带 models.dev 索引里没有的发布后缀
-//（-20241022 / -2025-01-28 / -latest），精确未命中时剥掉重查。
+// （-20241022 / -2025-01-28 / -latest），精确未命中时剥掉重查。
 var releaseSuffixPatterns = []*regexp.Regexp{
 	regexp.MustCompile(`-20\d{6}$`),
 	regexp.MustCompile(`-20\d{2}-\d{2}-\d{2}$`),

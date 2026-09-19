@@ -20,7 +20,7 @@ type sqlCaptureLogger struct {
 	statements []string
 }
 
-func (l *sqlCaptureLogger) LogMode(logger.LogLevel) logger.Interface { return l }
+func (l *sqlCaptureLogger) LogMode(logger.LogLevel) logger.Interface      { return l }
 func (l *sqlCaptureLogger) Info(context.Context, string, ...interface{})  {}
 func (l *sqlCaptureLogger) Warn(context.Context, string, ...interface{})  {}
 func (l *sqlCaptureLogger) Error(context.Context, string, ...interface{}) {}

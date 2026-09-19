@@ -1,0 +1,12 @@
+# 本地只做"自动修复"，不做阻断——阻断交给 CI（见 AGENTS.md 第一节）。
+# 依据：对不会读代码的使用者，本地 hook 报错 = 只会学会 --no-verify 绕过一切。
+# 真门禁在服务器端：分支保护 + required checks。
+repos:
+  - repo: local
+    hooks:
+      - id: gofmt-autofix
+        name: gofmt（自动格式化暂存的 .go 文件）
+        entry: gofmt -w
+        language: system
+        types: [go]
+        files: \.go$

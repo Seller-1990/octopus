@@ -1,0 +1,55 @@
+name: Quality Gate
+
+# 确定性质量门禁：gofmt / go vet / golangci-lint。
+# 全部不依赖 LLM，托管 runner 可跑，因此有资格当阻断层（AGENTS.md 第四节）。
+# check 名 `go-quality` 被分支保护 required checks 引用，改名 = 永久 pending，
+# 改动本文件会触发 gate-guard 红灯——这是故意的。
+
+on:
+  pull_request:
+    branches:
+      - dev
+  push:
+    branches:
+      - dev
+
+permissions:
+  contents: read
+
+jobs:
+  go-quality:
+    name: go-quality
+    runs-on: ubuntu-latest
+    steps:
+      # 第三方 Action 钉死 commit SHA（供应链要求）：
+      # actions/checkout @ v5.5.1（2026-09-19 核验）
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+      # actions/setup-go @ v6.4.0（2026-09-19 核验）
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+
+      # go.mod 构建需要 static/out 目录存在（embed 指令），与 ci.yml 同样先占位
+      - name: Prepare embedded static directory
+        run: mkdir -p static/out && touch static/out/.keep
+
+      - name: gofmt check
+        run: |
+          unformatted=$(gofmt -l . | grep -v '^$' || true)
+          if [ -n "$unformatted" ]; then
+            echo "以下文件未通过 gofmt（本地跑 gofmt -w 修复）:"
+            echo "$unformatted"
+            exit 1
+          fi
+          echo "gofmt: 全部文件已格式化 ✓"
+
+      - name: go vet
+        run: go vet ./...
+
+      # golangci-lint-action @ v9.3.0（2026-09-19 核验 tag→commit SHA）
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a
+        with:
+          version: v9.3.0
+          install-mode: binary

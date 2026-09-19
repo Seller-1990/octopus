@@ -28,11 +28,11 @@ const (
 )
 
 const (
-	envBodyMaxMB             = "OCTOPUS_IMAGES_BODY_MAX_MB"
-	envMemoryThresholdMB     = "OCTOPUS_IMAGES_BODY_MEMORY_THRESHOLD_MB"
-	envTmpDir                = "OCTOPUS_IMAGES_BODY_TMP_DIR"
-	envTmpCleanupHours       = "OCTOPUS_IMAGES_BODY_TMP_CLEANUP_HOURS"
-	bytesPerMB         int64 = 1024 * 1024
+	envBodyMaxMB               = "OCTOPUS_IMAGES_BODY_MAX_MB"
+	envMemoryThresholdMB       = "OCTOPUS_IMAGES_BODY_MEMORY_THRESHOLD_MB"
+	envTmpDir                  = "OCTOPUS_IMAGES_BODY_TMP_DIR"
+	envTmpCleanupHours         = "OCTOPUS_IMAGES_BODY_TMP_CLEANUP_HOURS"
+	bytesPerMB           int64 = 1024 * 1024
 )
 
 // BodyTooLargeError 表示读取请求体时超过最大限制。

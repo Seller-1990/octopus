@@ -35,10 +35,10 @@ func setupChannelOpTestDB(t *testing.T) context.Context {
 func createChannelWithKey(t *testing.T, ctx context.Context, name string) (model.Channel, model.ChannelKey) {
 	t.Helper()
 	channel := model.Channel{
-		Name:      name,
-		BaseUrls:  []model.BaseUrl{{URL: "https://upstream.example/v1"}},
-		Keys:      []model.ChannelKey{{ChannelKey: "sk-test-key", Enabled: true}},
-		AutoSync:  false,
+		Name:     name,
+		BaseUrls: []model.BaseUrl{{URL: "https://upstream.example/v1"}},
+		Keys:     []model.ChannelKey{{ChannelKey: "sk-test-key", Enabled: true}},
+		AutoSync: false,
 	}
 	if err := dbpkg.GetDB().WithContext(ctx).Create(&channel).Error; err != nil {
 		t.Fatalf("create channel: %v", err)

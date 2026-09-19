@@ -1,0 +1,38 @@
+name: Gate Guard
+
+# 被审查者不得修改审查器——本 job 把这句话变成红灯。
+# 原理（防篡改）：required status check 绑定的是 job 的**名字**（gate-guard）。
+# 写码的 AI 若删掉本文件或改掉 job 名，`gate-guard` 检查将永远 pending，
+# PR 无法合并——所以"绕过告警"的唯一出路是保留本文件，即接受告警。
+# 本文件出现在 PR diff 里时，job 主动失败一次，强迫主人过目。
+
+on:
+  pull_request:
+    branches:
+      - dev
+
+permissions:
+  contents: read
+
+jobs:
+  gate-guard:
+    name: gate-guard
+    runs-on: ubuntu-latest
+    steps:
+      # actions/checkout @ v5.5.1（钉 SHA，理由同 quality-gate.yml）
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          fetch-depth: 0
+
+      - name: 检测本 PR 是否修改了门禁本身
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          GATE_FILES='^(\.github/workflows/|\.pre-commit-config\.yaml$|\.golangci\.yml$|AGENTS\.md$|CLAUDE\.md$|Makefile$|\.gitignore$|web/eslint\.config\.mjs$|web/tsconfig\.json$)'
+          changed=$(git diff --name-only "$BASE_SHA"...HEAD | grep -E "$GATE_FILES" || true)
+          if [ -n "$changed" ]; then
+            echo "::error title=⚠️ 门禁文件变更::以下门禁/审查配置被本 PR 修改，主人必须先看懂 AI 的大白话解释并明确同意，才能继续合并："
+            echo "$changed"
+            exit 1
+          fi
+          echo "gate-guard: 本 PR 未触碰任何门禁文件 ✓"

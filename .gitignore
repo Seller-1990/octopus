@@ -20,3 +20,13 @@ docs/reviews/*
 !docs/BACKLOG.md
 .impeccable.md
 .DS_Store
+
+# AI 代理工作目录与产物（2026-09-19 评审门禁落地：治理未跟踪文件污染）
+.workbuddy/
+.zcode/
+/CODE_REVIEW*.md
+/audit-report-octopus-*.md
+/FIX_PLAN_*.md
+/IMPLEMENTATION_PLAN_*.md
+/PLAN_*.md
+/adversarial-*.zip
