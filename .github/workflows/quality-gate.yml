@@ -23,7 +23,10 @@ jobs:
     steps:
       # 第三方 Action 钉死 commit SHA（供应链要求）：
       # actions/checkout @ v5.5.1（2026-09-19 核验）
+      # fetch-depth: 0 为 golangci-lint --new-from-rev 提供 git 历史
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          fetch-depth: 0
       # actions/setup-go @ v6.4.0（2026-09-19 核验）
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16
         with:
@@ -48,8 +51,21 @@ jobs:
         run: go vet ./...
 
       # golangci-lint-action @ v9.3.0（2026-09-19 核验 tag→commit SHA）
-      - name: golangci-lint
+      # 增量阻断策略（2026-09-19 实测存量 84 条告警，见 docs/BACKLOG.md）：
+      # 门禁只拦"本次改动引入"的告警，存量债按台账渐进消化，
+      # 避免首次上线就阻断主人的合法 PR（评审报告 P1 风险的落实）。
+      - name: golangci-lint（PR：只阻断相对 base 的新增告警）
+        if: github.event_name == 'pull_request'
         uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a
         with:
-          version: v9.3.0
+          version: v2.13.2
           install-mode: binary
+          args: --new-from-rev=origin/${{ github.base_ref }}
+
+      - name: golangci-lint（push dev：只阻断最新 commit 的新增告警）
+        if: github.event_name == 'push'
+        uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a
+        with:
+          version: v2.13.2
+          install-mode: binary
+          args: --new-from-rev=HEAD~1
