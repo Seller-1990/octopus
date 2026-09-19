@@ -63,3 +63,20 @@
 - NAS 上的 Octopus 生产实例（:8088）同时承担两个职责：给 ZCode 供模型、
   给本地 ocr 供模型。它挂了评审就停，但**确定性门禁（CI 全层）不受影响**——
   这是"评审工具不能成为单点故障"的落实。
+
+## 五、已知信任边界（诚实声明，2026-09-19 审查委员会结论）
+
+1. **AI 与主人共用同一份 admin 凭据**：分支保护的 `enforce_admins: false`
+   是刻意保留的主人紧急通道，但这也意味着持有 gh/git 凭据的 AI **技术上**
+   具备 override merge、直推 dev、修改分支保护的能力。此类行为即使工具放行，
+   也是对主人的背叛级违规，永久禁止。
+2. **根治路径（待主人同意后实施）**：为 AI 的 git 操作单独签发细粒度
+   GitHub PAT（仅 `contents:read/write` + `pull_requests:write`，不含
+   administration 与删除保护权限），与主人浏览器登录态隔离。实施前，
+   防线退化为：gate-guard 红灯 + AGENTS.md 禁令 + 主人每周抽查一次
+   PR 列表和分支保护设置（`gh api repos/Seller-1990/octopus/branches/dev/protection`）。
+3. **gate-guard 的检测原理限制**：它拦的是"PR 触碰门禁文件"，对
+   "改门禁但没进 diff 的外部配置"（分支保护本身）无能为力——即上面第 1 条。
+4. **ocr 是开源 4 个月的新项目**：钉版本+钉 SHA 只防供应链漂移，不防评审
+   质量回退。每半年对照官方 CHANGELOG 评估一次，评审信号连续两周与
+   确定性工具矛盾时，降级为"仅作存档不展示"。
