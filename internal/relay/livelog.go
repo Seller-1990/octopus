@@ -81,7 +81,7 @@ var (
 	liveLogMu sync.Mutex
 	// liveLogRecords 保留运行中与近期完成的请求；订阅者集合支持多个
 	// 管理窗口同时观察（此前单 channel 架构下新连接会踢掉旧连接）。
-	liveLogRecords = make(map[int64]liveLogRecord)
+	liveLogRecords   = make(map[int64]liveLogRecord)
 	liveOverviewSubs = make(map[chan LiveLog]struct{})
 	liveDetailSubs   = make(map[int64]map[chan LiveAttempt]struct{})
 

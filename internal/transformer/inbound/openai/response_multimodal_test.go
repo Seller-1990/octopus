@@ -90,7 +90,7 @@ func TestConvertInputToMessageContentAudio(t *testing.T) {
 // dropped so we don't surface empty parts downstream.
 func TestConvertInputToMessageContentDropsEmptyMultimodal(t *testing.T) {
 	input := ResponsesInput{Items: []ResponsesItem{
-		{Type: "input_file"}, // no id/url/data
+		{Type: "input_file"},  // no id/url/data
 		{Type: "input_audio"}, // nil input_audio
 	}}
 	content := convertInputToMessageContent(input)

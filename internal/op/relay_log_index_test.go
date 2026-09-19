@@ -114,4 +114,3 @@ func TestRelayLogEnsureIndexesAsyncCancelsDuringWarmup(t *testing.T) {
 		t.Fatalf("RelayLogEnsureIndexes blocked through warmup despite ctx cancel")
 	}
 }
-
