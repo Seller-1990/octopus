@@ -29,6 +29,7 @@
 | LEGACY-250905-F10 | 09-05 报告 | 回溯正则 | P3 | 正则无执行预算。未复核 |
 | LEGACY-250905-F11 | 09-05 报告 | `helper/fetch.go` 分页 | P3 | 分页无总量边界（死循环部分已由 43c9000 修复，总量上限未修） |
 | GATE-260919-01 | 门禁上线 | `golangci-lint run`（.golangci.yml standard 集） | P3 | 存量 lint 告警基线 84 条（errcheck 50 / staticcheck 20 / unused 11 / ineffassign 3，2026-09-19 实测）。CI 只阻断增量（--new-from-rev），本条登记存量债：改到相关文件时顺手清零其内存量告警，禁止用 //nolint 豁免绕过 |
+| GATE-260919-02 | 门禁上线·本地 ocr 评审 | `internal/globalprice/presets.go` | P3 | 生成的文件（`Code generated ... DO NOT EDIT`）被门禁落地的 gofmt 手工修了列对齐——下次跑 `scripts/updatePrice.py` 重新生成时会丢格式修复，CI gofmt 检查将红。修 generator（输出前后各跑 gofmt）或在生成脚本里内置 gofmt 步骤 |
 | LEGACY-250905-F13/14/15 | 09-05 报告 | `transformer/outbound/gemini` | P2 | Gemini 协议三项：数组 system 丢失/并行工具拆错 choice/流式丢图。未复核——outbound 已有 MultipleContent/systemInstruction/inlineData 处理，需逐项构造反例裁定 |
 | LEGACY-250905-F16 | 09-05 报告 | relay 流式 | P3 | 上游心跳被当作首 token。未复核 |
 | LEGACY-250905-F17 | 09-05 报告 | passthrough 读失败 | P2 | 读失败丢已收到的 usage。未复核 |
