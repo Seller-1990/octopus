@@ -3,15 +3,16 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Bell, CheckCheck } from 'lucide-react';
 import { useTranslations } from 'next-intl';
-import { type NotifyEvent, useNotifyStream } from '@/api/endpoints/notify';
+import { type NotifyEvent, type NotifyLevel, useNotifyStream } from '@/api/endpoints/notify';
 import { Button } from '@/components/ui/button';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { cn } from '@/lib/utils';
 
 const READ_WATERMARK_KEY = 'notify_read_watermark';
 const BROWSER_NOTIFY_KEY = 'notify_browser_enabled';
+const NOTIFIED_WATERMARK_KEY = 'notify_notified_watermark';
 
-const LEVEL_DOT: Record<string, string> = {
+const LEVEL_DOT: Record<NotifyLevel, string> = {
     info: 'bg-blue-500',
     success: 'bg-emerald-500',
     warn: 'bg-amber-500',
@@ -52,13 +53,21 @@ export function NotifyBell() {
         });
     }, [open, events]);
 
-    // 浏览器通知：仅推送比当前水位新的错误/警告级事件，避免开面板即轰炸
+    // 浏览器通知：只弹「已通知水位」之后的新事件（error/warn）。水位持久化
+    // 到 localStorage——重连/刷新后服务端快照重放旧事件不再逐条轰炸（ocr 采纳）。
     const notifiedId = useRef(0);
     useEffect(() => {
         if (!browserEnabled || typeof Notification === 'undefined' || Notification.permission !== 'granted') return;
+        if (notifiedId.current === 0) {
+            // 首次装载：以当前最大 id 为基线，历史事件静默跳过
+            const maxId = events.reduce((max, item) => Math.max(max, item.id), 0);
+            notifiedId.current = Math.max(maxId, Number(localStorage.getItem(NOTIFIED_WATERMARK_KEY) ?? '0'));
+            return;
+        }
         const latest = events[0];
-        if (!latest || latest.id <= notifiedId.current || latest.id <= watermark) return;
+        if (!latest || latest.id <= notifiedId.current) return;
         notifiedId.current = latest.id;
+        localStorage.setItem(NOTIFIED_WATERMARK_KEY, String(latest.id));
         if (latest.level === 'error' || latest.level === 'warn') {
             try {
                 new Notification(latest.title, { body: latest.body });
@@ -66,7 +75,7 @@ export function NotifyBell() {
                 // 通知失败不影响页面
             }
         }
-    }, [events, browserEnabled, watermark]);
+    }, [events, browserEnabled]);
 
     const unreadCount = useMemo(
         () => events.filter((event) => event.id > watermark).length,
@@ -75,18 +84,25 @@ export function NotifyBell() {
 
     const toggleBrowser = async () => {
         const next = !browserEnabled;
-        if (next && typeof Notification !== 'undefined' && Notification.permission !== 'granted') {
-            const permission = await Notification.requestPermission();
-            if (permission !== 'granted') return;
+        try {
+            if (next && typeof Notification !== 'undefined' && Notification.permission !== 'granted') {
+                const permission = await Notification.requestPermission();
+                if (permission !== 'granted') return;
+            }
+        } catch {
+            return; // 部分浏览器会 reject 权限请求
         }
         setBrowserEnabled(next);
         localStorage.setItem(BROWSER_NOTIFY_KEY, String(next));
     };
 
     const markAllRead = () => {
-        const latest = events[0]?.id ?? 0;
-        setWatermark(latest);
-        localStorage.setItem(READ_WATERMARK_KEY, String(latest));
+        // Math.max 防回退：事件列表为空（如刚刷新）时不得把水位降回 0
+        setWatermark((prev) => {
+            const latest = Math.max(prev, events[0]?.id ?? 0);
+            localStorage.setItem(READ_WATERMARK_KEY, String(latest));
+            return latest;
+        });
     };
 
     return (
