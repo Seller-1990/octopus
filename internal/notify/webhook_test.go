@@ -25,7 +25,12 @@ func withWebhookLoader(t *testing.T, url, events string, enabled bool, hits *ato
 			hits.Add(1)
 		}
 		if received != nil {
-			received <- event
+			// 非阻塞发送：迟到的投递不得卡住 handler（server.Close 会等待
+			// 未完成请求，阻塞式发送曾造成 CI 10 分钟超时死锁）
+			select {
+			case received <- event:
+			default:
+			}
 		}
 		w.WriteHeader(http.StatusOK)
 	}))

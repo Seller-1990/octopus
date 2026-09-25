@@ -66,7 +66,6 @@ func NewBus() *Bus {
 // 该连接的 SSE 读到关闭即结束，前端退避重连取新快照。
 func (b *Bus) Publish(event Event) Event {
 	b.mu.Lock()
-	defer b.mu.Unlock()
 	b.nextID++
 	event.ID = b.nextID
 	if event.Time.IsZero() {
@@ -86,8 +85,10 @@ func (b *Bus) Publish(event Event) Event {
 			close(ch)
 		}
 	}
-	// Webhook 在锁外异步投递（5s 超时），不得阻塞订阅者扇出。
-	go dispatchWebhookAsync(event)
+	b.mu.Unlock()
+	// Webhook 在锁外处理：配置在发布时刻同步快照（防止延迟执行的投递
+	// goroutine 读到后来的配置），HTTP 投递仍异步（5s 超时），不阻塞扇出。
+	dispatchWebhookAsync(event)
 	return event
 }
 

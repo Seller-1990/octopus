@@ -26,6 +26,8 @@ func SetWebhookLoader(loader func() (url string, events string, enabled bool)) {
 // dispatchWebhookAsync 异步投递 Webhook：超时 5s、失败记 Warn、不重试
 // （内网自用，通知丢失无害；避免重试风暴）。URL 为空或总开关关闭时不发。
 // 事件过滤：events 为空 = 全部；否则逗号分隔 type 精确匹配。
+// dispatchWebhookAsync 在发布时刻被同步调用：读配置（设置缓存，无 IO）
+// 并过滤，然后才起异步 goroutine 做 HTTP 投递——配置语义为「发布时刻生效」。
 func dispatchWebhookAsync(event Event) {
 	if WebhookConfigLoader == nil {
 		return
