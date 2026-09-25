@@ -83,7 +83,7 @@ func newEngine() (*gin.Engine, error) {
 	r.Use(gzip.Gzip(gzip.DefaultCompression,
 		gzip.WithExcludedPaths([]string{"/v1/"}),
 		// SSE 端点必须排除：gzip 缓冲会破坏事件流的逐条 Flush 语义。
-		gzip.WithExcludedPathsRegexs([]string{`/api/v1/log/.*/stream`, `/api/v1/setting/export`}),
+		gzip.WithExcludedPathsRegexs([]string{`/api/v1/log/.*/stream`, `/api/v1/notify/.*/stream`, `/api/v1/setting/export`}),
 	))
 
 	r.Use(middleware.Logger(middleware.LoggerConfig{

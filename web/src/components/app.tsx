@@ -11,6 +11,7 @@ import { NavBar, useNavStore } from '@/components/modules/navbar';
 import { useTranslations } from 'next-intl'
 import Logo, { LOGO_DRAW_END_MS } from '@/components/modules/logo';
 import { Toolbar } from '@/components/modules/toolbar';
+import { NotifyBell } from '@/components/common/NotifyBell';
 import { ChannelTabSwitcher } from '@/components/modules/channel/TabSwitcher';
 import { ProxyPoolDialog } from '@/components/modules/proxy-pool/ProxyPoolDialog';
 import { ENTRANCE_VARIANTS } from '@/lib/animations/fluid-transitions';
@@ -251,6 +252,7 @@ export function AppContainer() {
                         </AnimatePresence>
                     </div>
                     <div className="ml-auto flex items-center gap-3 relative min-h-[36px]">
+                        <NotifyBell />
                         <Toolbar />
                     </div>
                     <ProxyPoolDialog />

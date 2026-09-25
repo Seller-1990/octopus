@@ -62,6 +62,9 @@ const (
 	SettingKeyVisionBridgeBaseURL              SettingKey = "vision_bridge_base_url"               // 视觉桥 OpenAI 兼容端点根路径
 	SettingKeyVisionBridgeAPIKey               SettingKey = "vision_bridge_api_key"                // 视觉桥 VLM API key（本地 Ollama 可为空）
 	SettingKeyVisionBridgeFallbackModels       SettingKey = "vision_bridge_fallback_models"        // 视觉桥备选模型（逗号分隔，按序回退）
+	SettingKeyNotifyWebhookURL                 SettingKey = "notify_webhook_url"                   // 任务通知 Webhook 地址（空=禁用；备份脱敏）
+	SettingKeyNotifyWebhookEvents              SettingKey = "notify_webhook_events"                // 任务通知事件过滤（逗号分隔 type，空=全部）
+	SettingKeyNotifyWebhookEnabled             SettingKey = "notify_webhook_enabled"               // 任务通知 Webhook 总开关
 )
 
 const (
@@ -77,16 +80,19 @@ type Setting struct {
 func DefaultSettings() []Setting {
 	return []Setting{
 		{Key: SettingKeyProxyURL, Value: ""},
-		{Key: SettingKeyStatsSaveInterval, Value: "10"},                                          // 默认10分钟保存一次统计信息
-		{Key: SettingKeyCORSAllowOrigins, Value: ""},                                             // CORS 默认不允许跨域，设置为 "*" 才允许所有来源
-		{Key: SettingKeyModelInfoUpdateInterval, Value: "24"},                                    // 默认24小时更新一次模型信息
-		{Key: SettingKeySyncLLMInterval, Value: "24"},                                            // 默认24小时同步一次LLM
-		{Key: SettingKeySiteSyncInterval, Value: "12"},                                           // 默认12小时同步一次站点账号信息
-		{Key: SettingKeySiteCheckinInterval, Value: "24"},                                        // 默认24小时自动签到一次
-		{Key: SettingKeyRelayLogKeepPeriod, Value: "7"},                                          // 默认日志保存7天
-		{Key: SettingKeyRelayLogKeepEnabled, Value: "true"},                                      // 默认保留历史日志
-		{Key: SettingKeyUsageHourlyRetentionDays, Value: "90"},                                   // 默认保留90天小时聚合
-		{Key: SettingKeyVerificationSessionRetentionDays, Value: "7"},                            // 默认验证会话/任务保留7天
+		{Key: SettingKeyStatsSaveInterval, Value: "10"},               // 默认10分钟保存一次统计信息
+		{Key: SettingKeyCORSAllowOrigins, Value: ""},                  // CORS 默认不允许跨域，设置为 "*" 才允许所有来源
+		{Key: SettingKeyModelInfoUpdateInterval, Value: "24"},         // 默认24小时更新一次模型信息
+		{Key: SettingKeySyncLLMInterval, Value: "24"},                 // 默认24小时同步一次LLM
+		{Key: SettingKeySiteSyncInterval, Value: "12"},                // 默认12小时同步一次站点账号信息
+		{Key: SettingKeySiteCheckinInterval, Value: "24"},             // 默认24小时自动签到一次
+		{Key: SettingKeyRelayLogKeepPeriod, Value: "7"},               // 默认日志保存7天
+		{Key: SettingKeyRelayLogKeepEnabled, Value: "true"},           // 默认保留历史日志
+		{Key: SettingKeyUsageHourlyRetentionDays, Value: "90"},        // 默认保留90天小时聚合
+		{Key: SettingKeyVerificationSessionRetentionDays, Value: "7"}, // 默认验证会话/任务保留7天
+		{Key: SettingKeyNotifyWebhookURL, Value: ""},                  // 任务通知 Webhook 默认禁用
+		{Key: SettingKeyNotifyWebhookEvents, Value: ""},               // 空=推送全部事件
+		{Key: SettingKeyNotifyWebhookEnabled, Value: "false"},
 		{Key: SettingKeyStreamInactivityTimeout, Value: "300"},                                   // 默认流内 300s 无上游数据判停（C250913-02）
 		{Key: SettingKeyCircuitBreakerThreshold, Value: "5"},                                     // 默认连续失败5次触发熔断
 		{Key: SettingKeyCircuitBreakerCooldown, Value: "60"},                                     // 默认基础冷却60秒

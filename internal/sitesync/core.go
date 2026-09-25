@@ -55,6 +55,7 @@ func syncAccountInternal(ctx context.Context, accountID int, fullCatalogSync boo
 	snapshot, syncErr := syncAccountStateWithRecovery(ctx, siteRecord, account)
 	if snapshot == nil && syncErr != nil {
 		message := sanitizeSiteStatusMessage(syncErr)
+		publishSyncFailedNotify(siteRecord, account, message)
 		updateErr := updateAccountSyncState(ctx, account.ID, account.CredentialRevision, model.SiteExecutionStatusFailed, message)
 		if updateErr != nil {
 			log.Warnf("failed to update site account sync state (account=%d): %v", account.ID, updateErr)
@@ -175,6 +176,9 @@ func checkinAccount(ctx context.Context, accountID int, source string) (*model.S
 			status = model.SiteExecutionStatusSkipped
 		}
 		message := sanitizeSiteStatusMessage(err)
+		if status == model.SiteExecutionStatusFailed {
+			publishCheckinFailedNotify(siteRecord, account, message)
+		}
 		updateErr := updateAccountCheckinState(ctx, account, status, message, false, resolvedAccessToken)
 		if updateErr != nil {
 			return nil, sanitizeSiteError(updateErr)
@@ -186,6 +190,9 @@ func checkinAccount(ctx context.Context, accountID int, source string) (*model.S
 	result.AccountID = account.ID
 	result.SiteID = siteRecord.ID
 	result.Message = sanitizeSiteStatusText(result.Message)
+	if result.Status == model.SiteExecutionStatusFailed {
+		publishCheckinFailedNotify(siteRecord, account, result.Message)
+	}
 	if err := updateAccountCheckinState(ctx, account, result.Status, result.Message, result.Status == model.SiteExecutionStatusSuccess, resolvedAccessToken); err != nil {
 		return nil, sanitizeSiteError(err)
 	}
@@ -276,6 +283,7 @@ func syncBatchAccounts(ctx context.Context, items []siteBatchAccount, opts SiteB
 	// stay aggregated to avoid leaking upstream HTML and overwhelming operators.
 	summary := newSiteBatchSummary(SiteBatchPhaseSync, opts, len(items))
 	defer summary.emitLog()
+	defer publishBatchSummaryNotify(summary)
 	sawSyncedAccount := false
 	for i := 0; i < len(items); i++ {
 		item := items[i]
@@ -320,6 +328,7 @@ func CheckinAllWithOptions(ctx context.Context, opts SiteBatchOptions) SiteBatch
 	items := eligibleCheckinAccounts(sites)
 	summary := newSiteBatchSummary(SiteBatchPhaseCheckin, opts, len(items))
 	defer summary.emitLog()
+	defer publishBatchSummaryNotify(summary)
 	now := time.Now()
 	for i := 0; i < len(items); i++ {
 		item := items[i]

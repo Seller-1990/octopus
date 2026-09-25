@@ -628,6 +628,17 @@
         "description": "Default multiplier cap for groups (0 = no limit)",
         "placeholder": "0 = no limit"
       }
+    },
+    "notify": {
+      "title": "Task result notifications",
+      "description": "Get notified when batch tasks finish, single-account check-in/sync fails, or verification retries complete. The in-app bell is always on; Webhook can feed n8n and other pipelines.",
+      "enabled": "Webhook notifications",
+      "webhookUrl": "Webhook URL",
+      "events": "Event filter",
+      "eventsHelp": "Comma-separated event types (e.g. site.batch,site.checkin.failed). Leave empty to push all. Types: site.batch / site.sync.failed / site.checkin.failed / verification.task",
+      "browser": "Browser notifications",
+      "browserHelp": "Pop a system notification on error/warn events (one-time permission)",
+      "browserUnsupported": "Not supported here"
     }
   },
   "group": {
@@ -2345,5 +2356,14 @@
       "allFailed": "All models failed",
       "requestFailed": "Test request failed"
     }
+  },
+  "notify": {
+    "bell": "Notifications",
+    "title": "Task notifications",
+    "empty": "No notifications yet",
+    "unread": "unread",
+    "markAllRead": "Mark all read",
+    "browserOn": "Browser alerts: on",
+    "browserOff": "Browser alerts: off"
   }
 }

@@ -628,6 +628,17 @@
         "description": "分组的默认倍率上限（0 = 不限制）",
         "placeholder": "0 = 不限制"
       }
+    },
+    "notify": {
+      "title": "任务结果通知",
+      "description": "批量任务、单账号签到/同步失败与验证重试完成时主动提醒，无需盯面板。站内铃铛始终开启；Webhook 可接入 n8n 等外部推送。",
+      "enabled": "Webhook 通知",
+      "webhookUrl": "Webhook 地址",
+      "events": "事件过滤",
+      "eventsHelp": "逗号分隔的事件类型（如 site.batch,site.checkin.failed），留空推送全部。可选类型：site.batch / site.sync.failed / site.checkin.failed / verification.task",
+      "browser": "浏览器通知",
+      "browserHelp": "错误与警告级事件到达时弹系统通知（需授权一次）",
+      "browserUnsupported": "当前环境不支持"
     }
   },
   "group": {
@@ -2345,5 +2356,14 @@
       "allFailed": "全部模型测试失败",
       "requestFailed": "测试请求失败"
     }
+  },
+  "notify": {
+    "bell": "通知",
+    "title": "任务通知",
+    "empty": "暂无通知",
+    "unread": "未读",
+    "markAllRead": "全部已读",
+    "browserOn": "浏览器通知：开",
+    "browserOff": "浏览器通知：关"
   }
 }

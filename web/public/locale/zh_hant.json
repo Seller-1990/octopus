@@ -628,6 +628,17 @@
         "description": "分組的預設倍率上限（0 = 不限制）",
         "placeholder": "0 = 不限制"
       }
+    },
+    "notify": {
+      "title": "任務結果通知",
+      "description": "批次任務、單帳號簽到/同步失敗與驗證重試完成時主動提醒，無需盯面板。站內鈴鐺始終開啟；Webhook 可接入 n8n 等外部推送。",
+      "enabled": "Webhook 通知",
+      "webhookUrl": "Webhook 地址",
+      "events": "事件過濾",
+      "eventsHelp": "逗號分隔的事件類型（如 site.batch,site.checkin.failed），留空推送全部。可選類型：site.batch / site.sync.failed / site.checkin.failed / verification.task",
+      "browser": "瀏覽器通知",
+      "browserHelp": "錯誤與警告級事件到達時彈系統通知（需授權一次）",
+      "browserUnsupported": "目前環境不支援"
     }
   },
   "group": {
@@ -2345,5 +2356,14 @@
       "allFailed": "全部模型測試失敗",
       "requestFailed": "測試請求失敗"
     }
+  },
+  "notify": {
+    "bell": "通知",
+    "title": "任務通知",
+    "empty": "暫無通知",
+    "unread": "未讀",
+    "markAllRead": "全部已讀",
+    "browserOn": "瀏覽器通知：開",
+    "browserOff": "瀏覽器通知：關"
   }
 }
