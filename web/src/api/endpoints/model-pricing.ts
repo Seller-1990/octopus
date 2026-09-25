@@ -153,3 +153,53 @@ export function useDeleteSiteModelPrice() {
         onSuccess: () => invalidatePricing(queryClient),
     });
 }
+
+export type PriceCompareRow = {
+    quote_id: number;
+    site_id: number;
+    site_name: string;
+    site_account_id?: number | null;
+    site_account_name: string;
+    group_key: string;
+    route_candidate_id?: number | null;
+    currency: string;
+    input: number;
+    output: number;
+    input_usd?: number | null;
+    output_usd?: number | null;
+    model_multiplier?: number | null;
+    group_multiplier: number;
+    group_multiplier_known: boolean;
+    source: string;
+    observed_at: string;
+    stale: boolean;
+    manual_override: boolean;
+};
+
+export type PriceCompareSummary = {
+    row_count: number;
+    min_output_usd?: number | null;
+    median_output_usd?: number | null;
+    max_output_usd?: number | null;
+    spread_ratio?: number | null;
+};
+
+export type PriceCompareResponse = {
+    model: string;
+    rows: PriceCompareRow[];
+    summary: PriceCompareSummary;
+};
+
+export function usePriceCompare(model: string, days = 7, enabled = true) {
+    return useQuery({
+        queryKey: ['models', 'price-compare', model, days],
+        queryFn: () =>
+            apiClient.get<PriceCompareResponse>('/api/v1/model/pricing/compare', {
+                model,
+                days,
+                limit: 200,
+            }),
+        enabled: enabled && model.trim().length > 0,
+        staleTime: 30000,
+    });
+}
