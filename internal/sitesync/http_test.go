@@ -305,14 +305,61 @@ func TestRequestJSONDetectsCloudflareAcrossChallengeStatuses(t *testing.T) {
 }
 
 func TestCloudflareDetectionIgnoresValidJSONMentions(t *testing.T) {
+	// 注意：http.Header.Get 会把键规范化为 "Cf-Ray"，测试的 map 字面量必须用
+	// 规范键，否则断言会在"CF 头根本没被读到"的错误原因下假通过。
 	header := http.Header{
 		"Content-Type": []string{"application/json"},
 		"Server":       []string{"cloudflare"},
-		"CF-Ray":       []string{"test-ray"},
+		"Cf-Ray":       []string{"test-ray"},
 	}
 	body := []byte(`{"provider":"cloudflare","error":"temporary upstream failure"}`)
 	if IsCloudflareProtectionResponse(http.StatusServiceUnavailable, header, body) {
 		t.Fatal("valid JSON mentioning Cloudflare was classified as a challenge")
+	}
+}
+
+// 2026-09 诊断回归：CF-Ray 只证明"经过 CF 边缘"，源站普通 HTML 页（SPA 控制台
+// 页/登录页）同样携带 CF 头。200+HTML 不得判为 CF 拦截，否则打到配置错误签到
+// 页的请求会触发"验证-失败-再验证"风暴（生产事故：单日 1344 条失败）。
+func TestCloudflareDetectionDoesNotMistakeOriginHTMLBehindCF(t *testing.T) {
+	header := http.Header{
+		"Content-Type": []string{"text/html; charset=utf-8"},
+		"Cf-Ray":       []string{"origin-ray"},
+		"Server":       []string{"cloudflare"},
+	}
+	body := []byte(`<!doctype html><html><head><title>个人面板</title></head><body>console</body></html>`)
+	if IsCloudflareProtectionResponse(http.StatusOK, header, body) {
+		t.Fatal("origin HTML page behind CF was misclassified as a Cloudflare challenge")
+	}
+}
+
+// 空 body/纯文本的源站 403（gin abort 等）即使带 CF 头也不是挑战页。
+func TestCloudflareDetectionIgnoresNonHTMLOrigin403(t *testing.T) {
+	header := http.Header{"Cf-Ray": []string{"origin-ray"}}
+	if IsCloudflareProtectionResponse(http.StatusForbidden, header, nil) {
+		t.Fatal("empty-body origin 403 behind CF was misclassified as a challenge")
+	}
+	if IsCloudflareProtectionResponse(http.StatusForbidden, header, []byte("plain text error")) {
+		t.Fatal("plain-text origin 403 behind CF was misclassified as a challenge")
+	}
+}
+
+// 真 CF 拦截形态必须继续命中：挑战文本直接判 CF（含 200 型插页），
+// 无挑战文本的 CF HTML 错误页依赖 CF 头 + htmlLike。
+func TestCloudflareDetectionStillCatchesRealChallenges(t *testing.T) {
+	header := http.Header{
+		"Content-Type": []string{"text/html; charset=utf-8"},
+		"Cf-Ray":       []string{"challenge-ray"},
+		"Cf-Mitigated": []string{"challenge"},
+	}
+	challenge := []byte(`<!doctype html><html><title>Just a moment...</title></html>`)
+	for _, statusCode := range []int{http.StatusOK, http.StatusForbidden, http.StatusTooManyRequests, http.StatusServiceUnavailable} {
+		if !IsCloudflareProtectionResponse(statusCode, header, challenge) {
+			t.Fatalf("status %d real challenge page was not detected", statusCode)
+		}
+	}
+	if !IsCloudflareProtectionResponse(http.StatusServiceUnavailable, header, []byte("<html><body>error</body></html>")) {
+		t.Fatal("503 HTML page behind CF was not detected")
 	}
 }
 

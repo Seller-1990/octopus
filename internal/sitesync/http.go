@@ -447,6 +447,13 @@ func formatSiteHTTPError(statusCode int, header http.Header, bodyBytes []byte) e
 
 // IsCloudflareProtectionResponse 判断一次上游响应是否为 Cloudflare 防护拦截。
 // 供 sitesync 内部与被动离群退役（POR）门3 复用。
+//
+// 判定纪律（2026-09 诊断修正）：CF-Ray/Server:cloudflare 只证明响应"经过了"
+// Cloudflare 边缘——托管在 CF 后面的站点，源站普通 HTML 页面同样携带这些头。
+// 不能把「经过 CF 的 HTML」当「被 CF 拦截」：200 必须命中挑战文本；非 200
+// 还需 HTML 形态佐证，空 body/纯文本的源站 403（gin abort 等）不判 CF。
+// 生产事故背景：签到请求打到配置错误的 HTML 页返回 200+HTML+CF-Ray，被旧
+// 逻辑判成 CF 保护，触发"验证-失败-再验证"重试风暴（单日 1344 条失败）。
 func IsCloudflareProtectionResponse(statusCode int, header http.Header, bodyBytes []byte) bool {
 	switch statusCode {
 	case http.StatusOK, http.StatusForbidden, http.StatusTooManyRequests, http.StatusServiceUnavailable:
@@ -464,6 +471,9 @@ func IsCloudflareProtectionResponse(statusCode int, header http.Header, bodyByte
 	if isCloudflareChallengeText(body) {
 		return true
 	}
+	if statusCode == http.StatusOK {
+		return false
+	}
 	server := strings.ToLower(header.Get("Server"))
 	hasCloudflareHeader := header.Get("CF-Ray") != "" || strings.Contains(server, "cloudflare")
 	if !hasCloudflareHeader {
@@ -473,7 +483,7 @@ func IsCloudflareProtectionResponse(statusCode int, header http.Header, bodyByte
 	htmlLike := strings.Contains(contentType, "text/html") ||
 		strings.HasPrefix(strings.TrimSpace(body), "<!doctype html") ||
 		strings.HasPrefix(strings.TrimSpace(body), "<html")
-	return statusCode != http.StatusOK || htmlLike
+	return htmlLike
 }
 
 func isCloudflareChallengeText(value string) bool {
