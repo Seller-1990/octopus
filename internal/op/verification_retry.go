@@ -15,6 +15,11 @@ import (
 const (
 	verificationRetryStaleAfter = 5 * time.Minute
 	verificationRetryMessageMax = 2048
+	// verificationRetryCooldown 验证重试失败后的冷却期：验证已完成但重试仍
+	// 被 CF 拦，说明验证凭据并非问题所在，短时间内重复创建验证会话只会形成
+	// "验证-失败-再验证"风暴（2026-09 诊断：3 账号 × 每分钟 1 轮，单日 1344
+	// 条失败）。冷却期内调用方应放弃 ensure 并保留原始 CF 错误。
+	verificationRetryCooldown = 30 * time.Minute
 )
 
 type VerificationRetryWork struct {
@@ -162,6 +167,32 @@ func VerificationRetryRequeue(ctx context.Context, sessionID int64) error {
 		return fmt.Errorf("verification retry is not requeueable")
 	}
 	return nil
+}
+
+// VerificationRetryCoolingDown 判断指定账号+操作是否存在冷却期内的失败重试。
+// 用于 CF 错误触发 VerificationSessionEnsure 前的熔断检查：冷却期内不再新建
+// 验证会话，避免"验证-失败-再验证"循环对站点高频轰击。
+func VerificationRetryCoolingDown(
+	ctx context.Context,
+	siteAccountID int,
+	operation model.SiteOperationType,
+) (bool, error) {
+	if siteAccountID <= 0 {
+		return false, nil
+	}
+	cutoff := time.Now().Add(-verificationRetryCooldown)
+	var count int64
+	err := db.GetDB().WithContext(ctx).Model(&model.VerificationTask{}).
+		Joins("JOIN verification_sessions ON verification_sessions.id = verification_tasks.session_id").
+		Where("verification_sessions.site_account_id = ?", siteAccountID).
+		Where("verification_tasks.operation = ?", operation).
+		Where("verification_tasks.retry_status = ?", model.VerificationRetryFailed).
+		Where("verification_tasks.retry_completed_at > ?", cutoff).
+		Count(&count).Error
+	if err != nil {
+		return false, err
+	}
+	return count > 0, nil
 }
 
 func VerificationRetryPendingSessionIDs(ctx context.Context, limit int) ([]int64, error) {

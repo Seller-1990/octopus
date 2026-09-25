@@ -644,6 +644,142 @@ func TestRunSiteOperationWithBrowserTransportDoesNotDuplicateRequests(t *testing
 	}
 }
 
+// 浏览器重试上下文中 CF 仍拦截时，不得再新建验证会话——本轮会话刚完成验证，
+// 重建只会形成风暴（2026-09 诊断：循环再生点在重试内部的 ensure）。
+func TestRunSiteOperationWithBrowserRetryDoesNotEnsureNewSession(t *testing.T) {
+	ctx := setupProjectTestDB(t)
+	siteRecord, account := createRecoveryFixture(t, ctx)
+	ctx = withVerificationBrowserTransport(
+		ctx,
+		op.VerificationBrowserBinding{
+			PairingID: 1,
+			TaskID:    2,
+			SessionID: 3,
+			TargetURL: siteRecord.BaseURL,
+		},
+		nil,
+	)
+	_, err := runSiteOperationWithRecovery(
+		ctx,
+		&siteRecord,
+		&account,
+		model.SiteOperationCheckin,
+		func(context.Context, *model.Site, *model.SiteAccount) (string, error) {
+			return "", wrapCloudflareProtectionError(newCloudflareProtectionError(403, nil))
+		},
+	)
+	if err == nil || !IsCloudflareProtectionError(err) {
+		t.Fatalf("expected Cloudflare error, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "verification retry still blocked") {
+		t.Fatalf("browser retry CF failure should be annotated, got %v", err)
+	}
+	var sessionCount, taskCount int64
+	if err := dbpkg.GetDB().WithContext(ctx).Model(&model.VerificationSession{}).Count(&sessionCount).Error; err != nil {
+		t.Fatalf("count sessions: %v", err)
+	}
+	if err := dbpkg.GetDB().WithContext(ctx).Model(&model.VerificationTask{}).Count(&taskCount).Error; err != nil {
+		t.Fatalf("count tasks: %v", err)
+	}
+	if sessionCount != 0 || taskCount != 0 {
+		t.Fatalf("browser retry must not create verification work: sessions=%d tasks=%d", sessionCount, taskCount)
+	}
+	var attempts []model.SiteOperationAttempt
+	if err := dbpkg.GetDB().WithContext(ctx).Find(&attempts).Error; err != nil {
+		t.Fatalf("load attempts: %v", err)
+	}
+	if len(attempts) != 1 || attempts[0].StopReason != "verification_retry_blocked" {
+		t.Fatalf("browser retry stop reason not audited: %+v", attempts)
+	}
+}
+
+// 调度路径冷却：验证重试失败后冷却期内，CF 失败不再新建验证会话；
+// 冷却期过后恢复原有的 ensure 语义。
+func TestRunSiteOperationWithRecoverySkipsEnsureWhileCoolingDown(t *testing.T) {
+	ctx := setupProjectTestDB(t)
+	siteRecord, account := createRecoveryFixture(t, ctx)
+	now := time.Now()
+	session := model.VerificationSession{
+		SiteID:        siteRecord.ID,
+		SiteAccountID: account.ID,
+		Status:        model.VerificationSessionCompleted,
+		ExpiresAt:     now.Add(time.Hour),
+		CompletedAt:   &now,
+		Source:        "browser",
+	}
+	if err := dbpkg.GetDB().WithContext(ctx).Create(&session).Error; err != nil {
+		t.Fatalf("create completed session: %v", err)
+	}
+	task := model.VerificationTask{
+		SessionID:        session.ID,
+		Status:           model.VerificationTaskCompleted,
+		TargetURL:        siteRecord.BaseURL,
+		TargetHost:       "api.example.com",
+		ExpiresAt:        session.ExpiresAt,
+		CompletedAt:      &now,
+		Operation:        model.SiteOperationSync,
+		RetryStatus:      model.VerificationRetryFailed,
+		RetryMessage:     "still blocked",
+		RetryCompletedAt: &now,
+	}
+	if err := dbpkg.GetDB().WithContext(ctx).Create(&task).Error; err != nil {
+		t.Fatalf("create failed retry task: %v", err)
+	}
+
+	calls := 0
+	_, err := runSiteOperationWithRecovery(
+		ctx,
+		&siteRecord,
+		&account,
+		model.SiteOperationSync,
+		func(context.Context, *model.Site, *model.SiteAccount) (string, error) {
+			calls++
+			return "", wrapCloudflareProtectionError(newCloudflareProtectionError(403, nil))
+		},
+	)
+	if err == nil || !IsCloudflareProtectionError(err) {
+		t.Fatalf("expected Cloudflare error, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "cooling down") {
+		t.Fatalf("cooldown should be annotated, got %v", err)
+	}
+	if calls != 1 {
+		t.Fatalf("unexpected run calls: %d", calls)
+	}
+	var taskCount int64
+	if err := dbpkg.GetDB().WithContext(ctx).Model(&model.VerificationTask{}).Count(&taskCount).Error; err != nil {
+		t.Fatalf("count tasks: %v", err)
+	}
+	if taskCount != 1 {
+		t.Fatalf("cooldown must not create a new verification task, got %d", taskCount)
+	}
+
+	// 冷却期过后恢复 ensure。
+	if err := dbpkg.GetDB().WithContext(ctx).Model(&model.VerificationTask{}).
+		Where("id = ?", task.ID).
+		Update("retry_completed_at", now.Add(-time.Hour)).Error; err != nil {
+		t.Fatalf("expire failed retry: %v", err)
+	}
+	if _, err := runSiteOperationWithRecovery(
+		ctx,
+		&siteRecord,
+		&account,
+		model.SiteOperationSync,
+		func(context.Context, *model.Site, *model.SiteAccount) (string, error) {
+			return "", wrapCloudflareProtectionError(newCloudflareProtectionError(403, nil))
+		},
+	); err == nil || !IsCloudflareProtectionError(err) {
+		t.Fatalf("expected Cloudflare error after cooldown, got %v", err)
+	}
+	var taskCountAfterCooldown int64
+	if err := dbpkg.GetDB().WithContext(ctx).Model(&model.VerificationTask{}).Count(&taskCountAfterCooldown).Error; err != nil {
+		t.Fatalf("count tasks after cooldown: %v", err)
+	}
+	if taskCountAfterCooldown != 2 {
+		t.Fatalf("cooldown expiry should allow one new verification task, got %d", taskCountAfterCooldown)
+	}
+}
+
 func createRecoveryFixture(t *testing.T, ctx context.Context) (model.Site, model.SiteAccount) {
 	t.Helper()
 	siteRecord := model.Site{

@@ -99,8 +99,9 @@ func runSiteOperationWithRecovery[T any](
 	recoveryCtx, cancel := context.WithTimeout(ctx, siteRecoveryBudget)
 	defer cancel()
 
+	_, browserRetry := verificationBrowserTransportFromContext(ctx)
 	var paths []siteRecoveryPath
-	if _, browserRetry := verificationBrowserTransportFromContext(ctx); browserRetry {
+	if browserRetry {
 		proxyMode, proxyConfigID := resolveSiteAccountProxy(siteRecord, account)
 		paths = []siteRecoveryPath{{
 			proxyMode:     proxyMode,
@@ -272,6 +273,49 @@ func runSiteOperationWithRecovery[T any](
 			),
 		)
 		if IsCloudflareProtectionError(runErr) {
+			// 浏览器重试上下文中的 CF 失败不得再新建验证会话：本轮会话刚完成
+			// 验证仍被拦，说明验证凭据不是瓶颈，重建会话只会形成"验证-失败-
+			// 再验证"风暴（2026-09 诊断确认的循环再生点，单日 1344 条失败）。
+			if browserRetry {
+				reportSiteRecoveryWriteError(
+					siteRecord,
+					account,
+					operationID,
+					"mark browser retry blocked",
+					markSiteOperationStopReason(
+						context.WithoutCancel(ctx),
+						operationID,
+						"verification_retry_blocked",
+					),
+				)
+				return value, fmt.Errorf("%w: verification retry still blocked after a fresh verification", runErr)
+			}
+			// 调度路径的熔断：冷却期内已有失败重试时同样不重建——凭据已安装
+			// 且重试仍失败，重复验证无意义；把站点压力压到每冷却期至多一轮。
+			cooling, coolErr := op.VerificationRetryCoolingDown(ctx, account.ID, operation)
+			if coolErr != nil {
+				reportSiteRecoveryWriteError(
+					siteRecord,
+					account,
+					operationID,
+					"check verification retry cooldown",
+					coolErr,
+				)
+			}
+			if cooling {
+				reportSiteRecoveryWriteError(
+					siteRecord,
+					account,
+					operationID,
+					"mark verification cooldown",
+					markSiteOperationStopReason(
+						context.WithoutCancel(ctx),
+						operationID,
+						"verification_cooldown",
+					),
+				)
+				return value, fmt.Errorf("%w: verification retry is cooling down", runErr)
+			}
 			_, ensureErr := op.VerificationSessionEnsure(context.WithoutCancel(ctx), op.VerificationSessionCreateRequest{
 				SiteAccountID: account.ID,
 				ProxyConfigID: cloneInt(path.proxyConfigID),
