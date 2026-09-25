@@ -898,7 +898,8 @@
       "catalog": "模型目录",
       "discovery": "模型发现",
       "headers": "Header 策略",
-      "global-prices": "全局价格"
+      "global-prices": "全局价格",
+      "priceCompare": "价格对比"
     },
     "discovery": {
       "title": "模型发现",
@@ -1173,6 +1174,31 @@
         "channel": "Channel",
         "canonical_model": "Canonical Model",
         "route_candidate": "路由候选"
+      }
+    },
+    "priceCompare": {
+      "searchPlaceholder": "搜索模型名，回车对比",
+      "empty": "没有符合条件的有效报价",
+      "cheapest": "最便宜",
+      "manual": "手动",
+      "multiplierUnknown": "倍率未知",
+      "stale": "已过期",
+      "summary": {
+        "min": "最低到手输出价",
+        "median": "中位到手输出价",
+        "max": "最高到手输出价",
+        "spread": "价差倍数"
+      },
+      "columns": {
+        "site": "站点/账号",
+        "group": "分组",
+        "rawInput": "输入原价",
+        "rawOutput": "输出原价",
+        "modelMultiplier": "模型倍率",
+        "groupMultiplier": "分组倍率",
+        "outputUSD": "到手输出价 (USD)",
+        "inputUSD": "到手输入价 (USD)",
+        "observedAt": "报价时间"
       }
     }
   },

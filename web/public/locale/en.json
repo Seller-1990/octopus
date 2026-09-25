@@ -898,7 +898,8 @@
       "catalog": "Catalog",
       "discovery": "Discovery",
       "headers": "Header policies",
-      "global-prices": "Global prices"
+      "global-prices": "Global prices",
+      "priceCompare": "Price Compare"
     },
     "discovery": {
       "title": "Model discovery",
@@ -1173,6 +1174,31 @@
         "channel": "Channel",
         "canonical_model": "Canonical model",
         "route_candidate": "Route candidate"
+      }
+    },
+    "priceCompare": {
+      "searchPlaceholder": "Search model name, press Enter to compare",
+      "empty": "No valid quotes match",
+      "cheapest": "Cheapest",
+      "manual": "manual",
+      "multiplierUnknown": "multiplier unknown",
+      "stale": "stale",
+      "summary": {
+        "min": "Lowest effective output",
+        "median": "Median effective output",
+        "max": "Highest effective output",
+        "spread": "Spread"
+      },
+      "columns": {
+        "site": "Site / Account",
+        "group": "Group",
+        "rawInput": "Raw input",
+        "rawOutput": "Raw output",
+        "modelMultiplier": "Model multiplier",
+        "groupMultiplier": "Group multiplier",
+        "outputUSD": "Effective output (USD)",
+        "inputUSD": "Effective input (USD)",
+        "observedAt": "Observed"
       }
     }
   },

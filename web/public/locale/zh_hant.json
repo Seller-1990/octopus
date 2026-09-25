@@ -898,7 +898,8 @@
       "catalog": "模型目錄",
       "discovery": "模型發現",
       "headers": "Header 策略",
-      "global-prices": "全域價格"
+      "global-prices": "全域價格",
+      "priceCompare": "價格對比"
     },
     "discovery": {
       "title": "模型發現",
@@ -1173,6 +1174,31 @@
         "channel": "Channel",
         "canonical_model": "Canonical Model",
         "route_candidate": "路由候選"
+      }
+    },
+    "priceCompare": {
+      "searchPlaceholder": "搜尋模型名，Enter 對比",
+      "empty": "沒有符合條件的有效報價",
+      "cheapest": "最便宜",
+      "manual": "手動",
+      "multiplierUnknown": "倍率未知",
+      "stale": "已過期",
+      "summary": {
+        "min": "最低到手輸出價",
+        "median": "中位到手輸出價",
+        "max": "最高到手輸出價",
+        "spread": "價差倍數"
+      },
+      "columns": {
+        "site": "站點/帳號",
+        "group": "分組",
+        "rawInput": "輸入原價",
+        "rawOutput": "輸出原價",
+        "modelMultiplier": "模型倍率",
+        "groupMultiplier": "分組倍率",
+        "outputUSD": "到手輸出價 (USD)",
+        "inputUSD": "到手輸入價 (USD)",
+        "observedAt": "報價時間"
       }
     }
   },

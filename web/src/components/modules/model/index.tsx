@@ -1,17 +1,19 @@
 'use client';
 
 import { useState } from 'react';
-import { Boxes, PackageSearch } from 'lucide-react';
+import { ArrowLeftRight, Boxes, PackageSearch } from 'lucide-react';
 import { useTranslations } from 'next-intl';
 import { cn } from '@/lib/utils';
 import { ModelCatalog } from './Catalog';
 import { ModelDiscovery } from './Discovery';
+import { PriceComparePanel } from './PriceComparePanel';
 
-type ModelView = 'catalog' | 'discovery';
+type ModelView = 'catalog' | 'discovery' | 'priceCompare';
 
 const VIEWS = [
     { id: 'catalog', icon: Boxes },
     { id: 'discovery', icon: PackageSearch },
+    { id: 'priceCompare', icon: ArrowLeftRight },
 ] as const;
 
 export function Model() {
@@ -79,6 +81,7 @@ export function Model() {
             >
                 {view === 'catalog' ? <ModelCatalog /> : null}
                 {view === 'discovery' ? <ModelDiscovery /> : null}
+                {view === 'priceCompare' ? <PriceComparePanel /> : null}
             </div>
         </div>
     );
