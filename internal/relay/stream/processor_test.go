@@ -523,3 +523,145 @@ func (h *hangingSource) Close() error {
 	h.closed = true
 	return nil
 }
+
+// errorAfterDataStreamSource 先投递若干事件，然后读失败（非 EOF）。
+type errorAfterDataStreamSource struct {
+	events [][]byte
+	err    error
+	idx    int
+}
+
+func (s *errorAfterDataStreamSource) ReadEvent(context.Context) ([]byte, error) {
+	if s.idx < len(s.events) {
+		data := s.events[s.idx]
+		s.idx++
+		return data, nil
+	}
+	return nil, s.err
+}
+
+func (s *errorAfterDataStreamSource) Close() error { return nil }
+
+// F17：读失败前已收到的部分流必须回调 OnFinish——Anthropic 等协议在
+// message_start 就携带 input usage，跳过回调会把已收到的计费信息丢账。
+func TestStreamProcessor_ReadErrorStillFinishesPartialStream(t *testing.T) {
+	source := &errorAfterDataStreamSource{
+		events: [][]byte{[]byte(`data: {"type":"message_start","usage":{"input_tokens":5}}`)},
+		err:    errors.New("connection reset by peer"),
+	}
+	writer := newMockStreamWriter()
+	finishCalls := 0
+	var finished []byte
+	processor := NewStreamProcessor(StreamConfig{
+		Source:          source,
+		Writer:          writer,
+		Context:         context.Background(),
+		BufferRawStream: true,
+		OnFinish: func(_ context.Context, rawStream []byte) error {
+			finishCalls++
+			finished = rawStream
+			return nil
+		},
+	})
+
+	err := processor.Run()
+	if err == nil || !strings.Contains(err.Error(), "stream read error") {
+		t.Fatalf("expected read error, got %v", err)
+	}
+	if finishCalls != 1 {
+		t.Fatalf("OnFinish called %d times on read error, want 1", finishCalls)
+	}
+	if !strings.Contains(string(finished), "message_start") {
+		t.Fatalf("partial stream content lost on read error: %q", finished)
+	}
+}
+
+// F16：上游 SSE 心跳（纯注释块）原样透传但不计为首 token/有效载荷。
+func TestStreamProcessor_PassthroughHeartbeatNotFirstToken(t *testing.T) {
+	source := newMockStreamSource([][]byte{
+		[]byte(": keep-alive\n\n"),
+		[]byte(": ping\n\n"),
+		[]byte("data: {\"choices\":[{\"delta\":{\"content\":\"hi\"}}]}\n\n"),
+	})
+	writer := newMockStreamWriter()
+	firstTokenFired := 0
+	processor := NewStreamProcessor(StreamConfig{
+		Source:  source,
+		Writer:  writer,
+		Context: context.Background(),
+		OnFirstToken: func() {
+			firstTokenFired++
+		},
+	})
+	if err := processor.Run(); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if firstTokenFired != 1 {
+		t.Fatalf("OnFirstToken fired %d times, want 1 (heartbeat chunks must not count)", firstTokenFired)
+	}
+	if !processor.PayloadWritten() {
+		t.Fatal("real payload must mark payloadWritten")
+	}
+}
+
+// F16：心跳与真实数据混合的块（字节切分边界）仍按有效载荷计。
+func TestStreamProcessor_MixedHeartbeatChunkCountsAsFirstToken(t *testing.T) {
+	source := newMockStreamSource([][]byte{
+		[]byte(": keep-alive\n\ndata: {\"delta\":\"hi\"}\n\n"),
+	})
+	writer := newMockStreamWriter()
+	firstTokenFired := 0
+	processor := NewStreamProcessor(StreamConfig{
+		Source:  source,
+		Writer:  writer,
+		Context: context.Background(),
+		OnFirstToken: func() {
+			firstTokenFired++
+		},
+	})
+	if err := processor.Run(); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if firstTokenFired != 1 {
+		t.Fatalf("mixed chunk must count as first token, fired %d", firstTokenFired)
+	}
+}
+
+// F16：整条流只有心跳 = 未交付任何真实内容，按空流处理（可 failover）。
+func TestStreamProcessor_HeartbeatOnlyStreamIsEmpty(t *testing.T) {
+	source := newMockStreamSource([][]byte{
+		[]byte(": keep-alive\n\n"),
+		[]byte(": ping\n\n"),
+	})
+	processor := NewStreamProcessor(StreamConfig{
+		Source:  source,
+		Writer:  newMockStreamWriter(),
+		Context: context.Background(),
+	})
+	if err := processor.Run(); !errors.Is(err, ErrEmptyUpstreamStream) {
+		t.Fatalf("heartbeat-only stream should be ErrEmptyUpstreamStream, got %v", err)
+	}
+}
+
+func TestIsSSECommentOnly(t *testing.T) {
+	cases := []struct {
+		name    string
+		payload []byte
+		want    bool
+	}{
+		{"comment block", []byte(": keep-alive\n\n"), true},
+		{"comment then empty lines", []byte(": ping\n\n\n"), true},
+		{"comment split mid-line", []byte(": pi"), true},
+		{"data line present", []byte(": ping\n\ndata: {}"), false},
+		{"pure data", []byte("data: {\"a\":1}\n\n"), false},
+		{"empty payload", nil, false},
+		{"whitespace only", []byte("\n\n"), false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := isSSECommentOnly(tc.payload); got != tc.want {
+				t.Fatalf("isSSECommentOnly(%q) = %v, want %v", tc.payload, got, tc.want)
+			}
+		})
+	}
+}

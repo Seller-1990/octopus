@@ -249,7 +249,14 @@ func (p *StreamProcessor) Run() error {
 					return p.handleDisconnect()
 				}
 				p.termination = TerminationReadError
-				return fmt.Errorf("stream read error: %w", r.err)
+				err := fmt.Errorf("stream read error: %w", r.err)
+				// F17：读失败前已收到的部分流仍可能携带计费信息（如 Anthropic
+				// message_start 的 input usage），跳过 OnFinish 会丢账。与断连
+				// 路径一致回调，幂等由 OnFinish 实现方保证。
+				if p.config.BufferRawStream && p.rawBuffer.Len() > 0 && p.config.OnFinish != nil {
+					_ = p.config.OnFinish(context.Background(), p.rawBuffer.Bytes())
+				}
+				return err
 			}
 
 			if len(r.data) == 0 {
@@ -305,6 +312,11 @@ func (p *StreamProcessor) processEvent(data []byte) error {
 		output = data // Passthrough
 	}
 
+	// F16：上游 SSE 心跳（纯注释块）原样透传但不计为首 token/有效载荷——
+	// TTFT 的语义是「客户端看到首个真实内容」。心跳+真实数据混合的块仍按
+	// 有效载荷计，按字节切分的 chunk 边界不会误判。
+	commentOnlyPassthrough := p.config.Transform == nil && isSSECommentOnly(output)
+
 	// Record protocol terminal evidence before writing. A downstream write can
 	// fail immediately after the upstream emitted its terminal frame; losing
 	// the evidence would incorrectly turn a completed response into a generic
@@ -314,18 +326,43 @@ func (p *StreamProcessor) processEvent(data []byte) error {
 	}
 	if _, err := p.config.Writer.Write(output); err != nil {
 		p.termination = TerminationWriteError
-		if p.terminalEvent != "" && p.config.OnFinish != nil && p.config.BufferRawStream {
+		if p.rawBuffer.Len() > 0 && p.config.OnFinish != nil && p.config.BufferRawStream {
 			// The normal finalize path is skipped on a write error, but the
-			// already observed terminal frame still carries usage/response
-			// metadata needed for accounting.
+			// already received stream (terminal frame or partial usage frames)
+			// still carries accounting metadata.
 			_ = p.config.OnFinish(context.Background(), p.rawBuffer.Bytes())
 		}
 		return fmt.Errorf("write error: %w", err)
 	}
 
-	p.payloadWritten = true
+	if !commentOnlyPassthrough {
+		p.payloadWritten = true
+	}
 	p.config.Writer.Flush()
 	return nil
+}
+
+// isSSECommentOnly 判断一段透传字节是否全部由 SSE 注释行/空行组成
+// （注释行以冒号开头）。data 行哪怕只有一行也返回 false。
+func isSSECommentOnly(payload []byte) bool {
+	sawAny := false
+	for len(payload) > 0 {
+		line := payload
+		if idx := bytes.IndexByte(payload, '\n'); idx >= 0 {
+			line, payload = payload[:idx], payload[idx+1:]
+		} else {
+			payload = nil
+		}
+		trimmed := bytes.TrimSpace(line)
+		if len(trimmed) == 0 {
+			continue
+		}
+		sawAny = true
+		if trimmed[0] != ':' {
+			return false
+		}
+	}
+	return sawAny
 }
 
 // writeHeartbeat sends SSE heartbeat (comment line).

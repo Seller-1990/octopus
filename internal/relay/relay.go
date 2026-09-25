@@ -651,6 +651,37 @@ func (ra *relayAttempt) attempt() attemptResult {
 		ra.collectResponse()
 		span.SetUsage(ra.metrics.AttemptUsageSnapshot())
 		op.ChannelKeyRecordUse(ra.usedKey, ra.addObservedAttemptCost())
+
+		// F18：协议有终态帧但流以 EOF 结束且终态未出现 = 上游截断。客户端
+		// 已收到部分内容无法 failover，但必须记失败（attribution upstream）：
+		// 不计渠道成功、不绑定会话保持，成功率不再被截断流虚高。
+		if truncatedUpstreamStream(ra.streamResult, ra.internalRequest.RawAPIFormat) {
+			err := fmt.Errorf("upstream stream ended without a protocol terminal event (truncated)")
+			span.EndDetailed(
+				dbmodel.AttemptFailed,
+				statusCode,
+				err.Error(),
+				dbmodel.RequestOutcomeFailed,
+				dbmodel.AttemptAttributionUpstream,
+				evidence,
+			)
+			op.StatsChannelUpdate(ra.channel.ID, dbmodel.StatsMetrics{
+				WaitTime:      span.Duration().Milliseconds(),
+				RequestFailed: 1,
+			})
+			return attemptResult{
+				Success:              false,
+				Written:              ra.streamPayloadWritten.Load(),
+				Err:                  err,
+				StatusCode:           statusCode,
+				Outcome:              dbmodel.RequestOutcomeFailed,
+				Attribution:          dbmodel.AttemptAttributionUpstream,
+				TransportTermination: termination,
+				CompletionEvidence:   evidence,
+				TerminalEvent:        terminalEvent,
+			}
+		}
+
 		outcome := requestOutcomeForTerminalEvent(terminalEvent)
 		if outcome == dbmodel.RequestOutcomeFailed {
 			// 事件名之外的错误详情来自流内 error 事件（captureStreamErrorDetail）；
