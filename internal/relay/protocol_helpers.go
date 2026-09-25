@@ -8,6 +8,7 @@ import (
 	dbmodel "github.com/bestruirui/octopus/internal/model"
 	"github.com/bestruirui/octopus/internal/op"
 	"github.com/bestruirui/octopus/internal/relay/balancer"
+	"github.com/bestruirui/octopus/internal/relay/stream"
 	"github.com/bestruirui/octopus/internal/transformer/inbound"
 	transformerModel "github.com/bestruirui/octopus/internal/transformer/model"
 	"github.com/gin-gonic/gin"
@@ -43,6 +44,17 @@ func requestOutcomeForTerminalEvent(event string) dbmodel.RequestOutcome {
 	default:
 		return dbmodel.RequestOutcomeSuccess
 	}
+}
+
+// truncatedUpstreamStream 判定「协议定义了终态帧、流以 EOF 结束、终态未出现」
+// 的截断流（LEGACY-250905-F18）。终态帧表为空的协议没有语义终态概念，EOF
+// 即正常结束，不适用。截断流客户端已收到部分内容、无法 failover，但必须记
+// 失败（attribution upstream）：不参与会话保持、不计渠道成功、成功率不虚高。
+func truncatedUpstreamStream(result stream.Result, format transformerModel.APIFormat) bool {
+	return result.Termination == stream.TerminationUpstreamEOF &&
+		result.PayloadWritten &&
+		result.TerminalEvent == "" &&
+		len(clientSuccessTerminalEvents(format)) > 0
 }
 
 func inboundProtocolName(value inbound.InboundType) dbmodel.ProtocolName {
