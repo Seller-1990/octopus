@@ -86,7 +86,10 @@ func SiteModelPriceCompare(
 		return nil, summary, err
 	}
 
-	siteNames, accountNames := compareDisplayNames(ctx, quotes)
+	siteNames, accountNames, nameErr := compareDisplayNames(ctx, quotes)
+	if nameErr != nil {
+		return nil, summary, nameErr
+	}
 	now := time.Now()
 	rows := make([]SiteModelPriceCompareRow, 0, len(quotes))
 	outputUSDs := make([]float64, 0, len(quotes))
@@ -128,7 +131,7 @@ func SiteModelPriceCompare(
 func compareDisplayNames(
 	ctx context.Context,
 	quotes []model.SiteModelPriceQuote,
-) (map[int]string, map[int]string) {
+) (map[int]string, map[int]string, error) {
 	siteIDs := make([]int, 0, len(quotes))
 	accountIDs := make([]int, 0, len(quotes))
 	seenSite := make(map[int]struct{}, len(quotes))
@@ -152,10 +155,11 @@ func compareDisplayNames(
 		if err := dbpkg.GetDB().WithContext(ctx).
 			Select("id", "name").
 			Where("id IN ?", siteIDs).
-			Find(&sites).Error; err == nil {
-			for _, site := range sites {
-				siteNames[site.ID] = site.Name
-			}
+			Find(&sites).Error; err != nil {
+			return nil, nil, err
+		}
+		for _, site := range sites {
+			siteNames[site.ID] = site.Name
 		}
 	}
 	accountNames := make(map[int]string, len(accountIDs))
@@ -164,13 +168,14 @@ func compareDisplayNames(
 		if err := dbpkg.GetDB().WithContext(ctx).
 			Select("id", "name").
 			Where("id IN ?", accountIDs).
-			Find(&accounts).Error; err == nil {
-			for _, account := range accounts {
-				accountNames[account.ID] = account.Name
-			}
+			Find(&accounts).Error; err != nil {
+			return nil, nil, err
+		}
+		for _, account := range accounts {
+			accountNames[account.ID] = account.Name
 		}
 	}
-	return siteNames, accountNames
+	return siteNames, accountNames, nil
 }
 
 func accountNameByID(names map[int]string, accountID *int) string {
