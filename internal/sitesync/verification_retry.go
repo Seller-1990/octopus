@@ -112,6 +112,7 @@ func retryVerificationSession(
 		}
 		return finishErr
 	}
+	publishVerificationRetryNotify(success, work.Session.SiteAccountID, message)
 	if runErr != nil {
 		return runErr
 	}

@@ -11,6 +11,7 @@ import { SettingRouting } from './Routing';
 import { SettingSyncTasks } from './SyncTasks';
 import { SettingData } from './Data';
 import { SettingWebDAVBackup } from './WebDAVBackup';
+import { SettingNotify } from './Notify';
 
 export function Setting() {
     return (
@@ -26,6 +27,7 @@ export function Setting() {
                 <SettingSyncTasks key="setting-sync-tasks" />
                 <SettingData key="setting-data" />
                 <SettingWebDAVBackup key="setting-webdav-backup" />
+                <SettingNotify key="setting-notify" />
             </PageWrapper>
         </div>
     );
