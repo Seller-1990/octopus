@@ -292,7 +292,9 @@ func runSiteOperationWithRecovery[T any](
 			}
 			// 调度路径的熔断：冷却期内已有失败重试时同样不重建——凭据已安装
 			// 且重试仍失败，重复验证无意义；把站点压力压到每冷却期至多一轮。
-			cooling, coolErr := op.VerificationRetryCoolingDown(ctx, account.ID, operation)
+			// 查询用 WithoutCancel：ctx 已死时熔断检查失败会 fail-open 旁路
+			// 熔断，而下游 ensure 恰恰用 WithoutCancel 仍能建会话。
+			cooling, coolErr := op.VerificationRetryCoolingDown(context.WithoutCancel(ctx), account.ID, operation)
 			if coolErr != nil {
 				reportSiteRecoveryWriteError(
 					siteRecord,
