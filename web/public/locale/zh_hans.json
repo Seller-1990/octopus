@@ -2364,6 +2364,8 @@
     "unread": "未读",
     "markAllRead": "全部已读",
     "browserOn": "浏览器通知：开",
-    "browserOff": "浏览器通知：关"
+    "browserOff": "浏览器通知：关",
+    "browserInsecure": "当前通过 HTTP 访问，浏览器通知需要 HTTPS 或 localhost",
+    "browserDenied": "浏览器通知权限被拒绝，请在浏览器地址栏权限设置中允许"
   }
 }

@@ -2364,6 +2364,8 @@
     "unread": "未讀",
     "markAllRead": "全部已讀",
     "browserOn": "瀏覽器通知：開",
-    "browserOff": "瀏覽器通知：關"
+    "browserOff": "瀏覽器通知：關",
+    "browserInsecure": "目前透過 HTTP 存取，瀏覽器通知需要 HTTPS 或 localhost",
+    "browserDenied": "瀏覽器通知權限被拒絕，請在瀏覽器網址列權限設定中允許"
   }
 }

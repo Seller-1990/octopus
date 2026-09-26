@@ -6,6 +6,7 @@ import { useTranslations } from 'next-intl';
 import { type NotifyEvent, type NotifyLevel, useNotifyStream } from '@/api/endpoints/notify';
 import { Button } from '@/components/ui/button';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { toast } from '@/components/common/Toast';
 import { cn } from '@/lib/utils';
 
 const READ_WATERMARK_KEY = 'notify_read_watermark';
@@ -35,23 +36,10 @@ export function NotifyBell() {
         queueMicrotask(() => {
             const stored = Number(localStorage.getItem(READ_WATERMARK_KEY) ?? '0');
             setWatermark(Number.isFinite(stored) ? stored : 0);
-            setBrowserEnabled(localStorage.getItem(BROWSER_NOTIFY_KEY) === 'true' && typeof Notification !== 'undefined');
+            setBrowserEnabled(localStorage.getItem(BROWSER_NOTIFY_KEY) === 'true' && typeof Notification !== 'undefined' && window.isSecureContext);
             initialized.current = true;
         });
     }, []);
-
-    // 打开面板即把水位推到最新事件（经微任务延迟满足 set-state-in-effect）
-    useEffect(() => {
-        if (!open) return;
-        const latest = events[0]?.id ?? 0;
-        queueMicrotask(() => {
-            setWatermark((prev) => {
-                const next = Math.max(prev, latest);
-                if (next !== prev) localStorage.setItem(READ_WATERMARK_KEY, String(next));
-                return next;
-            });
-        });
-    }, [open, events]);
 
     // 浏览器通知：只弹「已通知水位」之后的新事件（error/warn）。水位持久化
     // 到 localStorage——重连/刷新后服务端快照重放旧事件不再逐条轰炸（ocr 采纳）。
@@ -84,12 +72,22 @@ export function NotifyBell() {
 
     const toggleBrowser = async () => {
         const next = !browserEnabled;
+        // HTTP（非 localhost）属于非安全上下文，浏览器通知 API 恒为 denied——
+        // 必须给出明确反馈，否则用户点击无任何反应（v1.8.6 用户反馈）
+        if (next && !window.isSecureContext) {
+            toast.error(t('browserInsecure'));
+            return;
+        }
         try {
             if (next && typeof Notification !== 'undefined' && Notification.permission !== 'granted') {
                 const permission = await Notification.requestPermission();
-                if (permission !== 'granted') return;
+                if (permission !== 'granted') {
+                    toast.error(t('browserDenied'));
+                    return;
+                }
             }
         } catch {
+            toast.error(t('browserInsecure'));
             return; // 部分浏览器会 reject 权限请求
         }
         setBrowserEnabled(next);
