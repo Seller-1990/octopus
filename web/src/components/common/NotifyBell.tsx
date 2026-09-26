@@ -36,7 +36,7 @@ export function NotifyBell() {
         queueMicrotask(() => {
             const stored = Number(localStorage.getItem(READ_WATERMARK_KEY) ?? '0');
             setWatermark(Number.isFinite(stored) ? stored : 0);
-            setBrowserEnabled(localStorage.getItem(BROWSER_NOTIFY_KEY) === 'true' && typeof Notification !== 'undefined');
+            setBrowserEnabled(localStorage.getItem(BROWSER_NOTIFY_KEY) === 'true' && typeof Notification !== 'undefined' && window.isSecureContext);
             initialized.current = true;
         });
     }, []);
