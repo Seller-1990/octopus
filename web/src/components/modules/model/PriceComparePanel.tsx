@@ -71,8 +71,8 @@ export function PriceComparePanel() {
     }, [rows]);
 
     return (
-        <div className="flex h-full min-h-0 flex-col gap-3 overflow-y-auto pb-24 md:pb-0">
-            <div className="relative">
+        <div className="flex h-full min-h-0 flex-col gap-3">
+            <div className="relative shrink-0">
                 <Search className="text-muted-foreground absolute top-1/2 left-3 size-4 -translate-y-1/2" />
                 <Input
                     value={query}
@@ -116,6 +116,7 @@ export function PriceComparePanel() {
                 </div>
             ) : null}
 
+            <div className="min-h-0 flex-1 overflow-y-auto">
             {summary && summary.row_count > 0 ? (
                 <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
                     <SummaryCell label={t('summary.min')} value={formatUSD(summary.min_output_usd)} />
@@ -138,8 +139,8 @@ export function PriceComparePanel() {
             ) : null}
 
             {rows.length > 0 ? (
-                <div className="overflow-hidden rounded-lg border">
-                    <table className="w-full text-sm">
+                <div className="overflow-x-auto rounded-lg border">
+                    <table className="w-full min-w-[900px] text-sm">
                         <thead className="bg-muted/50 text-muted-foreground text-xs">
                             <tr>
                                 <th className="px-3 py-2 text-left">{t('columns.site')}</th>
@@ -241,6 +242,8 @@ export function PriceComparePanel() {
                     </table>
                 </div>
             ) : null}
+            <div className="h-1 pb-24 md:hidden" aria-hidden />
+            </div>
         </div>
     );
 }

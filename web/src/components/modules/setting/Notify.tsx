@@ -23,7 +23,8 @@ export function SettingNotify() {
     useEffect(() => {
         // lint react-hooks/set-state-in-effect：本地存储初始化经微任务延迟
         queueMicrotask(() => {
-            setBrowserSupported('Notification' in window);
+            // HTTP（非 localhost）下 Notification 恒为 denied，与不支持同等对待
+            setBrowserSupported('Notification' in window && window.isSecureContext);
             setBrowserEnabled(localStorage.getItem(BROWSER_NOTIFY_KEY) === 'true');
         });
     }, []);

@@ -41,6 +41,8 @@ const VENDOR_LIST: VendorOption[] = [
     { id: 'nomic', label: 'Nomic AI', className: 'bg-amber-500/10 text-amber-700 dark:text-amber-400' },
     { id: 'zeroentropy', label: 'ZeroEntropy', className: 'bg-neutral-500/10 text-neutral-700 dark:text-neutral-300' },
     { id: 'poolside', label: 'Poolside', className: 'bg-blue-500/10 text-blue-600 dark:text-blue-400' },
+    // 前端展示专用的「其他」桶（仅分组过滤用，非后端厂商常量）
+    { id: 'other', label: 'Other', className: 'bg-gray-500/10 text-gray-600 dark:text-gray-300' },
 ];
 
 const VENDOR_BY_ID = new Map(VENDOR_LIST.map((item) => [item.id, item]));

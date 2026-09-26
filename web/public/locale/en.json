@@ -2364,6 +2364,8 @@
     "unread": "unread",
     "markAllRead": "Mark all read",
     "browserOn": "Browser alerts: on",
-    "browserOff": "Browser alerts: off"
+    "browserOff": "Browser alerts: off",
+    "browserInsecure": "You are on HTTP; browser notifications require HTTPS or localhost",
+    "browserDenied": "Notification permission was denied — allow it in the browser address-bar settings"
   }
 }

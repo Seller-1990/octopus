@@ -113,11 +113,15 @@ function detectVendorFromModel(modelName: string): string | null {
     return null;
 }
 
+// 无法归入已知厂商的模型（如 jev-1.3.0）归入「其他」桶，保证厂商过滤
+// 对所有分组可达——否则只含未识别模型的分组没有任何过滤 chip 可选。
+const VENDOR_OTHER = 'other';
+
 function getGroupVendors(group: Group): Set<string> {
     const vendors = new Set<string>();
     for (const item of group.items ?? []) {
         const vendor = (item.vendor ?? '').trim().toLowerCase() || detectVendorFromModel(item.model_name ?? '');
-        if (vendor) vendors.add(vendor);
+        vendors.add(vendor || VENDOR_OTHER);
     }
     return vendors;
 }
@@ -141,7 +145,14 @@ export function Group() {
         for (const group of groups ?? []) {
             for (const v of getGroupVendors(group)) vendors.add(v);
         }
-        return [...vendors].sort();
+        const sorted = [...vendors].sort();
+        // 「其他」固定排最后
+        const otherIndex = sorted.indexOf(VENDOR_OTHER);
+        if (otherIndex >= 0) {
+            sorted.splice(otherIndex, 1);
+            sorted.push(VENDOR_OTHER);
+        }
+        return sorted;
     }, [groups]);
 
     const sortedGroups = useMemo(() => {
