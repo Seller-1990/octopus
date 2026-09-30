@@ -2302,7 +2302,8 @@
       "failures": "連續失敗",
       "trips": "熔斷次數",
       "cooldown": "剩餘冷卻",
-      "actions": "操作"
+      "actions": "操作",
+      "site": "站點 / 帳號"
     },
     "state": {
       "closed": "正常",
@@ -2366,6 +2367,8 @@
     "browserOn": "瀏覽器通知：開",
     "browserOff": "瀏覽器通知：關",
     "browserInsecure": "目前透過 HTTP 存取，瀏覽器通知需要 HTTPS 或 localhost",
-    "browserDenied": "瀏覽器通知權限被拒絕，請在瀏覽器網址列權限設定中允許"
+    "browserDenied": "瀏覽器通知權限被拒絕，請在瀏覽器網址列權限設定中允許",
+    "clear": "清空記錄",
+    "cleared": "通知記錄已清空"
   }
 }

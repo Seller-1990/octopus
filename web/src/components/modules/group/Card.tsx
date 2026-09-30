@@ -615,8 +615,8 @@ export function GroupCard({ group, hideUnavailable = false }: { group: Group; hi
             {!confirmDelete && (
                 <div
                     className={cn(
-                        'absolute left-3 bottom-3 z-10 flex items-center gap-0.5 rounded-xl bg-card/95 backdrop-blur-sm border border-border/40 shadow-sm p-0.5 transition-opacity duration-200',
-                        'opacity-0 pointer-events-none group-hover/card:opacity-100 group-hover/card:pointer-events-auto group-focus-within/card:opacity-100 group-focus-within/card:pointer-events-auto',
+                        // 常显（用户反馈：悬停浮现的删除按钮完全不可发现）
+                        'absolute left-3 bottom-3 z-10 flex items-center gap-0.5 rounded-xl bg-card/95 backdrop-blur-sm border border-border/40 shadow-sm p-0.5',
                     )}
                 >
                     <Tooltip side="top" sideOffset={6} align="center">

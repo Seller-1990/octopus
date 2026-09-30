@@ -2302,7 +2302,8 @@
       "failures": "连续失败",
       "trips": "熔断次数",
       "cooldown": "剩余冷却",
-      "actions": "操作"
+      "actions": "操作",
+      "site": "站点 / 账号"
     },
     "state": {
       "closed": "正常",
@@ -2366,6 +2367,8 @@
     "browserOn": "浏览器通知：开",
     "browserOff": "浏览器通知：关",
     "browserInsecure": "当前通过 HTTP 访问，浏览器通知需要 HTTPS 或 localhost",
-    "browserDenied": "浏览器通知权限被拒绝，请在浏览器地址栏权限设置中允许"
+    "browserDenied": "浏览器通知权限被拒绝，请在浏览器地址栏权限设置中允许",
+    "clear": "清空记录",
+    "cleared": "通知记录已清空"
   }
 }
