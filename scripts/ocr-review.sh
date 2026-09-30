@@ -10,8 +10,22 @@ BASE="${1:-origin/dev}"
 # 文件保留在临时目录供追溯，由系统定期清理临时区兜底。
 OUT="$(mktemp "${TMPDIR:-/tmp}/ocr-review-XXXXXX").json"
 
-echo "== ocr review: $BASE..HEAD（评审模型 qwen3.8-max @ NAS 网关）=="
-if ! ocr review --from "$BASE" --to HEAD --format json --output "$OUT"; then
+# 模型避让（2026-09-30）：ocr 与项目编码代理不用同一个模型，避免同名模型
+# 并发互相挤占。代理当前模型写入 ~/.opencodereview/agent-model（一行文本，
+# 代理会话切换模型时更新；缺省 glm-5.3-flash）。避让规则：
+#   代理=glm-5.3-flash        → ocr 用 nas-hy4 / hy4-preview-f（8787 网关，快）
+#   代理=deepseek-v4.1-flash  → ocr 用 nas-octopus / glm-5.3-flash（PM-API 免费分组）
+#   其他/缺省                 → hy4-preview-f
+# 备选：grok-4.6 仅 CUN.ai 渠道承载（已被 CF 1010 封 UA 且曾集体超时），
+# 薄荷的 0 倍率 grok 渠道只挂了 grok-4.7——暂不作主模型，稳定性再观察。
+AGENT_MODEL="$(cat "${HOME}/.opencodereview/agent-model" 2>/dev/null || echo "glm-5.3-flash")"
+case "$AGENT_MODEL" in
+  *deepseek*) OCR_PROVIDER="nas-octopus"; OCR_MODEL="glm-5.3-flash" ;;
+  *)          OCR_PROVIDER="nas-hy4";    OCR_MODEL="hy4-preview-f" ;;
+esac
+
+echo "== ocr review: ${BASE}..${HEAD:-HEAD}（评审模型 ${OCR_MODEL} @ ${OCR_PROVIDER}，代理模型 ${AGENT_MODEL} 已避让）=="
+if ! ocr review --from "$BASE" --to HEAD --provider "$OCR_PROVIDER" --model "$OCR_MODEL" --format json --output "$OUT"; then
   echo "!! ocr 运行失败（网络/网关/配置问题）——advisory 停摆不阻断交付，但必须向主人报告此情况"
   exit 1
 fi
