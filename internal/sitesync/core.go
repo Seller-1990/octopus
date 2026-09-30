@@ -338,10 +338,13 @@ func CheckinAllWithOptions(ctx context.Context, opts SiteBatchOptions) SiteBatch
 		// 重复请求被站点拒绝/风控返回未知错误后，last_checkin_status 被覆写为
 		// failed，造成"白天 1 个失败、重启后变成 11 个"的当天状态突变。
 		// 手动触发不受限，用户仍可强制重签。
+		// 同日已成功或已跳过（站点未开放签到）都不再重发：skipped 是中性
+		// 终态，重发只会对站点重复 POST 同样的拒绝响应。
 		if trigger != SiteBatchTriggerManual &&
 			item.account.LastCheckinAt != nil && !item.account.LastCheckinAt.IsZero() &&
 			isSameLocalDay(*item.account.LastCheckinAt, now) &&
-			item.account.LastCheckinStatus == model.SiteExecutionStatusSuccess {
+			(item.account.LastCheckinStatus == model.SiteExecutionStatusSuccess ||
+				item.account.LastCheckinStatus == model.SiteExecutionStatusSkipped) {
 			summary.recordSkip(item.site.ID, item.site.Platform, SiteBatchReasonAlreadyCheckedInToday, 1)
 			continue
 		}

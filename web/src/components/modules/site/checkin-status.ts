@@ -114,8 +114,11 @@ export function deriveCheckinStatus(
   switch (normalizeExecutionStatus(account.last_checkin_status)) {
     case "success":
       return "success";
-    case "failed":
     case "skipped":
+      // 站点未开放签到 / 平台不支持：中性，不计失败（v1.8.7 反馈：
+      // 「签到功能未启用」的站点此前显示为红色失败）
+      return "idle";
+    case "failed":
       return "failed";
     default:
       return "idle";

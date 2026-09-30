@@ -11,6 +11,18 @@ import (
 	"github.com/bestruirui/octopus/internal/op"
 )
 
+// checkinDisabledMessages 站点侧关闭签到时的固定文案白名单（new-api 系
+// fork 的 i18n 词条）。精确匹配防止把「账号已禁用」等真实失败误判为中性；
+// 漏匹配只是仍显示失败（可见无害），过匹配是静默（ocr 复审裁决）。
+var checkinDisabledMessages = map[string]struct{}{
+	"签到功能未启用": {},
+}
+
+func isCheckinDisabledMessage(message string) bool {
+	_, ok := checkinDisabledMessages[strings.TrimSpace(message)]
+	return ok
+}
+
 func isAlreadyCheckedInMessage(message string) bool {
 	lowered := strings.ToLower(strings.TrimSpace(message))
 	if lowered == "" {
@@ -73,7 +85,11 @@ func checkinAccountState(ctx context.Context, siteRecord *model.Site, account *m
 		payload, err := requestJSONWithManagedAccessToken(ctx, siteRecord, http.MethodPost, buildSiteURL(siteRecord.BaseURL, "/api/user/checkin"), nil, accessToken, account)
 		if err != nil {
 			lowered := strings.ToLower(err.Error())
-			if strings.Contains(lowered, "404") || strings.Contains(lowered, "not found") {
+			// 404（接口不存在）与 405（方法不允许）都说明该站点没有可用的
+			// 签到接口：按 skipped 中性处理。405 用结构化状态码判断，避免
+			// 消息内数字（如「余额 405」）误命中。
+			if strings.Contains(lowered, "404") || strings.Contains(lowered, "not found") ||
+				siteErrorStatusCode(err) == http.StatusNotFound || siteErrorStatusCode(err) == http.StatusMethodNotAllowed {
 				return &model.SiteCheckinResult{Status: model.SiteExecutionStatusSkipped, Message: "checkin is not supported by this platform"}, accessToken, nil
 			}
 			return nil, accessToken, err
@@ -82,6 +98,9 @@ func checkinAccountState(ctx context.Context, siteRecord *model.Site, account *m
 		message := firstNonEmptyString(jsonString(payload["message"]), "checkin success")
 		if success || isAlreadyCheckedInMessage(message) {
 			return &model.SiteCheckinResult{Status: model.SiteExecutionStatusSuccess, Message: message, Reward: jsonString(nestedValue(payload, "data", "reward"))}, accessToken, nil
+		}
+		if isCheckinDisabledMessage(message) {
+			return &model.SiteCheckinResult{Status: model.SiteExecutionStatusSkipped, Message: message}, accessToken, nil
 		}
 		return &model.SiteCheckinResult{Status: model.SiteExecutionStatusFailed, Message: message}, accessToken, nil
 	default:
@@ -108,7 +127,8 @@ func checkinExternal(ctx context.Context, siteRecord *model.Site, account *model
 	payload, err := requestJSONWithManagedAccessToken(ctx, siteRecord, http.MethodPost, endpoint, nil, accessToken, account)
 	if err != nil {
 		lowered := strings.ToLower(err.Error())
-		if strings.Contains(lowered, "404") || strings.Contains(lowered, "not found") {
+		if strings.Contains(lowered, "404") || strings.Contains(lowered, "not found") ||
+			siteErrorStatusCode(err) == http.StatusNotFound || siteErrorStatusCode(err) == http.StatusMethodNotAllowed {
 			return &model.SiteCheckinResult{Status: model.SiteExecutionStatusSkipped, Message: "checkin endpoint not found"}, accessToken, nil
 		}
 		return nil, accessToken, err
@@ -118,6 +138,9 @@ func checkinExternal(ctx context.Context, siteRecord *model.Site, account *model
 	message := firstNonEmptyString(jsonString(payload["message"]), "checkin success")
 	if success || isAlreadyCheckedInMessage(message) {
 		return &model.SiteCheckinResult{Status: model.SiteExecutionStatusSuccess, Message: message, Reward: jsonString(nestedValue(payload, "data", "reward"))}, accessToken, nil
+	}
+	if isCheckinDisabledMessage(message) {
+		return &model.SiteCheckinResult{Status: model.SiteExecutionStatusSkipped, Message: message}, accessToken, nil
 	}
 	return &model.SiteCheckinResult{Status: model.SiteExecutionStatusFailed, Message: message}, accessToken, nil
 }
