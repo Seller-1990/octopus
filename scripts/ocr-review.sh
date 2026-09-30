@@ -16,8 +16,10 @@ OUT="$(mktemp "${TMPDIR:-/tmp}/ocr-review-XXXXXX").json"
 #   代理=glm-5.3-flash        → ocr 用 nas-hy4 / hy4-preview-f（8787 网关，快）
 #   代理=deepseek-v4.1-flash  → ocr 用 nas-octopus / glm-5.3-flash（PM-API 免费分组）
 #   其他/缺省                 → hy4-preview-f
-# 备选：grok-4.6 仅 CUN.ai 渠道承载（已被 CF 1010 封 UA 且曾集体超时），
-# 薄荷的 0 倍率 grok 渠道只挂了 grok-4.7——暂不作主模型，稳定性再观察。
+# 备选（手工切换：ocr config set provider x666 && ocr config set model grok-4.7）：
+# x666.me（=薄荷 API 入口，0 倍率）grok-4.7 实测工具调用 2/2、约 64s/次；
+# 该网关模型表不可靠（glm-5.3-200k 列表在册但 503 model_not_found）。
+# grok-4.6 仅 CUN.ai 渠道承载（已被 CF 1010 封 UA 且曾集体超时）——不可用。
 AGENT_MODEL="$(cat "${HOME}/.opencodereview/agent-model" 2>/dev/null || echo "glm-5.3-flash")"
 case "$AGENT_MODEL" in
   *deepseek*) OCR_PROVIDER="nas-octopus"; OCR_MODEL="glm-5.3-flash" ;;
