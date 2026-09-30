@@ -24,6 +24,10 @@ function useNow(intervalMs = 1000): number {
 export interface CircuitStatus {
     channel_id: number;
     channel_key_id: number;
+    channel_name?: string;
+    site_name?: string;
+    site_account_name?: string;
+    key_remark?: string;
     model_name: string;
     state: number;
     state_label: 'closed' | 'open' | 'half_open';
@@ -143,7 +147,10 @@ export function Circuit() {
                         className="h-8 rounded-lg border border-border/60 bg-background px-2 text-xs"
                     >
                         <option value="">{t('filter.allChannels')}</option>
-                        {channels.map((cid) => <option key={cid} value={cid}>{t('channel')} {cid}</option>)}
+                        {channels.map((cid) => {
+                            const name = (data?.items ?? []).find((it) => it.channel_id === cid)?.channel_name;
+                            return <option key={cid} value={cid}>{name ? `${name} (#${cid})` : `${t('channel')} ${cid}`}</option>;
+                        })}
                     </select>
                     {confirmAll ? (
                         <Button size="sm" variant="destructive" onClick={handleResetAll} disabled={reset.isPending}>
@@ -168,6 +175,7 @@ export function Circuit() {
                     <table className="w-full text-xs">
                         <thead className="sticky top-0 bg-muted/50">
                             <tr className="text-left text-muted-foreground">
+                                <th className="px-3 py-2">{t('col.site')}</th>
                                 <th className="px-3 py-2">{t('col.channel')}</th>
                                 <th className="px-3 py-2">{t('col.key')}</th>
                                 <th className="px-3 py-2">{t('col.model')}</th>
@@ -185,8 +193,22 @@ export function Circuit() {
                                 const remaining = it.cooldown_until ? Math.max(0, Math.ceil((new Date(it.cooldown_until).getTime() - now) / 1000)) : 0;
                                 return (
                                     <tr key={`${it.channel_id}:${it.channel_key_id}:${it.model_name}`} className="border-t border-border/30">
-                                        <td className="px-3 py-1.5">{it.channel_id}</td>
-                                        <td className="px-3 py-1.5">{it.channel_key_id}</td>
+                                        <td className="px-3 py-1.5 whitespace-nowrap">
+                                            {it.site_name || it.site_account_name ? (
+                                                <span className="font-medium">
+                                                    {it.site_name}
+                                                    {it.site_account_name ? <span className="text-muted-foreground"> / {it.site_account_name}</span> : null}
+                                                </span>
+                                            ) : (
+                                                <span className="text-muted-foreground">#{it.channel_id}</span>
+                                            )}
+                                        </td>
+                                        <td className="px-3 py-1.5 whitespace-nowrap">
+                                            {it.channel_name || <span className="text-muted-foreground">#{it.channel_id}</span>}
+                                        </td>
+                                        <td className="px-3 py-1.5 whitespace-nowrap">
+                                            {it.key_remark || <span className="text-muted-foreground">#{it.channel_key_id}</span>}
+                                        </td>
                                         <td className="px-3 py-1.5 font-medium">{it.model_name}</td>
                                         <td className="px-3 py-1.5">
                                             <span className={cn('inline-flex items-center gap-1 rounded px-1.5 py-px text-[10px] font-medium', s.cls)}>

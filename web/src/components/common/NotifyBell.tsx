@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Bell, CheckCheck } from 'lucide-react';
+import { Bell, CheckCheck, Trash2 } from 'lucide-react';
 import { useTranslations } from 'next-intl';
 import { type NotifyEvent, type NotifyLevel, useNotifyStream } from '@/api/endpoints/notify';
 import { Button } from '@/components/ui/button';
@@ -12,6 +12,7 @@ import { cn } from '@/lib/utils';
 const READ_WATERMARK_KEY = 'notify_read_watermark';
 const BROWSER_NOTIFY_KEY = 'notify_browser_enabled';
 const NOTIFIED_WATERMARK_KEY = 'notify_notified_watermark';
+const CLEARED_WATERMARK_KEY = 'notify_cleared_watermark';
 
 const LEVEL_DOT: Record<NotifyLevel, string> = {
     info: 'bg-blue-500',
@@ -28,6 +29,7 @@ export function NotifyBell() {
 
     const [open, setOpen] = useState(false);
     const [watermark, setWatermark] = useState(0);
+    const [clearedWatermark, setClearedWatermark] = useState(0);
     const [browserEnabled, setBrowserEnabled] = useState(false);
     const initialized = useRef(false);
 
@@ -37,6 +39,8 @@ export function NotifyBell() {
             const stored = Number(localStorage.getItem(READ_WATERMARK_KEY) ?? '0');
             setWatermark(Number.isFinite(stored) ? stored : 0);
             setBrowserEnabled(localStorage.getItem(BROWSER_NOTIFY_KEY) === 'true' && typeof Notification !== 'undefined' && window.isSecureContext);
+            const cleared = Number(localStorage.getItem(CLEARED_WATERMARK_KEY) ?? '0');
+            setClearedWatermark(Number.isFinite(cleared) ? cleared : 0);
             initialized.current = true;
         });
     }, []);
@@ -65,9 +69,13 @@ export function NotifyBell() {
         }
     }, [events, browserEnabled]);
 
+    const visibleEvents = useMemo(
+        () => events.filter((event) => event.id > clearedWatermark),
+        [events, clearedWatermark],
+    );
     const unreadCount = useMemo(
-        () => events.filter((event) => event.id > watermark).length,
-        [events, watermark],
+        () => visibleEvents.filter((event) => event.id > watermark).length,
+        [visibleEvents, watermark],
     );
 
     const toggleBrowser = async () => {
@@ -92,6 +100,20 @@ export function NotifyBell() {
         }
         setBrowserEnabled(next);
         localStorage.setItem(BROWSER_NOTIFY_KEY, String(next));
+    };
+
+    // 清空记录：隐藏水位（localStorage）以下的历史事件不再展示；新事件照常到达。
+    // 服务端 ring 是多端共享的内存态，不动服务端——清空只作用于本浏览器。
+    const clearHistory = () => {
+        const latest = Math.max(clearedWatermark, watermark, events[0]?.id ?? 0);
+        setClearedWatermark(latest);
+        localStorage.setItem(CLEARED_WATERMARK_KEY, String(latest));
+        setWatermark((prev) => {
+            const next = Math.max(prev, latest);
+            localStorage.setItem(READ_WATERMARK_KEY, String(next));
+            return next;
+        });
+        toast.success(t('cleared'));
     };
 
     const markAllRead = () => {
@@ -137,13 +159,17 @@ export function NotifyBell() {
                             <CheckCheck className="size-3.5" />
                             {t('markAllRead')}
                         </Button>
+                        <Button variant="ghost" size="sm" onClick={clearHistory} className="h-7 px-2 text-xs">
+                            <Trash2 className="size-3.5" />
+                            {t('clear')}
+                        </Button>
                     </div>
                 </div>
                 <div className="max-h-96 overflow-y-auto">
-                    {events.length === 0 ? (
+                    {visibleEvents.length === 0 ? (
                         <p className="text-muted-foreground px-3 py-6 text-center text-sm">{t('empty')}</p>
                     ) : (
-                        events.map((event) => (
+                        visibleEvents.map((event) => (
                             <NotifyRow key={event.id} event={event} unread={event.id > watermark} />
                         ))
                     )}

@@ -611,12 +611,14 @@ export function GroupCard({ group, hideUnavailable = false }: { group: Group; hi
                 />
             </section>
 
-            {/* Floating secondary actions: hidden by default, appear on card hover/focus */}
+            {/* Secondary actions row: in normal flow and always visible —
+                the previous hover-revealed overlay was undiscoverable and,
+                once made always-visible, would block clicks on the member
+                list beneath it (ocr medium) */}
             {!confirmDelete && (
                 <div
                     className={cn(
-                        'absolute left-3 bottom-3 z-10 flex items-center gap-0.5 rounded-xl bg-card/95 backdrop-blur-sm border border-border/40 shadow-sm p-0.5 transition-opacity duration-200',
-                        'opacity-0 pointer-events-none group-hover/card:opacity-100 group-hover/card:pointer-events-auto group-focus-within/card:opacity-100 group-focus-within/card:pointer-events-auto',
+                        'mt-2 flex w-fit items-center gap-0.5 rounded-xl border border-border/40 bg-card/95 p-0.5',
                     )}
                 >
                     <Tooltip side="top" sideOffset={6} align="center">
@@ -667,7 +669,7 @@ export function GroupCard({ group, hideUnavailable = false }: { group: Group; hi
                 {confirmDelete && (
                     <motion.div
                         layoutId={`delete-btn-group-${group.id}`}
-                        className="absolute left-3 bottom-3 z-10 flex items-center gap-2 bg-destructive p-2 rounded-xl shadow-md"
+                        className="mt-2 flex w-fit items-center gap-2 bg-destructive p-2 rounded-xl shadow-md"
                         transition={{ type: 'spring', stiffness: 400, damping: 30 }}
                     >
                         <button

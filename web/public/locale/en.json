@@ -2302,7 +2302,8 @@
       "failures": "Failures",
       "trips": "Trips",
       "cooldown": "Cooldown",
-      "actions": "Actions"
+      "actions": "Actions",
+      "site": "Site / Account"
     },
     "state": {
       "closed": "Closed",
@@ -2366,6 +2367,8 @@
     "browserOn": "Browser alerts: on",
     "browserOff": "Browser alerts: off",
     "browserInsecure": "You are on HTTP; browser notifications require HTTPS or localhost",
-    "browserDenied": "Notification permission was denied — allow it in the browser address-bar settings"
+    "browserDenied": "Notification permission was denied — allow it in the browser address-bar settings",
+    "clear": "Clear all",
+    "cleared": "Notification history cleared"
   }
 }
