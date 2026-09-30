@@ -20,33 +20,85 @@ OUT="$(mktemp "${TMPDIR:-/tmp}/ocr-review-XXXXXX").json"
 # 不用 qwen3.8-max：近 7 天综合成功率仅 43%（K API 60% + 334 次无可用渠道）。
 AGENT_MODEL="$(head -1 "${HOME}/.opencodereview/agent-model" 2>/dev/null | tr -d " \r" || true)"; AGENT_MODEL="${AGENT_MODEL:-glm-5.3-flash}"
 PRIMARY_PROVIDER="x666";        PRIMARY_MODEL="grok-4.7"
+# 候选链：主模型在前，两个备用按代理当前模型避让排序（同名模型不并用）
+MODEL_CHAIN=("x666|grok-4.7")
 case "$AGENT_MODEL" in
-  *glm*)      B1="nas-hy4|hy4-preview-f";   B2="nas-octopus|glm-5.3-flash" ;;
-  *deepseek*) B1="nas-octopus|glm-5.3-flash"; B2="nas-hy4|hy4-preview-f" ;;
-  *)          B1="nas-hy4|hy4-preview-f";   B2="nas-octopus|glm-5.3-flash" ;;
+  *glm*)      MODEL_CHAIN+=("nas-hy4|hy4-preview-f" "nas-octopus|glm-5.3-flash") ;;
+  *deepseek*) MODEL_CHAIN+=("nas-octopus|glm-5.3-flash" "nas-hy4|hy4-preview-f") ;;
+  *)          MODEL_CHAIN+=("nas-hy4|hy4-preview-f" "nas-octopus|glm-5.3-flash") ;;
 esac
 
-echo "== ocr review: ${BASE}..HEAD（主模型 ${PRIMARY_MODEL} @ ${PRIMARY_PROVIDER}；备用 ${B1} → ${B2}；代理模型 ${AGENT_MODEL}）=="
+# 速率限制处理（2026-09-30，x666 有每分钟限额）：一轮评审含多次 LLM 调用，
+# 限额可能只打死部分评审组（ocr 以 status 标记：complete=全部成功 /
+# partial=部分组失败 / failed=全失败）。处理顺序 = 用户拍板的两条路径：
+#   ① 同模型续跑：等 OCR_RATE_WAIT 秒（限额窗口重置）后 --resume 该会话，
+#      已成功的评审组走缓存不重跑，只补失败的组；
+#   ② 换下一个候选模型全新跑（按避让排序）。
+OCR_RATE_WAIT="${OCR_RATE_WAIT:-70}"
+RUN_LOG="$(mktemp "${TMPDIR:-/tmp}/ocr-review-log-XXXXXX")"
 
-run_ocr() {  # $1=provider $2=model；输出统一写 $OUT（降级时后者覆盖前者）
-  ocr review --from "$BASE" --to HEAD --provider "$1" --model "$2" --format json --output "$OUT"
+run_ocr() {  # $1=provider $2=model $3=可选 "--resume <sid>"
+  # shellcheck disable=SC2086  # $3 需按空格拆成两个参数
+  ocr review --from "$BASE" --to HEAD --provider "$1" --model "$2" ${3:-} --format json --output "$OUT" 2>&1 | tee -a "$RUN_LOG"
 }
 
-if run_ocr "$PRIMARY_PROVIDER" "$PRIMARY_MODEL"; then
-  :
-else
-  B1_PROVIDER="${B1%%|*}"; B1_MODEL="${B1#*|}"
-  echo "!! 主模型失败，降级备用①：${B1_MODEL} @ ${B1_PROVIDER}"
-  if run_ocr "$B1_PROVIDER" "$B1_MODEL"; then
-    :
-  else
-    B2_PROVIDER="${B2%%|*}"; B2_MODEL="${B2#*|}"
-    echo "!! 备用①失败，降级备用②：${B2_MODEL} @ ${B2_PROVIDER}"
-    if ! run_ocr "$B2_PROVIDER" "$B2_MODEL"; then
-      echo "!! 三级模型全部失败（网络/网关/配置）——advisory 停摆不阻断交付，但必须向主人报告此情况"
-      exit 1
+ocr_complete() {  # $OUT 存在且 status=complete 才算成功
+  python3 - "$OUT" <<'PYI'
+import json, sys
+try:
+    d = json.load(open(sys.argv[1]))
+except Exception:
+    sys.exit(1)
+sys.exit(0 if d.get("status") == "complete" else 1)
+PYI
+}
+
+session_id() {
+  python3 - "$OUT" <<'PYI'
+import json, sys
+try:
+    print(json.load(open(sys.argv[1])).get("session_id") or "")
+except Exception:
+    pass
+PYI
+}
+
+try_model() {  # $1=provider $2=model → 返回 0 当且仅当 status=complete
+  echo "== ocr review: ${BASE}..HEAD（模型 ${2} @ ${1}）=="
+  : > "$RUN_LOG"
+  if ! run_ocr "$1" "$2"; then
+    echo "!! 模型 ${2} 本轮调用失败（退出码非 0，详见 ${RUN_LOG}）"
+  fi
+  if ocr_complete; then
+    echo "== 模型 ${2} 评审完整完成 =="
+    return 0
+  fi
+  local sid
+  sid="$(session_id)"
+  if [ -n "$sid" ]; then
+    echo "!! 评审不完整（partial/failed），${OCR_RATE_WAIT}s 后同模型续跑（--resume ${sid}，已成功组走缓存）"
+    sleep "$OCR_RATE_WAIT"
+    run_ocr "$1" "$2" "--resume ${sid}" >/dev/null 2>&1 || true
+    if ocr_complete; then
+      echo "== 续跑后评审完整完成 =="
+      return 0
     fi
   fi
+  echo "!! 模型 ${2} 仍无法完整完成，切换下一个候选"
+  return 1
+}
+
+SUCCESS=0
+for entry in "${MODEL_CHAIN[@]}"; do
+  PROVIDER="${entry%%|*}"; MODEL="${entry#*|}"
+  if try_model "$PROVIDER" "$MODEL"; then
+    SUCCESS=1
+    break
+  fi
+done
+if [ "$SUCCESS" != "1" ]; then
+  echo "!! 全部 ${#MODEL_CHAIN[@]} 个候选模型都无法完整完成评审——advisory 停摆不阻断交付，但必须向主人报告此情况"
+  exit 1
 fi
 
 echo
