@@ -10,26 +10,43 @@ BASE="${1:-origin/dev}"
 # 文件保留在临时目录供追溯，由系统定期清理临时区兜底。
 OUT="$(mktemp "${TMPDIR:-/tmp}/ocr-review-XXXXXX").json"
 
-# 模型避让（2026-09-30）：ocr 与项目编码代理不用同一个模型，避免同名模型
-# 并发互相挤占。代理当前模型写入 ~/.opencodereview/agent-model（一行文本，
-# 代理会话切换模型时更新；缺省 glm-5.3-flash）。避让规则：
-#   代理=glm-5.3-flash        → ocr 用 nas-hy4 / hy4-preview-f（8787 网关，快）
-#   代理=deepseek-v4.1-flash  → ocr 用 nas-octopus / glm-5.3-flash（PM-API 免费分组）
-#   其他/缺省                 → hy4-preview-f
-# 备选（手工切换：ocr config set provider x666 && ocr config set model grok-4.7）：
-# x666.me（=薄荷 API 入口，0 倍率）grok-4.7 实测工具调用 2/2、约 64s/次；
-# 该网关模型表不可靠（glm-5.3-200k 列表在册但 503 model_not_found）。
-# grok-4.6 仅 CUN.ai 渠道承载（已被 CF 1010 封 UA 且曾集体超时）——不可用。
-AGENT_MODEL="$(cat "${HOME}/.opencodereview/agent-model" 2>/dev/null || echo "glm-5.3-flash")"
+# 模型策略（2026-09-30，用户拍板）：主模型 grok-4.7 @ x666（薄荷 API 入口，
+# 0 倍率免费；实测工具调用 2/2、约 64s/次）。两个备用按代理当前模型避让
+# 排序（同名模型不并用）——主模型失败时依次自动降级：
+#   代理=glm-5.3-flash        → 备用① nas-hy4/hy4-preview-f → 备用② nas-octopus/glm-5.3-flash
+#   代理=deepseek-v4.1-flash  → 备用① nas-octopus/glm-5.3-flash → 备用② nas-hy4/hy4-preview-f
+# 代理当前模型写入 ~/.opencodereview/agent-model（首行生效，容忍空白/CR）。
+# 不用 grok-4.6：仅 CUN.ai 渠道承载（CF 1010 封 UA 且曾集体超时）；
+# 不用 qwen3.8-max：近 7 天综合成功率仅 43%（K API 60% + 334 次无可用渠道）。
+AGENT_MODEL="$(head -1 "${HOME}/.opencodereview/agent-model" 2>/dev/null | tr -d " \r" || true)"; AGENT_MODEL="${AGENT_MODEL:-glm-5.3-flash}"
+PRIMARY_PROVIDER="x666";        PRIMARY_MODEL="grok-4.7"
 case "$AGENT_MODEL" in
-  *deepseek*) OCR_PROVIDER="nas-octopus"; OCR_MODEL="glm-5.3-flash" ;;
-  *)          OCR_PROVIDER="nas-hy4";    OCR_MODEL="hy4-preview-f" ;;
+  *glm*)      B1="nas-hy4|hy4-preview-f";   B2="nas-octopus|glm-5.3-flash" ;;
+  *deepseek*) B1="nas-octopus|glm-5.3-flash"; B2="nas-hy4|hy4-preview-f" ;;
+  *)          B1="nas-hy4|hy4-preview-f";   B2="nas-octopus|glm-5.3-flash" ;;
 esac
 
-echo "== ocr review: ${BASE}..${HEAD:-HEAD}（评审模型 ${OCR_MODEL} @ ${OCR_PROVIDER}，代理模型 ${AGENT_MODEL} 已避让）=="
-if ! ocr review --from "$BASE" --to HEAD --provider "$OCR_PROVIDER" --model "$OCR_MODEL" --format json --output "$OUT"; then
-  echo "!! ocr 运行失败（网络/网关/配置问题）——advisory 停摆不阻断交付，但必须向主人报告此情况"
-  exit 1
+echo "== ocr review: ${BASE}..HEAD（主模型 ${PRIMARY_MODEL} @ ${PRIMARY_PROVIDER}；备用 ${B1} → ${B2}；代理模型 ${AGENT_MODEL}）=="
+
+run_ocr() {  # $1=provider $2=model；输出统一写 $OUT（降级时后者覆盖前者）
+  ocr review --from "$BASE" --to HEAD --provider "$1" --model "$2" --format json --output "$OUT"
+}
+
+if run_ocr "$PRIMARY_PROVIDER" "$PRIMARY_MODEL"; then
+  :
+else
+  B1_PROVIDER="${B1%%|*}"; B1_MODEL="${B1#*|}"
+  echo "!! 主模型失败，降级备用①：${B1_MODEL} @ ${B1_PROVIDER}"
+  if run_ocr "$B1_PROVIDER" "$B1_MODEL"; then
+    :
+  else
+    B2_PROVIDER="${B2%%|*}"; B2_MODEL="${B2#*|}"
+    echo "!! 备用①失败，降级备用②：${B2_MODEL} @ ${B2_PROVIDER}"
+    if ! run_ocr "$B2_PROVIDER" "$B2_MODEL"; then
+      echo "!! 三级模型全部失败（网络/网关/配置）——advisory 停摆不阻断交付，但必须向主人报告此情况"
+      exit 1
+    fi
+  fi
 fi
 
 echo
