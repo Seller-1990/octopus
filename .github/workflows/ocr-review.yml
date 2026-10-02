@@ -1,0 +1,89 @@
+# OpenCodeReview PR 自动评审
+#
+# 每当有 PR 新建或推送新提交，自动运行 open-code-review（ocr）对本 PR 的
+# diff 做 LLM 评审，并把行级意见作为 PR review 评论发布、总结作为 sticky
+# 评论发布（同一条评论原地更新，不刷屏）。
+#
+# 评审引擎：官方 composite action（pinned 到 action.yml 的最新 commit）。
+# 所需仓库 secrets（Settings → Secrets → Actions）：
+#   OCR_LLM_URL        - OpenAI 兼容端点，如 https://x666.me/v1/chat/completions
+#   OCR_LLM_TOKEN      - 端点 API key
+#   OCR_LLM_MODEL      - 评审模型，如 grok-4.7
+#
+# 安全说明：本仓库无 fork 协作者，用 pull_request（非 _target）+ checkout PR
+# 头即可；ocr 只读 diff 与代码，不执行 PR 代码。评审用的 LLM 凭据经
+# pull_request 事件的 secrets 不可用（防 fork 投毒的标准限制），如未来开放
+# fork 再改 pull_request_target（官方模板的做法）。
+
+name: OpenCodeReview PR Review
+
+concurrency:
+  # dispatch 时 pull_request 上下文为空：用 inputs.pr_number 隔离，两个手动补跑不互踩
+  group: ocr-review-${{ github.event.inputs.pr_number || github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: '要评审的 PR 号（pull_request 事件丢失时手动补跑用）'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  code-review:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      # composite action 内部自做 full checkout（fetch-depth: 0），
+      # 这一步只为把 action 本体落进 workspace。
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Resolve PR context (workflow_dispatch 时 pull_request 上下文为空，需查 API)
+        if: github.event_name == 'workflow_dispatch'
+        id: prctx
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const prNumber = Number(process.env.prNumber);
+            const { data: pr } = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: prNumber
+            });
+            core.setOutput('base', pr.base.ref);
+            core.setOutput('head', pr.head.sha);
+            core.setOutput('number', String(pr.number));
+        env:
+          prNumber: ${{ inputs.pr_number }}
+
+      - name: Run OpenCodeReview
+        uses: alibaba/open-code-review@5f8e5ab328e1449ba4d5f14d2a7542117543d753
+        with:
+          pr_number: ${{ steps.prctx.outputs.number || github.event.pull_request.number }}
+          base_ref: ${{ steps.prctx.outputs.base || github.event.pull_request.base.ref }}
+          head_sha: ${{ steps.prctx.outputs.head || github.event.pull_request.head.sha }}
+          llm_url: ${{ secrets.OCR_LLM_URL }}
+          llm_auth_token: ${{ secrets.OCR_LLM_TOKEN }}
+          llm_model: ${{ secrets.OCR_LLM_MODEL }}
+          llm_use_anthropic: 'false'
+          llm_extra_body: '{"enable_thinking": false}'
+          language: 'Chinese'
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          sticky_summary: 'true'
+          incremental: 'true'
+          upload_artifacts: 'true'
+          # 首跑实测：高延迟端点下逐文件多轮工具调用超过 30 分钟被 runner 强杀。
+          # 提高单请求超时、开进度流（日志可观测）、并发 4 提速。
+          llm_timeout: '600'
+          stream_progress: 'true'
+          review_concurrency: '2'
