@@ -10,23 +10,24 @@ BASE="${1:-origin/dev}"
 # 文件保留在临时目录供追溯，由系统定期清理临时区兜底。
 OUT="$(mktemp "${TMPDIR:-/tmp}/ocr-review-XXXXXX").json"
 
-# 模型策略（2026-09-30，用户拍板）：主模型 grok-4.7 @ x666（薄荷 API 入口，
-# 0 倍率免费；实测工具调用 2/2、约 64s/次）。两个备用按代理当前模型避让
-# 排序（同名模型不并用）——主模型失败时依次自动降级：
-#   代理=glm-5.3-flash        → 备用① nas-hy4/hy4-preview-f → 备用② nas-octopus/glm-5.3-flash
-#   代理=deepseek-v4.1-flash  → 备用① nas-octopus/glm-5.3-flash → 备用② nas-hy4/hy4-preview-f
-# 代理当前模型写入 ~/.opencodereview/agent-model（首行生效，容忍空白/CR）。
+# 模型策略（2026-10-04，用户拍板：成本优先）：
+# 主模型 deepseek-v4.1-flash @ nas-hy4（8787，0 倍率免费；实测工具调用 ✅、1M 上下文）。
+# 不用 kimi-k3：两个 NAS 网关计费都贵（用户明示）；不用 wzw：渠道已全下架
+# （glm-5.2-200k / gpt-4o 均 No available channel，2026-10-04 实测）；
+# 不用 grok-4.7 @ x666：已不输出结构化 tool_calls（2026-10-03 实测）；
 # 不用 grok-4.6：仅 CUN.ai 渠道承载（CF 1010 封 UA 且曾集体超时）；
 # 不用 qwen3.8-max：近 7 天综合成功率仅 43%（K API 60% + 334 次无可用渠道）。
+# 内网四棒全免费；云端五棒仅因公开仓可出境才挂在尾部。
 AGENT_MODEL="$(head -1 "${HOME}/.opencodereview/agent-model" 2>/dev/null | tr -d " \r" || true)"; AGENT_MODEL="${AGENT_MODEL:-glm-5.3-flash}"
-PRIMARY_PROVIDER="x666";        PRIMARY_MODEL="grok-4.7"
-# 候选链：主模型在前，两个备用按代理当前模型避让排序（同名模型不并用）
-MODEL_CHAIN=("x666|grok-4.7")
+# 候选链：内网免费链在前，同族避让（代理是 glm/deepseek 时该族放备用末位），
+# 云端链固定垫底（x666 0 倍率 → lucky 两 key → 呆瓜）
+MODEL_CHAIN=("nas-hy4|deepseek-v4.1-flash")
 case "$AGENT_MODEL" in
-  *glm*)      MODEL_CHAIN+=("nas-hy4|hy4-preview-f" "nas-octopus|glm-5.3-flash") ;;
-  *deepseek*) MODEL_CHAIN+=("nas-octopus|glm-5.3-flash" "nas-hy4|hy4-preview-f") ;;
-  *)          MODEL_CHAIN+=("nas-hy4|hy4-preview-f" "nas-octopus|glm-5.3-flash") ;;
+  *deepseek*) MODEL_CHAIN+=("nas-octopus|glm-5.3-flash" "nas-hy4|hy3" "nas-hy4|hy4-preview-f") ;;
+  *glm*)      MODEL_CHAIN+=("nas-hy4|hy3" "nas-hy4|hy4-preview-f" "nas-octopus|glm-5.3-flash") ;;
+  *)          MODEL_CHAIN+=("nas-octopus|glm-5.3-flash" "nas-hy4|hy3" "nas-hy4|hy4-preview-f") ;;
 esac
+MODEL_CHAIN+=("x666|ministral-14b-latest" "lucky-gem|gemini-3.6-flash" "lucky|stealth/space-bunny-alpha" "lucky|step-5-preview" "daigua|gpt-6-sol")
 
 # 速率限制处理（2026-09-30，x666 有每分钟限额）：一轮评审含多次 LLM 调用，
 # 限额可能只打死部分评审组（ocr 以 status 标记：complete=全部成功 /
